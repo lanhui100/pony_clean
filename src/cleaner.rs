@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_util::sync::CancellationToken;
 
 const BATCH_SIZE: usize = 500;
@@ -157,13 +158,26 @@ const PROTECTED_PREFIXES: &[&str] = &[
 /// 检查路径是否受保护
 pub fn is_path_protected(path: &Path) -> bool {
     let d = system_drive().to_lowercase();
-    let normalized = path.to_string_lossy().to_lowercase();
-    // 将输入路径的系统盘符统一到 C: 再与静态前缀比较
-    let on_c = normalized.replacen(&d, "c:", 1);
+
+    // 去除 Win32 命名空间前缀 (\\?\ 和 \\.\) 和空字节
+    let raw = path.to_string_lossy();
+    let raw = raw.trim_start_matches("\\\\?\\");
+    let raw = raw.trim_start_matches("\\\\.\\");
+    let raw = raw.trim_start_matches("//?/");
+    let normalized = raw.replace('/', "\\").to_lowercase();
+
+    // 去除嵌入空字节后的截断部分
+    let cleaned = match normalized.split('\0').next() {
+        Some(s) => s,
+        None => return true,
+    };
+
+    // 将系统盘符统一到 C:
+    let on_c = cleaned.replacen(&d, "c:", 1);
     PROTECTED_PREFIXES.iter().any(|p| {
         let p = p.replace("%SYSTEMDRIVE%", "c:");
         on_c.starts_with(&p.to_lowercase())
-    }) || normalized == format!("{d}\\")
+    }) || cleaned == format!("{d}\\")
         || path.parent().is_none()
 }
 
@@ -218,13 +232,21 @@ pub fn resolve_targets(targets: &[ScanTarget]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// 全局扫描防重入锁
+static SCAN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 /// 启动 C盘扫描任务
 ///
 /// 扫描已 resolve 的安全路径，通过 mpsc 推送 ScanEvent。
-/// 返回 (cmd_tx, cancel_token)，支持取消和防重入。
+/// 支持防重入（使用 AtomicBool 守卫）。
+/// 返回 (cmd_tx, cancel_token)。
 pub fn start_scan(
     tx: mpsc::Sender<ScanEvent>,
 ) -> Result<(mpsc::Sender<CleanCommand>, CancellationToken), String> {
+    if SCAN_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        return Err("Scan already in progress".into());
+    }
+
     let (cmd_tx, cmd_rx) = mpsc::channel::<CleanCommand>();
     let cancel_token = CancellationToken::new();
     let cancel_token_clone = cancel_token.clone();
@@ -232,10 +254,20 @@ pub fn start_scan(
     let targets = get_clean_targets();
     let resolved = resolve_targets(&targets);
     if resolved.is_empty() {
+        SCAN_IN_PROGRESS.store(false, Ordering::SeqCst);
         return Err("No scan targets available".into());
     }
 
-    tokio::spawn(async move {
+    tokio::task::spawn_blocking(move || {
+        // Guard: 退出时释放防重入锁
+        struct ScanGuard;
+        impl Drop for ScanGuard {
+            fn drop(&mut self) {
+                SCAN_IN_PROGRESS.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = ScanGuard;
+
         let _ = tx.send(ScanEvent::Progress {
             scanned: 0,
             current: "Starting scan...".into(),
@@ -247,6 +279,13 @@ pub fn start_scan(
 
         for target in &resolved {
             if cancel_token_clone.is_cancelled() {
+                // flush 剩余批次
+                if !batch.is_empty() {
+                    let _ = tx.send(ScanEvent::ItemsFound {
+                        items: batch,
+                        batch_complete: false,
+                    });
+                }
                 let _ = tx.send(ScanEvent::Cancelled);
                 return;
             }
@@ -266,6 +305,12 @@ pub fn start_scan(
 
             for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
                 if cancel_token_clone.is_cancelled() {
+                    if !batch.is_empty() {
+                        let _ = tx.send(ScanEvent::ItemsFound {
+                            items: batch.drain(..).collect(),
+                            batch_complete: false,
+                        });
+                    }
                     let _ = tx.send(ScanEvent::Cancelled);
                     return;
                 }
@@ -350,24 +395,34 @@ pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
     let mut result = DeleteResult::default();
 
     for path in paths {
+        // 规范化路径防止 .. 遍历和正斜杠绕过
+        let safe_path = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(e) => {
+                result.failed += 1;
+                result.errors.push(format!("Cannot resolve path {}: {e}", path.display()));
+                continue;
+            }
+        };
+
         // 后端强制执行安全验证
-        if is_path_protected(path) {
+        if is_path_protected(&safe_path) {
             result.failed += 1;
-            result.errors.push(format!("Protected path: {}", path.display()));
+            result.errors.push(format!("Protected path: {}", safe_path.display()));
             continue;
         }
-        if !is_path_allowed(path, &targets) {
+        if !is_path_allowed(&safe_path, &targets) {
             result.failed += 1;
-            result.errors.push(format!("Path not in scan scope: {}", path.display()));
+            result.errors.push(format!("Path not in scan scope: {}", safe_path.display()));
             continue;
         }
 
-        match std::fs::remove_file(path) {
+        match std::fs::remove_file(&safe_path) {
             Ok(()) => result.success += 1,
             Err(e) => {
                 // 尝试延迟删除
                 if cfg!(windows) {
-                    match delete_file_delayed_windows(path) {
+                    match delete_file_delayed_windows(&safe_path) {
                         Ok(()) => result.success += 1,
                         Err(msg) => {
                             result.failed += 1;
@@ -391,6 +446,13 @@ fn delete_file_delayed_windows(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Storage::FileSystem::MoveFileExW;
     use windows::Win32::Storage::FileSystem::MOVEFILE_DELAY_UNTIL_REBOOT;
+    use windows::Win32::Foundation::GetLastError;
+
+    // 拒绝含空字节的路径（防止 API 截断）
+    let path_str = path.to_string_lossy();
+    if path_str.contains('\0') {
+        return Err(format!("Path contains null byte: {}", path.display()));
+    }
 
     let wide: Vec<u16> = OsStr::new(path)
         .encode_wide()
@@ -401,7 +463,11 @@ fn delete_file_delayed_windows(path: &Path) -> Result<(), String> {
     if result.is_ok() {
         Ok(())
     } else {
-        Err(format!("MoveFileExW failed for {}", path.display()))
+        let err_code = unsafe { GetLastError() };
+        Err(format!(
+            "MoveFileExW failed for {} (error: {err_code:?})",
+            path.display()
+        ))
     }
 }
 
@@ -414,10 +480,15 @@ pub fn empty_recycle_bin() -> Result<(), String> {
     {
         use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
         use windows::Win32::UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI};
-        use windows::Win32::Foundation::S_OK;
+        use windows::Win32::Foundation::{S_OK, S_FALSE};
 
         unsafe {
             let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+            // 检查 COM 初始化是否成功（S_OK=成功, S_FALSE=已初始化）
+            if hr != S_OK && hr != S_FALSE {
+                return Err(format!("COM init failed with unexpected HRESULT: {hr:?}"));
+            }
 
             let result = SHEmptyRecycleBinW(None, None, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI);
 
