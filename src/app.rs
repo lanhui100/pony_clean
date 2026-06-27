@@ -25,11 +25,14 @@ enum ScanState {
     Error(String),
 }
 
+enum MonitorState { Connected, Disconnected }
+
 pub struct PonyCleanApp {
     _rt: tokio::runtime::Runtime,
 
     monitor_rx: Option<mpsc::Receiver<monitor::Snapshot>>,
     monitor_cmd_tx: Option<tokio::sync::mpsc::Sender<monitor::MonitorCommand>>,
+    monitor_state: MonitorState,
     latest_snapshot: Option<monitor::Snapshot>,
     pending_kill: Option<tokio::sync::oneshot::Receiver<Result<(), String>>>,
     kill_feedback: Option<String>,
@@ -53,6 +56,7 @@ impl PonyCleanApp {
             _rt: rt,
             monitor_rx: Some(monitor_rx),
             monitor_cmd_tx: Some(cmd_tx),
+            monitor_state: MonitorState::Connected,
             latest_snapshot: None,
             pending_kill: None,
             kill_feedback: None,
@@ -70,7 +74,15 @@ impl PonyCleanApp {
         if let Some(rx) = &self.monitor_rx {
             while let Ok(snapshot) = rx.try_recv() {
                 self.latest_snapshot = Some(snapshot);
+                self.monitor_state = MonitorState::Connected;
                 new_data = true;
+            }
+            // 检查 channel 是否断开（monitor task 已退出）
+            if matches!(rx.try_recv(), Err(mpsc::TryRecvError::Disconnected)) {
+                if let MonitorState::Connected = self.monitor_state {
+                    self.monitor_state = MonitorState::Disconnected;
+                    new_data = true;
+                }
             }
         }
 
@@ -210,14 +222,23 @@ impl PonyCleanApp {
     }
 
     fn render_monitor_panel(&mut self, ui: &mut egui::Ui) {
-        if let Some(snapshot) = &self.latest_snapshot {
-            let s = &snapshot.summary;
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!(
-                    "CPU: {:.1}%  内存: {:.1}GB / {:.1}GB",
-                    s.cpu_total, s.mem_used_mb / 1024.0, s.mem_total_mb / 1024.0,
-                )).color(TEXT_MAIN));
-            });
+        // 断连状态提示
+        match self.monitor_state {
+            MonitorState::Disconnected => {
+                ui.label(egui::RichText::new("未连接 — 监控已停止").color(COLOR_ALERT));
+                // 没有 restart 逻辑（需要重建 monitor task），仅提示
+            }
+            MonitorState::Connected => {
+                if let Some(snapshot) = &self.latest_snapshot {
+                    let s = &snapshot.summary;
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!(
+                            "CPU: {:.1}%  内存: {:.1}GB / {:.1}GB",
+                            s.cpu_total, s.mem_used_mb / 1024.0, s.mem_total_mb / 1024.0,
+                        )).color(TEXT_MAIN));
+                    });
+                }
+            }
         }
 
         if let Some(feedback) = &self.kill_feedback {
@@ -227,11 +248,12 @@ impl PonyCleanApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("process_grid")
                 .striped(true)
-                .min_col_width(60.0)
+                .min_col_width(50.0)
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("Name").color(TEXT_MUTED).strong());
                     ui.label(egui::RichText::new("CPU%").color(TEXT_MUTED).strong());
                     ui.label(egui::RichText::new("Mem").color(TEXT_MUTED).strong());
+                    ui.label(egui::RichText::new("Status").color(TEXT_MUTED).strong());
                     ui.label(egui::RichText::new("").color(TEXT_MUTED));
                     ui.end_row();
 
@@ -245,6 +267,7 @@ impl PonyCleanApp {
                             ui.label(egui::RichText::new(&p.name).color(name_color));
                             ui.label(egui::RichText::new(format!("{:.1}", p.cpu)).color(name_color));
                             ui.label(egui::RichText::new(format!("{:.0}MB", p.mem_mb)).color(name_color));
+                            ui.label(egui::RichText::new(&p.status).color(TEXT_MUTED));
 
                             if ui.button("✕").clicked() {
                                 let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
@@ -358,6 +381,7 @@ impl PonyCleanApp {
     }
 
     fn start_scan(&mut self) {
+        let _guard = self._rt.enter();
         let checked = if let ScanState::Done { checked, .. } = &self.scan_state {
             checked.clone()
         } else {
