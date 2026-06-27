@@ -6,7 +6,6 @@ fn test_monitor_module_is_accessible() {
         cpu: 0.0,
         mem_mb: 0.0,
         status: "Running".into(),
-        cmdline: String::new(),
     };
     assert_eq!(pi.pid, 1);
     assert!(pi.to_string().contains("test"));
@@ -18,17 +17,11 @@ fn test_monitor_module_is_accessible() {
 
 #[test]
 fn test_start_produces_snapshot() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let _guard = rt.enter();
     let (tx, rx) = std::sync::mpsc::channel();
-    let _cmd_tx = pony_clean::monitor::start(tx);
+    let (_cmd_tx, _handle) = pony_clean::monitor::start(tx);
     let snapshot = rx
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("should receive a snapshot within 5s");
-    assert!(
-        snapshot.summary.process_count > 0,
-        "should see at least one process"
-    );
     assert!(
         snapshot.summary.process_count > 0,
         "should see at least one process on a running system"
@@ -37,11 +30,9 @@ fn test_start_produces_snapshot() {
 
 #[test]
 fn test_start_shutdown() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let _guard = rt.enter();
     let (tx, rx) = std::sync::mpsc::channel();
-    let cmd_tx = pony_clean::monitor::start(tx);
-    let _ = cmd_tx.try_send(pony_clean::monitor::MonitorCommand::Shutdown);
+    let (cmd_tx, _handle) = pony_clean::monitor::start(tx);
+    let _ = cmd_tx.send(pony_clean::monitor::MonitorCommand::Shutdown);
     // 发送 Shutdown 后 channel 应关闭，recv 返回 Err
     use std::sync::mpsc::RecvTimeoutError;
     let result = rx.recv_timeout(std::time::Duration::from_secs(3));

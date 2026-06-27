@@ -1,19 +1,31 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod theme;
 
 use app::PonyCleanApp;
 use tracing_subscriber::EnvFilter;
 
-fn main() -> eframe::Result<()> {
+fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("PANIC: {info}");
+        tracing::error!("PANIC: {info}");
+    }));
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    // App 内部通过 self.rt.spawn() 使用 runtime，无需 enter guard
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to create tokio runtime: {e}");
+            eprintln!("FATAL: Failed to create tokio runtime: {e}");
+            std::process::exit(1);
+        }
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -23,9 +35,19 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
+    match eframe::run_native(
         "PonyClean",
         options,
-        Box::new(|_cc| Box::new(PonyCleanApp::new(rt))),
-    )
+        Box::new(|cc| {
+            app::setup_fonts(&cc.egui_ctx);
+            Box::new(PonyCleanApp::new(rt))
+        }),
+    ) {
+        Ok(()) => tracing::info!("PonyClean exited normally"),
+        Err(e) => {
+            tracing::error!("eframe error: {e}");
+            eprintln!("FATAL: eframe error: {e}");
+            std::process::exit(1);
+        }
+    }
 }

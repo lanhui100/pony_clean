@@ -2,8 +2,8 @@
 //!
 //! 每 2s 打印一次进程快照，Ctrl+C 退出。
 
-use std::sync::mpsc;
 use pony_clean::monitor;
+use std::sync::mpsc;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -12,7 +12,7 @@ fn main() {
     let _guard = rt.enter();
 
     let (tx, rx) = mpsc::channel::<monitor::Snapshot>();
-    let _cmd_tx = monitor::start(tx);
+    let (_cmd_tx, _handle) = monitor::start(tx);
 
     println!("PonyClean Monitor Probe — 每 2s 刷新一次，按 Ctrl+C 退出\n");
 
@@ -23,7 +23,10 @@ fn main() {
             summary.cpu_total, summary.mem_used_mb, summary.mem_total_mb, summary.process_count,
         );
         println!("{:-^80}", "");
-        println!("{:>6}  {:<30} {:>6} {:>8}  {}", "PID", "NAME", "CPU%", "MEM", "STATUS");
+        println!(
+            "{:>6}  {:<30} {:>6} {:>8}  STATUS",
+            "PID", "NAME", "CPU%", "MEM"
+        );
         println!("{:-^80}", "");
 
         for p in &snapshot.processes {

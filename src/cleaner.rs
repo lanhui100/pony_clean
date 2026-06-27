@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const BATCH_SIZE: usize = 500;
@@ -25,9 +25,18 @@ pub struct CleanItem {
 /// 扫描进度事件
 #[derive(Clone, Debug)]
 pub enum ScanEvent {
-    Progress { scanned: u64, current: String },
-    ItemsFound { items: Vec<CleanItem>, batch_complete: bool },
-    Done { total_items: u64, total_bytes: u64 },
+    Progress {
+        scanned: u64,
+        current: String,
+    },
+    ItemsFound {
+        items: Vec<CleanItem>,
+        batch_complete: bool,
+    },
+    Done {
+        total_items: u64,
+        total_bytes: u64,
+    },
     Cancelled,
     Warning(String),
 }
@@ -61,7 +70,7 @@ pub struct ScanTarget {
 /// 获取系统盘符
 fn system_drive() -> String {
     let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
-    sys_root[..2].to_string()
+    sys_root.get(..2).unwrap_or("C:").to_string()
 }
 
 /// 展开环境变量（模拟 ExpandEnvironmentStringsW，仅支持基本变量）
@@ -210,9 +219,7 @@ pub fn resolve_targets(targets: &[ScanTarget]) -> Vec<PathBuf> {
                 if let Ok(entries) = std::fs::read_dir(&p) {
                     let results: Vec<PathBuf> = entries
                         .filter_map(|e| e.ok())
-                        .filter(|e| {
-                            e.file_name().to_string_lossy().contains("default")
-                        })
+                        .filter(|e| e.file_name().to_string_lossy().contains("default"))
                         .map(|e| e.path().join("cache2").join("entries"))
                         .collect();
                     if results.is_empty() {
@@ -292,8 +299,13 @@ pub fn start_scan(
 
             let category = targets
                 .iter()
-                .find(|t| expand_env(&t.path).to_lowercase() == target.to_string_lossy().to_lowercase()
-                    || target.to_string_lossy().to_lowercase().starts_with(&expand_env(&t.path).to_lowercase()))
+                .find(|t| {
+                    expand_env(&t.path).to_lowercase() == target.to_string_lossy().to_lowercase()
+                        || target
+                            .to_string_lossy()
+                            .to_lowercase()
+                            .starts_with(&expand_env(&t.path).to_lowercase())
+                })
                 .map(|t| t.category.clone())
                 .unwrap_or_default();
 
@@ -307,7 +319,7 @@ pub fn start_scan(
                 if cancel_token_clone.is_cancelled() {
                     if !batch.is_empty() {
                         let _ = tx.send(ScanEvent::ItemsFound {
-                            items: batch.drain(..).collect(),
+                            items: std::mem::take(&mut batch),
                             batch_complete: false,
                         });
                     }
@@ -339,7 +351,7 @@ pub fn start_scan(
 
                 if batch.len() >= BATCH_SIZE {
                     let _ = tx.send(ScanEvent::ItemsFound {
-                        items: batch.drain(..).collect(),
+                        items: std::mem::take(&mut batch),
                         batch_complete: false,
                     });
                 }
@@ -367,16 +379,16 @@ pub fn start_scan(
         });
     });
 
-    // 后台命令处理器
+    // 后台命令处理器（spawn_blocking 因为 cmd_rx 是 std::sync::mpsc）
     let cancel_token_cmd = cancel_token.clone();
-    tokio::spawn(async move {
+    tokio::task::spawn_blocking(move || {
         while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
                 CleanCommand::CancelScan => {
                     cancel_token_cmd.cancel();
                 }
                 CleanCommand::Shutdown => break,
-                _ => {} // Execute 和 EmptyRecycleBin 由 UI 直接调用
+                _ => {}
             }
         }
     });
@@ -400,7 +412,9 @@ pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
             Ok(p) => p,
             Err(e) => {
                 result.failed += 1;
-                result.errors.push(format!("Cannot resolve path {}: {e}", path.display()));
+                result
+                    .errors
+                    .push(format!("Cannot resolve path {}: {e}", path.display()));
                 continue;
             }
         };
@@ -408,12 +422,16 @@ pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
         // 后端强制执行安全验证
         if is_path_protected(&safe_path) {
             result.failed += 1;
-            result.errors.push(format!("Protected path: {}", safe_path.display()));
+            result
+                .errors
+                .push(format!("Protected path: {}", safe_path.display()));
             continue;
         }
         if !is_path_allowed(&safe_path, &targets) {
             result.failed += 1;
-            result.errors.push(format!("Path not in scan scope: {}", safe_path.display()));
+            result
+                .errors
+                .push(format!("Path not in scan scope: {}", safe_path.display()));
             continue;
         }
 
@@ -444,9 +462,9 @@ pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
 fn delete_file_delayed_windows(path: &Path) -> Result<(), String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Storage::FileSystem::MoveFileExW;
-    use windows::Win32::Storage::FileSystem::MOVEFILE_DELAY_UNTIL_REBOOT;
     use windows::Win32::Foundation::GetLastError;
+    use windows::Win32::Storage::FileSystem::MOVEFILE_DELAY_UNTIL_REBOOT;
+    use windows::Win32::Storage::FileSystem::MoveFileExW;
 
     // 拒绝含空字节的路径（防止 API 截断）
     let path_str = path.to_string_lossy();
@@ -459,7 +477,13 @@ fn delete_file_delayed_windows(path: &Path) -> Result<(), String> {
         .chain(std::iter::once(0))
         .collect();
 
-    let result = unsafe { MoveFileExW(windows::core::PCWSTR(wide.as_ptr()), None, MOVEFILE_DELAY_UNTIL_REBOOT) };
+    let result = unsafe {
+        MoveFileExW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            None,
+            MOVEFILE_DELAY_UNTIL_REBOOT,
+        )
+    };
     if result.is_ok() {
         Ok(())
     } else {
@@ -478,9 +502,13 @@ pub fn empty_recycle_bin() -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
-        use windows::Win32::UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI};
-        use windows::Win32::Foundation::{S_OK, S_FALSE};
+        use windows::Win32::Foundation::{S_FALSE, S_OK};
+        use windows::Win32::System::Com::{
+            COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+        };
+        use windows::Win32::UI::Shell::{
+            SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHEmptyRecycleBinW,
+        };
 
         unsafe {
             let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -550,13 +578,17 @@ mod tests {
 
     #[test]
     fn test_is_path_protected_system32() {
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\kernel32.dll")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\kernel32.dll"
+        )));
         assert!(is_path_protected(Path::new(r"C:\Windows\System32")));
     }
 
     #[test]
     fn test_is_path_protected_installer() {
-        assert!(is_path_protected(Path::new(r"C:\Windows\Installer\some.msi")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\Installer\some.msi"
+        )));
     }
 
     #[test]
@@ -567,12 +599,16 @@ mod tests {
     #[test]
     fn test_is_path_protected_program_files() {
         assert!(is_path_protected(Path::new(r"C:\Program Files\SomeApp")));
-        assert!(is_path_protected(Path::new(r"C:\Program Files (x86)\SomeApp")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Program Files (x86)\SomeApp"
+        )));
     }
 
     #[test]
     fn test_is_path_protected_windows_apps() {
-        assert!(is_path_protected(Path::new(r"C:\Program Files\WindowsApps\SomePkg")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Program Files\WindowsApps\SomePkg"
+        )));
     }
 
     #[test]
@@ -639,11 +675,15 @@ mod tests {
         ];
         let resolved = resolve_targets(&targets);
         assert!(
-            resolved.iter().any(|p| p.to_string_lossy().contains("Temp")),
+            resolved
+                .iter()
+                .any(|p| p.to_string_lossy().contains("Temp")),
             "should include Temp"
         );
         assert!(
-            !resolved.iter().any(|p| p.to_string_lossy().contains("System32")),
+            !resolved
+                .iter()
+                .any(|p| p.to_string_lossy().contains("System32")),
             "should NOT include System32"
         );
     }

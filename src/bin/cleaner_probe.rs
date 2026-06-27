@@ -2,8 +2,8 @@
 //!
 //! 扫描安全路径并打印可清理项列表。dry-run 模式，不执行删除。
 
-use std::sync::mpsc;
 use pony_clean::cleaner::{self, ScanEvent};
+use std::sync::mpsc;
 
 fn main() {
     let (tx, rx) = mpsc::channel::<ScanEvent>();
@@ -12,7 +12,6 @@ fn main() {
     match cleaner::start_scan(tx) {
         Err(e) => {
             eprintln!("Failed to start scan: {e}");
-            return;
         }
         Ok((_cmd_tx, _cancel_token)) => {
             println!("PonyClean Cleaner Probe — 扫描安全路径...\n");
@@ -27,7 +26,10 @@ fn main() {
                             println!("  [{:>8.2}MB] {}", mb, item.path.display());
                         }
                     }
-                    ScanEvent::Done { total_items, total_bytes } => {
+                    ScanEvent::Done {
+                        total_items,
+                        total_bytes,
+                    } => {
                         let mb = total_bytes as f64 / (1024.0 * 1024.0);
                         println!("\nScan complete: {total_items} files, {mb:.2}MB found");
                         break;

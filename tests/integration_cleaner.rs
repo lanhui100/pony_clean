@@ -17,19 +17,15 @@ fn test_start_scan_scans_temp() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
     let (tx, rx) = std::sync::mpsc::channel();
-    let (cmd, cancel) = pony_clean::cleaner::start_scan(tx).expect("scan should start on normal system");
+    let (cmd, cancel) =
+        pony_clean::cleaner::start_scan(tx).expect("scan should start on normal system");
 
     let mut found_done = false;
     let start = std::time::Instant::now();
     while start.elapsed() < std::time::Duration::from_secs(3) {
-        if let Ok(event) = rx.try_recv() {
-            match event {
-                pony_clean::cleaner::ScanEvent::Done { .. } => {
-                    found_done = true;
-                    break;
-                }
-                _ => {}
-            }
+        if let Ok(pony_clean::cleaner::ScanEvent::Done { .. }) = rx.try_recv() {
+            found_done = true;
+            break;
         }
     }
     if !found_done {

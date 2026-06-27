@@ -1,0 +1,30 @@
+{
+  "name": "pony-clean",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:tauri": "cd /d .. && node frontend/node_modules/@tauri-apps/cli/tauri.js dev",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "class-variance-authority": "^0.7",
+    "clsx": "^2",
+    "lucide-vue-next": "^0.577.0",
+    "motion-v": "^2.3.0",
+    "tailwind-merge": "^3",
+    "vue": "^3.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4",
+    "@tauri-apps/cli": "^2",
+    "tailwindcss": "^4",
+    "typescript": "~5.7",
+    "vite": "^8.1",
+    "@vitejs/plugin-vue": "^6",
+    "vue-tsc": "^2"
+  }
+}

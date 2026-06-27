@@ -1,5 +1,8 @@
 use std::fmt;
+use std::sync::mpsc;
+use std::time::Duration;
 use sysinfo::Pid;
+use sysinfo::System;
 use tokio::sync::oneshot;
 
 /// 进程信息快照
@@ -10,8 +13,6 @@ pub struct ProcessInfo {
     pub cpu: f32,
     pub mem_mb: f64,
     pub status: String,
-    /// 完整命令行（仅用于进程识别，不在 Display 中输出以避免敏感信息泄露）
-    pub cmdline: String,
 }
 
 /// 系统级聚合指标
@@ -43,15 +44,14 @@ pub enum MonitorCommand {
 
 /// 按 CPU 降序排列进程列表
 pub fn sort_processes(procs: &mut [ProcessInfo]) {
-    procs.sort_by(|a, b| {
-        match (a.cpu.is_nan(), b.cpu.is_nan()) {
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            _ => b.cpu
-                .partial_cmp(&a.cpu)
-                .unwrap_or(std::cmp::Ordering::Equal),
-        }
+    procs.sort_by(|a, b| match (a.cpu.is_nan(), b.cpu.is_nan()) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        _ => b
+            .cpu
+            .partial_cmp(&a.cpu)
+            .unwrap_or(std::cmp::Ordering::Equal),
     });
 }
 
@@ -78,97 +78,85 @@ pub fn kill_process(system: &sysinfo::System, pid: u32, expected_name: &str) -> 
     }
 }
 
-use std::sync::mpsc;
-use std::time::Duration;
-use sysinfo::System;
-use tokio::sync::mpsc as tokio_mpsc;
-
-/// 启动进程监控任务
+/// 启动进程监控任务（独立后台线程）
 ///
 /// # CPU 首次采样说明
 /// sysinfo 的 cpu_usage() 是两次 refresh 间的平均值，首轮始终为 0。
 /// start() 内部会先做哑刷新，等待一个间隔后才开始正式轮询。
 ///
-/// System 在 tokio::spawn 内部创建，避免在 GUI 线程阻塞。
-/// 返回 tokio mpsc Sender，UI 侧通过 `try_send()` 非阻塞发送命令。
-/// 丢弃返回值将导致命令通道关闭，后台任务自动退出。
+/// 使用 std::thread 而非 tokio::spawn，避免阻塞 tokio 工作线程。
+/// UI 侧通过 std::sync::mpsc::Sender::try_send() 非阻塞发送命令。
 #[must_use]
-pub fn start(tx: mpsc::Sender<Snapshot>) -> tokio_mpsc::Sender<MonitorCommand> {
-    let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<MonitorCommand>(16);
+pub fn start(
+    tx: mpsc::Sender<Snapshot>,
+) -> (mpsc::Sender<MonitorCommand>, std::thread::JoinHandle<()>) {
+    let (cmd_tx, cmd_rx) = mpsc::channel::<MonitorCommand>();
 
-    tokio::spawn(async move {
+    let handle = std::thread::spawn(move || {
         let mut system = System::new();
-
-        // 哑刷新：丢弃首次 CPU = 0 的数据
-        system.refresh_processes();
-
-        // 等待一个间隔，让 sysinfo 采集到真实 CPU 差值
-        // 期间也响应命令，避免启动时有 2s 盲区
-        let warmup = tokio::time::sleep(Duration::from_secs(2));
-        tokio::pin!(warmup);
+        let mut first_run = true;
 
         loop {
-            tokio::select! {
-                _ = warmup.as_mut() => {
-                    break;
-                }
-                cmd = cmd_rx.recv() => {
-                    if handle_command(cmd, &system) {
-                        return;
+            // 500ms 子间隔轮询，避免 Shutdown 响应延迟过长
+            for _ in 0..10 {
+                match cmd_rx.recv_timeout(Duration::from_millis(500)) {
+                    Ok(cmd) => {
+                        if handle_command(Some(cmd), &system) {
+                            return;
+                        }
                     }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 }
             }
-        }
 
-        let mut interval = tokio::time::interval(Duration::from_secs(2));
+            system.refresh_cpu();
+            system.refresh_processes();
+            system.refresh_memory();
 
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    system.refresh_processes();
-
-                    let summary = SystemSummary {
-                        cpu_total: system.global_cpu_info().cpu_usage(),
-                        mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
-                        mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
-                        process_count: system.processes().len(),
-                    };
-
-                    let mut processes: Vec<ProcessInfo> = system
-                        .processes()
-                        .iter()
-                        .map(|(&pid, process)| ProcessInfo {
-                            pid: pid.as_u32(),
-                            name: process.name().to_string(),
-                            cpu: process.cpu_usage(),
-                            mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
-                            status: format!("{:?}", process.status()),
-                            // NUL 分隔保留参数边界，UI 侧按需拆解
-                            cmdline: process.cmd().join("\0"),
-                        })
-                        .collect();
-
-                    sort_processes(&mut processes);
-
-                    let _ = tx.send(Snapshot { summary, processes });
-                }
-                cmd = cmd_rx.recv() => {
-                    if handle_command(cmd, &system) {
-                        return;
-                    }
-                }
+            // 首次 refresh 的 CPU 值为 0，跳过
+            if first_run {
+                first_run = false;
+                continue;
             }
+
+            // 处理 NaN：sysinfo 在进程退出等边界情况可能返回 NaN
+            let cpu_total = system.global_cpu_info().cpu_usage();
+            let cpu_total = if cpu_total.is_nan() { 0.0 } else { cpu_total };
+
+            let summary = SystemSummary {
+                cpu_total,
+                mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
+                mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
+                process_count: system.processes().len(),
+            };
+
+            let count = system.processes().len();
+            let mut processes = Vec::with_capacity(count);
+            for (&pid, process) in system.processes().iter() {
+                processes.push(ProcessInfo {
+                    pid: pid.as_u32(),
+                    name: process.name().to_string(),
+                    cpu: if process.cpu_usage().is_nan() {
+                        0.0
+                    } else {
+                        process.cpu_usage()
+                    },
+                    mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
+                    status: format!("{:?}", process.status()),
+                });
+            }
+
+            sort_processes(&mut processes);
+            let _ = tx.send(Snapshot { summary, processes });
         }
     });
 
-    cmd_tx
+    (cmd_tx, handle)
 }
 
 /// 处理命令，返回 true 表示应当退出
-fn handle_command(
-    cmd: Option<MonitorCommand>,
-    system: &sysinfo::System,
-) -> bool {
+fn handle_command(cmd: Option<MonitorCommand>, system: &sysinfo::System) -> bool {
     match cmd {
         Some(MonitorCommand::Kill { pid, name, resp }) => {
             let result = kill_process(system, pid, &name);
@@ -209,7 +197,10 @@ mod tests {
         let result = kill_process(&system, 999_999, "test");
         let err = result.unwrap_err();
         assert!(err.contains("999999"), "error should mention PID");
-        assert!(err.contains("not found"), "error should mention 'not found'");
+        assert!(
+            err.contains("not found"),
+            "error should mention 'not found'"
+        );
     }
 
     #[test]
@@ -221,7 +212,6 @@ mod tests {
                 cpu: 50.0,
                 mem_mb: 150.0,
                 status: "Running".into(),
-                cmdline: String::new(),
             },
             ProcessInfo {
                 pid: 1,
@@ -229,7 +219,6 @@ mod tests {
                 cpu: 10.0,
                 mem_mb: 100.0,
                 status: "Running".into(),
-                cmdline: String::new(),
             },
             ProcessInfo {
                 pid: 2,
@@ -237,7 +226,6 @@ mod tests {
                 cpu: 90.0,
                 mem_mb: 200.0,
                 status: "Running".into(),
-                cmdline: String::new(),
             },
         ];
         sort_processes(&mut processes);
@@ -255,7 +243,6 @@ mod tests {
                 cpu: 50.0,
                 mem_mb: 100.0,
                 status: "Running".into(),
-                cmdline: String::new(),
             },
             ProcessInfo {
                 pid: 1,
@@ -263,7 +250,6 @@ mod tests {
                 cpu: 50.0,
                 mem_mb: 100.0,
                 status: "Running".into(),
-                cmdline: String::new(),
             },
         ];
         sort_processes(&mut processes);
@@ -279,7 +265,6 @@ mod tests {
             cpu: 45.5,
             mem_mb: 256.0,
             status: "Running".into(),
-            cmdline: String::new(),
         };
         let s = p.to_string();
         assert!(s.contains("1234"));
@@ -287,19 +272,5 @@ mod tests {
         assert!(s.contains("45.5%"));
         assert!(s.contains("256.0MB"));
         assert!(s.contains("Running"));
-    }
-
-    #[test]
-    fn test_display_omits_cmdline() {
-        let p = ProcessInfo {
-            pid: 1,
-            name: "proc".into(),
-            cpu: 0.0,
-            mem_mb: 0.0,
-            status: "Running".into(),
-            cmdline: "secret=password123".into(),
-        };
-        let s = p.to_string();
-        assert!(!s.contains("password123"));
     }
 }
