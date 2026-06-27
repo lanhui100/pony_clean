@@ -91,6 +91,8 @@ use tokio::sync::mpsc as tokio_mpsc;
 ///
 /// System 在 tokio::spawn 内部创建，避免在 GUI 线程阻塞。
 /// 返回 tokio mpsc Sender，UI 侧通过 `try_send()` 非阻塞发送命令。
+/// 丢弃返回值将导致命令通道关闭，后台任务自动退出。
+#[must_use]
 pub fn start(tx: mpsc::Sender<Snapshot>) -> tokio_mpsc::Sender<MonitorCommand> {
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<MonitorCommand>(16);
 

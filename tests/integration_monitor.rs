@@ -29,10 +29,9 @@ fn test_start_produces_snapshot() {
         snapshot.summary.process_count > 0,
         "should see at least one process"
     );
-    // sysinfo 在某些环境下可能返回 0 total_memory，只断言进程数
     assert!(
-        snapshot.summary.mem_total_mb >= 0.0,
-        "total memory should be non-negative"
+        snapshot.summary.process_count > 0,
+        "should see at least one process on a running system"
     );
 }
 
@@ -44,6 +43,10 @@ fn test_start_shutdown() {
     let cmd_tx = pony_clean::monitor::start(tx);
     let _ = cmd_tx.try_send(pony_clean::monitor::MonitorCommand::Shutdown);
     // 发送 Shutdown 后 channel 应关闭，recv 返回 Err
+    use std::sync::mpsc::RecvTimeoutError;
     let result = rx.recv_timeout(std::time::Duration::from_secs(3));
-    assert!(result.is_err(), "channel should close after shutdown");
+    assert!(
+        matches!(result, Err(RecvTimeoutError::Disconnected)),
+        "channel should be disconnected after shutdown, got: {result:?}"
+    );
 }

@@ -8,7 +8,8 @@ use pony_clean::monitor;
 fn main() {
     tracing_subscriber::fmt::init();
 
-    let _rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let _guard = rt.enter();
 
     let (tx, rx) = mpsc::channel::<monitor::Snapshot>();
     let _cmd_tx = monitor::start(tx);
