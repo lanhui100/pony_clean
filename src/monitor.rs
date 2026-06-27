@@ -1,4 +1,5 @@
 /// 进程监控模块 — 占位
+#[must_use]
 pub fn placeholder() -> &'static str {
     "monitor module ready"
 }

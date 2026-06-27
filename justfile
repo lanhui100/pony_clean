@@ -26,9 +26,9 @@ clean:
     cargo clean
 
 doc:
-    cargo doc --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
-ci: fmt-check build lint test
+ci: fmt-check build lint test doc
 
 release:
     cargo build --release

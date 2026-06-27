@@ -1,4 +1,5 @@
 /// C盘清理模块 — 占位
+#[must_use]
 pub fn placeholder() -> &'static str {
     "cleaner module ready"
 }
