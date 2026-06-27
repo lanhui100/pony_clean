@@ -44,9 +44,14 @@ pub enum MonitorCommand {
 /// 按 CPU 降序排列进程列表
 pub fn sort_processes(procs: &mut [ProcessInfo]) {
     procs.sort_by(|a, b| {
-        b.cpu
-            .partial_cmp(&a.cpu)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        match (a.cpu.is_nan(), b.cpu.is_nan()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => b.cpu
+                .partial_cmp(&a.cpu)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        }
     });
 }
 
@@ -76,17 +81,18 @@ pub fn kill_process(system: &sysinfo::System, pid: u32, expected_name: &str) -> 
 use std::sync::mpsc;
 use std::time::Duration;
 use sysinfo::System;
+use tokio::sync::mpsc as tokio_mpsc;
 
 /// 启动进程监控任务
 ///
 /// # CPU 首次采样说明
 /// sysinfo 的 cpu_usage() 是两次 refresh 间的平均值，首轮始终为 0。
-/// start() 内部会先做哑刷新，再 sleep 一个间隔，然后才开始正式轮询。
+/// start() 内部会先做哑刷新，等待一个间隔后才开始正式轮询。
 ///
 /// System 在 tokio::spawn 内部创建，避免在 GUI 线程阻塞。
-/// 返回 cmd_tx，用于向后台发送命令。
-pub fn start(tx: mpsc::Sender<Snapshot>) -> mpsc::Sender<MonitorCommand> {
-    let (cmd_tx, cmd_rx) = mpsc::channel::<MonitorCommand>();
+/// 返回 tokio mpsc Sender，UI 侧通过 `try_send()` 非阻塞发送命令。
+pub fn start(tx: mpsc::Sender<Snapshot>) -> tokio_mpsc::Sender<MonitorCommand> {
+    let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<MonitorCommand>(16);
 
     tokio::spawn(async move {
         let mut system = System::new();
@@ -95,56 +101,82 @@ pub fn start(tx: mpsc::Sender<Snapshot>) -> mpsc::Sender<MonitorCommand> {
         system.refresh_processes();
 
         // 等待一个间隔，让 sysinfo 采集到真实 CPU 差值
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // 期间也响应命令，避免启动时有 2s 盲区
+        let warmup = tokio::time::sleep(Duration::from_secs(2));
+        tokio::pin!(warmup);
+
+        loop {
+            tokio::select! {
+                _ = warmup.as_mut() => {
+                    break;
+                }
+                cmd = cmd_rx.recv() => {
+                    if handle_command(cmd, &system) {
+                        return;
+                    }
+                }
+            }
+        }
 
         let mut interval = tokio::time::interval(Duration::from_secs(2));
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {
+                    system.refresh_processes();
 
-            // 处理挂起的命令
-            loop {
-                match cmd_rx.try_recv() {
-                    Ok(MonitorCommand::Kill { pid, name, resp }) => {
-                        let result = kill_process(&system, pid, &name);
-                        let _ = resp.send(result);
-                    }
-                    Ok(MonitorCommand::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => {
+                    let summary = SystemSummary {
+                        cpu_total: system.global_cpu_info().cpu_usage(),
+                        mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
+                        mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
+                        process_count: system.processes().len(),
+                    };
+
+                    let mut processes: Vec<ProcessInfo> = system
+                        .processes()
+                        .iter()
+                        .map(|(&pid, process)| ProcessInfo {
+                            pid: pid.as_u32(),
+                            name: process.name().to_string(),
+                            cpu: process.cpu_usage(),
+                            mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
+                            status: format!("{:?}", process.status()),
+                            // NUL 分隔保留参数边界，UI 侧按需拆解
+                            cmdline: process.cmd().join("\0"),
+                        })
+                        .collect();
+
+                    sort_processes(&mut processes);
+
+                    let _ = tx.send(Snapshot { summary, processes });
+                }
+                cmd = cmd_rx.recv() => {
+                    if handle_command(cmd, &system) {
                         return;
                     }
-                    Err(mpsc::TryRecvError::Empty) => break,
                 }
             }
-
-            system.refresh_processes();
-
-            let summary = SystemSummary {
-                cpu_total: system.global_cpu_info().cpu_usage(),
-                mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
-                mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
-                process_count: system.processes().len(),
-            };
-
-            let mut processes: Vec<ProcessInfo> = system
-                .processes()
-                .iter()
-                .map(|(&pid, process)| ProcessInfo {
-                    pid: pid.as_u32(),
-                    name: process.name().to_string(),
-                    cpu: process.cpu_usage(),
-                    mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
-                    status: format!("{:?}", process.status()),
-                    cmdline: process.cmd().join(" "),
-                })
-                .collect();
-
-            sort_processes(&mut processes);
-
-            let _ = tx.send(Snapshot { summary, processes });
         }
     });
 
     cmd_tx
+}
+
+/// 处理命令，返回 true 表示应当退出
+fn handle_command(
+    cmd: Option<MonitorCommand>,
+    system: &sysinfo::System,
+) -> bool {
+    match cmd {
+        Some(MonitorCommand::Kill { pid, name, resp }) => {
+            let result = kill_process(system, pid, &name);
+            if let Err(e) = resp.send(result) {
+                tracing::warn!("Failed to send kill result: receiver dropped ({:?})", e);
+            }
+            false
+        }
+        Some(MonitorCommand::Shutdown) | None => true,
+    }
 }
 
 impl fmt::Display for ProcessInfo {
@@ -170,10 +202,12 @@ mod tests {
     }
 
     #[test]
-    fn test_kill_process_name_mismatch() {
+    fn test_kill_process_error_format() {
         let system = sysinfo::System::new();
-        let result = kill_process(&system, 999_999, "");
-        assert!(result.is_err());
+        let result = kill_process(&system, 999_999, "test");
+        let err = result.unwrap_err();
+        assert!(err.contains("999999"), "error should mention PID");
+        assert!(err.contains("not found"), "error should mention 'not found'");
     }
 
     #[test]
