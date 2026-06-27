@@ -1,0 +1,40 @@
+[package]
+name = "pony_clean"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Windows 极简桌面小组件 — 进程监控报警 + C盘安全清理"
+authors = ["pony"]
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.dev]
+panic = "unwind"
+opt-level = 1
+
+[dependencies]
+egui = "0.27"
+eframe = { version = "0.27", default-features = false, features = ["wgpu"] }
+wgpu = { version = "0.19", features = ["dx12"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+sysinfo = "0.30"
+jwalk = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "2"
+tokio-util = "0.7"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.54", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_Shell",
+    "Win32_System_Threading",
+    "Win32_System_Com",
+] }

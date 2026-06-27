@@ -1,0 +1,8 @@
+{
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.cargo.allFeatures": true,
+    "editor.formatOnSave": true,
+    "files.exclude": {
+        "target/": true
+    }
+}

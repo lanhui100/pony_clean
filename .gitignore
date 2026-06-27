@@ -1,0 +1,25 @@
+# Rust
+/target
+**/*.rs.bk
+
+# IDE
+.idea/
+*.iml
+/.vscode/*
+!/.vscode/settings.json
+!/.vscode/extensions.json
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# Build artifacts
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.obj
