@@ -14,12 +14,12 @@ const TEXT_MAIN: Color32 = Color32::from_rgb(220, 222, 228);
 const TEXT_MUTED: Color32 = Color32::from_rgb(148, 155, 164);
 const COLOR_ALERT: Color32 = Color32::from_rgb(207, 102, 102);
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Tab { Monitor, Cleaner }
 
 enum ScanState {
     Idle,
-    Scanning { cancel_token: tokio_util::sync::CancellationToken, scanned: u64, current: String },
+    Scanning { cancel_token: tokio_util::sync::CancellationToken, scanned: u64, current: String, accumulated_items: Vec<cleaner::CleanItem>, accumulated_bytes: u64, checked: HashSet<PathBuf> },
     Done { items: Vec<cleaner::CleanItem>, checked: HashSet<PathBuf>, total_bytes: u64 },
     Cancelled,
     Error(String),
@@ -109,34 +109,32 @@ impl PonyCleanApp {
                 }
                 self.scan_start_time = Some(Instant::now());
             }
-            cleaner::ScanEvent::ItemsFound { items: new_items, .. } => {
-                if let ScanState::Scanning { .. } = self.scan_state {
-                    // 合并到 Done 中暂存，批次自动 append
-                    let old_checked = if let ScanState::Done { checked, .. } =
-                        std::mem::replace(&mut self.scan_state, ScanState::Idle)
-                    {
-                        checked
-                    } else {
-                        HashSet::new()
-                    };
-
-                    let bytes: u64 = new_items.iter().map(|i| i.size_bytes).sum();
-                    self.scan_state = ScanState::Done {
-                        items: new_items,
-                        checked: old_checked,
-                        total_bytes: bytes,
-                    };
+            cleaner::ScanEvent::ItemsFound { items, .. } => {
+                if let ScanState::Scanning { ref mut accumulated_items, ref mut accumulated_bytes, .. } = self.scan_state {
+                    let batch_bytes: u64 = items.iter().map(|i| i.size_bytes).sum();
+                    accumulated_items.extend(items);
+                    *accumulated_bytes += batch_bytes;
                 }
             }
             cleaner::ScanEvent::Done { total_items: _total_items, total_bytes } => {
-                if let ScanState::Done { items, checked, .. } =
-                    std::mem::replace(&mut self.scan_state, ScanState::Idle)
-                {
-                    self.scan_state = ScanState::Done {
-                        items,
-                        checked,
-                        total_bytes,
-                    };
+                match std::mem::replace(&mut self.scan_state, ScanState::Idle) {
+                    ScanState::Done { items, checked, .. } => {
+                        self.scan_state = ScanState::Done { items, checked, total_bytes };
+                    }
+                    ScanState::Scanning { accumulated_items, checked, .. } => {
+                        self.scan_state = ScanState::Done {
+                            items: accumulated_items,
+                            checked,
+                            total_bytes,
+                        };
+                    }
+                    _ => {
+                        self.scan_state = ScanState::Done {
+                            items: vec![],
+                            checked: HashSet::new(),
+                            total_bytes: 0,
+                        };
+                    }
                 }
                 self.scan_start_time = None;
             }
@@ -174,7 +172,7 @@ impl PonyCleanApp {
                     let resp = ui.interact(
                         ui.min_rect(),
                         ui.id().with("drag"),
-                        egui::Sense::click(),
+                        egui::Sense::click_and_drag(),
                     );
                     if resp.drag_started() || resp.dragged() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -190,11 +188,8 @@ impl PonyCleanApp {
                             for (label, tab) in &tabs {
                                 let selected = self.selected_tab == *tab;
                                 if ui.selectable_label(selected, *label).clicked() {
-                                    self.selected_tab = Tab::Monitor;
-                                    if *tab == Tab::Cleaner {
-                                        self.selected_tab = Tab::Cleaner;
-                                    }
-                                }
+                            self.selected_tab = *tab;
+                        }
                             }
                         });
                     });
@@ -254,11 +249,13 @@ impl PonyCleanApp {
                             if ui.button("✕").clicked() {
                                 let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                                 if let Some(tx) = &self.monitor_cmd_tx {
-                                    let _ = tx.try_send(monitor::MonitorCommand::Kill {
+                                    if tx.try_send(monitor::MonitorCommand::Kill {
                                         pid: p.pid,
                                         name: p.name.clone(),
                                         resp: resp_tx,
-                                    });
+                                    }).is_err() {
+                                        tracing::warn!("Kill command dropped: channel full");
+                                    }
                                 }
                                 self.pending_kill = Some(resp_rx);
                                 self.kill_feedback = None;
@@ -283,7 +280,7 @@ impl PonyCleanApp {
                     should_start_scan = true;
                 }
             }
-            &mut ScanState::Scanning { ref scanned, ref current, ref cancel_token } => {
+            &mut ScanState::Scanning { ref scanned, ref current, ref cancel_token, .. } => {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(format!("扫描中... ({scanned} files)")).color(TEXT_MUTED));
                     if ui.button("取消").clicked() {
@@ -361,6 +358,11 @@ impl PonyCleanApp {
     }
 
     fn start_scan(&mut self) {
+        let checked = if let ScanState::Done { checked, .. } = &self.scan_state {
+            checked.clone()
+        } else {
+            HashSet::new()
+        };
         let (tx, rx) = mpsc::channel();
         match cleaner::start_scan(tx) {
             Ok((cmd, cancel_token)) => {
@@ -370,6 +372,9 @@ impl PonyCleanApp {
                     cancel_token,
                     scanned: 0,
                     current: "Starting...".into(),
+                    accumulated_items: Vec::new(),
+                    accumulated_bytes: 0,
+                    checked,
                 };
                 self.scan_start_time = Some(Instant::now());
             }
@@ -386,7 +391,7 @@ impl eframe::App for PonyCleanApp {
         if let ScanState::Scanning { .. } = &self.scan_state {
             if let Some(start) = self.scan_start_time {
                 if start.elapsed().as_secs() > 120 {
-                    self.scan_state = ScanState::Error("扫描超时".into());
+                    self.scan_state = ScanState::Error("扫描超时，请重试".into());
                     self.scan_start_time = None;
                     ctx.request_repaint();
                 }
