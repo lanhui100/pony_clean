@@ -14,16 +14,17 @@
 3. 极简半透明悬浮窗 UI，异步无阻塞，响应快、内存低
 
 ## 当前状态
-- 最关键任务: **TASK-001** 项目脚手架搭建 — 是一切后续开发的基础
+- 最关键任务: **TASK-002** 进程监控模块 — 核心功能的第一步
+- 已完成脚手架: ✅ TASK-001 — `cargo build` / `cargo test` / `cargo clippy` / `cargo fmt` 全部通过
 - 最大阻塞: 无
-- 下一步最小动作: 完成 TASK-001，确保 `cargo build` 通过
+- 下一步最小动作: 启动 TASK-002 进程监控模块开发
 
 ## 任务概览
 
 | ID | 标题 | 状态 | 优先级 | 负责人 | 下一步 |
 |---|---|---|---|---|---|
-| TASK-001 | 项目脚手架搭建 | Ready | P0 | @self | 开始编码 |
-| TASK-002 | 进程监控模块 | Backlog | P0 | @self | 等待 TASK-001 |
+| TASK-001 | 项目脚手架搭建 | Done | P0 | @self | ✅ 已完成 |
+| TASK-002 | 进程监控模块 | Ready | P0 | @self | 开始编码 |
 | TASK-003 | C盘扫描与安全清理模块 | Backlog | P0 | @self | 等待 TASK-001 |
 | TASK-004 | UI 集成与数据流打通 | Backlog | P1 | @self | 等待 TASK-002/003 |
 
