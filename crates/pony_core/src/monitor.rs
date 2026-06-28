@@ -181,49 +181,67 @@ pub fn start_shared(
 ) -> (mpsc::Sender<MonitorCommand>, thread::JoinHandle<()>) {
     let (cmd_tx, cmd_rx) = mpsc::channel::<MonitorCommand>();
     let handle = thread::spawn(move || {
-        let mut system = System::new();
-        let mut first_run = true;
-        loop {
-            for _ in 0..10 {
-                match cmd_rx.recv_timeout(Duration::from_millis(500)) {
-                    Ok(cmd) => {
-                        if handle_command(Some(cmd), &system) {
-                            return;
-                        }
+        let poll_interval_ms = 2000u64;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut system = System::new();
+            loop {
+                let deadline = std::time::Instant::now() + Duration::from_millis(poll_interval_ms);
+                loop {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        break;
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    match cmd_rx.recv_timeout(remaining) {
+                        Ok(cmd) => {
+                            if handle_command(Some(cmd), &system) {
+                                return;
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => break,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+
+                system.refresh_cpu();
+                system.refresh_processes();
+                system.refresh_memory();
+
+                let cpu_total = system.global_cpu_info().cpu_usage();
+                let cpu_total = if cpu_total.is_nan() { 0.0 } else { cpu_total };
+                let num_cpus = system.cpus().len().max(1) as f32;
+                let summary = SystemSummary {
+                    cpu_total,
+                    mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
+                    mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
+                    process_count: system.processes().len(),
+                };
+                let mut processes = Vec::with_capacity(system.processes().len());
+                for (&pid, process) in system.processes().iter() {
+                    processes.push(ProcessInfo {
+                        pid: pid.as_u32(),
+                        name: process.name().to_string(),
+                        cpu: (if process.cpu_usage().is_nan() {
+                            0.0
+                        } else {
+                            process.cpu_usage()
+                        }) / num_cpus,
+                        mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
+                        status: format!("{:?}", process.status()),
+                    });
+                }
+                sort_processes(&mut processes);
+                if let Ok(mut guard) = snapshot.write() {
+                    *guard = Some(Snapshot { summary, processes });
                 }
             }
-            system.refresh_cpu();
-            system.refresh_processes();
-            system.refresh_memory();
-            if first_run {
-                first_run = false;
-                continue;
-            }
-            let cpu_total = system.global_cpu_info().cpu_usage();
-            let cpu_total = if cpu_total.is_nan() { 0.0 } else { cpu_total };
-            let num_cpus = system.cpus().len().max(1) as f32;
-            let summary = SystemSummary {
-                cpu_total,
-                mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
-                mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
-                process_count: system.processes().len(),
-            };
-            let mut processes = Vec::with_capacity(system.processes().len());
-            for (&pid, process) in system.processes().iter() {
-                processes.push(ProcessInfo {
-                    pid: pid.as_u32(),
-                    name: process.name().to_string(),
-                    cpu: (if process.cpu_usage().is_nan() { 0.0 } else { process.cpu_usage() }) / num_cpus,
-                    mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
-                    status: format!("{:?}", process.status()),
-                });
-            }
-            sort_processes(&mut processes);
+        }));
+
+        if let Err(e) = result {
+            let msg = format!("Monitor thread panicked: {:?}", e);
+            tracing::error!("{}", msg);
             if let Ok(mut guard) = snapshot.write() {
-                *guard = Some(Snapshot { summary, processes });
+                *guard = None;
             }
         }
     });

@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { ref, nextTick } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
-import { Activity, HardDrive } from 'lucide-vue-next'
+import { Activity, HardDrive, Search } from 'lucide-vue-next'
 import PonyIcon from './PonyIcon.vue'
 
 const appWindow = getCurrentWindow()
@@ -12,6 +13,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:activeTab', value: string): void
+  (e: 'update:searchQuery', value: string): void
 }>()
 
 const navItems = [
@@ -19,14 +21,46 @@ const navItems = [
   { value: 'cleaner', icon: HardDrive, label: 'C盘清理' },
 ]
 
+const showSearch = ref(false)
+const localSearch = ref('')
+const searchInputRef = ref<HTMLInputElement>()
+
 function onHeaderMouseDown(e: MouseEvent) {
   const target = e.target as HTMLElement
-  if (target.closest('button')) return
+  if (target.closest('button') || target.closest('input')) return
   appWindow.startDragging()
 }
 
 async function handleClose() {
   await invoke('quit_app')
+}
+
+function toggleSearch() {
+  if (showSearch.value) {
+    showSearch.value = false
+    localSearch.value = ''
+    emit('update:searchQuery', '')
+  } else {
+    showSearch.value = true
+    nextTick(() => searchInputRef.value?.focus())
+  }
+}
+
+function handleEnter() {
+  emit('update:searchQuery', localSearch.value.trim())
+}
+
+function handleEscape() {
+  showSearch.value = false
+  localSearch.value = ''
+  emit('update:searchQuery', '')
+}
+
+function handleBlur() {
+  if (!localSearch.value) {
+    showSearch.value = false
+    emit('update:searchQuery', '')
+  }
 }
 </script>
 
@@ -51,8 +85,34 @@ async function handleClose() {
       </div>
     </div>
 
+    <div class="flex h-full items-center gap-1">
+      <div
+        class="overflow-hidden transition-all duration-300 ease-in-out"
+        :class="showSearch ? 'w-36' : 'w-0'"
+      >
+        <input
+          v-if="showSearch"
+          ref="searchInputRef"
+          v-model="localSearch"
+          maxlength="64"
+          placeholder="搜索进程..."
+          class="h-6 w-full rounded bg-muted/40 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 outline-none"
+          @keydown.enter="handleEnter"
+          @keydown.escape="handleEscape"
+          @blur="handleBlur"
+        />
+      </div>
+      <button
+        class="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground/80"
+        :title="showSearch ? '关闭搜索' : '搜索'"
+        @click="toggleSearch"
+      >
+        <Search :size="16" />
+      </button>
+    </div>
+
     <button
-      class="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+      class="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
       title="关闭"
       @click="handleClose"
     >

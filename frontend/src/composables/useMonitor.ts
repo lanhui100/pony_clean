@@ -25,6 +25,8 @@ export function useMonitor() {
   const loading = ref(true)
   const error = ref<string | null>(null)
   let timer: ReturnType<typeof setInterval> | null = null
+  let loadTimer: ReturnType<typeof setTimeout> | null = null
+  let hasData = false
 
   async function fetch() {
     try {
@@ -33,9 +35,12 @@ export function useMonitor() {
       processes.value = snap.processes
       loading.value = false
       error.value = null
+      hasData = true
     } catch (e) {
-      error.value = String(e)
-      loading.value = false
+      if (hasData) {
+        error.value = String(e)
+        loading.value = false
+      }
     }
   }
 
@@ -48,8 +53,20 @@ export function useMonitor() {
     }
   }
 
-  onMounted(() => { fetch(); timer = setInterval(fetch, 2000) })
-  onUnmounted(() => { if (timer) clearInterval(timer) })
+  onMounted(() => {
+    fetch()
+    timer = setInterval(fetch, 2000)
+    loadTimer = setTimeout(() => {
+      if (!hasData) {
+        error.value = '进程数据获取超时，请检查系统权限或重启应用'
+        loading.value = false
+      }
+    }, 15000)
+  })
+  onUnmounted(() => {
+    if (timer) clearInterval(timer)
+    if (loadTimer) clearTimeout(loadTimer)
+  })
 
   return { processes, summary, loading, error, killProcess }
 }

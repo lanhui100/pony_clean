@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import { X, Search, Cpu, MemoryStick } from 'lucide-vue-next'
+import { X, Cpu, MemoryStick } from 'lucide-vue-next'
 import { useMonitor, type ProcessInfo } from '../composables/useMonitor'
 
 const { processes, summary, loading, error, killProcess } = useMonitor()
 
-const search = ref('')
-const searchInput = ref<HTMLInputElement>()
+defineProps<{
+  search: string
+}>()
+
 const sortKey = ref<'name' | 'cpu' | 'mem_mb' | 'mem_pct'>('cpu')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const killMsg = ref('')
@@ -22,15 +24,15 @@ const filtered = computed(() => {
     ...p,
     mem_pct: total > 0 ? (p.mem_mb / total) * 100 : 0,
   }))
-  if (!search.value.trim()) {
+  if (!search.trim()) {
     list = list.filter(p => p.cpu > 10 || p.mem_mb > 200)
   } else {
-    const q = search.value.toLowerCase()
+    const q = search.toLowerCase()
     list = list.filter(p => p.name.toLowerCase().includes(q))
   }
   const key = sortKey.value
   const dir = sortDir.value
-return list.toSorted((a, b) => {
+  return list.toSorted((a, b) => {
     let va: string | number = a[key]
     let vb: string | number = b[key]
     if (va < vb) return dir === 'asc' ? -1 : 1
@@ -142,7 +144,7 @@ onUnmounted(() => {
     <!-- Summary bar -->
     <div class="flex items-center justify-center gap-6">
       <!-- CPU -->
-      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl bg-card px-5 py-4">
+      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-4">
         <Cpu class="h-6 w-6 shrink-0 text-muted-foreground" />
         <div class="flex flex-col items-center">
           <div class="flex items-baseline gap-0.5">
@@ -162,7 +164,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Memory -->
-      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl bg-card px-5 py-4">
+      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-4">
         <MemoryStick class="h-6 w-6 shrink-0 text-muted-foreground" />
         <div class="flex flex-col items-center">
           <div class="flex items-baseline gap-0.5">
@@ -180,25 +182,6 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- Search -->
-    <div class="relative">
-      <Search class="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-      <input
-        ref="searchInput"
-        v-model="search"
-        maxlength="64"
-        placeholder="搜索进程..."
-        class="h-7 w-full rounded bg-muted/40 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground/60 outline-none focus:bg-muted/70 transition-colors"
-      />
-      <button
-        v-if="search.length > 0"
-        class="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
-        @click="search = ''; searchInput?.focus()"
-      >
-        <X class="h-3 w-3" />
-      </button>
     </div>
 
     <!-- Kill feedback toast -->
