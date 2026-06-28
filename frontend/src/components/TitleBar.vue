@@ -1,9 +1,23 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
+import { Activity, HardDrive } from 'lucide-vue-next'
 import PonyIcon from './PonyIcon.vue'
 
 const appWindow = getCurrentWindow()
+
+defineProps<{
+  activeTab: string
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:activeTab', value: string): void
+}>()
+
+const navItems = [
+  { value: 'monitor', icon: Activity, label: '进程监控' },
+  { value: 'cleaner', icon: HardDrive, label: 'C盘清理' },
+]
 
 function onHeaderMouseDown(e: MouseEvent) {
   const target = e.target as HTMLElement
@@ -22,6 +36,22 @@ async function handleClose() {
       <PonyIcon :size="16" />
       <span class="text-sm font-semibold text-primary">PonyClean</span>
     </div>
+
+    <div class="flex h-full items-center gap-1">
+      <button
+        v-for="item in navItems"
+        :key="item.value"
+        class="flex h-7 w-7 items-center justify-center rounded-md transition-colors"
+        :class="activeTab === item.value
+          ? 'bg-primary/15 text-primary'
+          : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground/80'"
+        :title="item.label"
+        @click="emit('update:activeTab', item.value)"
+      >
+        <component :is="item.icon" :size="16" />
+      </button>
+    </div>
+
     <button
       class="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
       title="关闭"
