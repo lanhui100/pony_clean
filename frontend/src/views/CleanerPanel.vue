@@ -162,7 +162,7 @@ onUnmounted(() => {
 <template>
   <div class="relative flex h-full flex-col">
     <!-- IDLE -->
-    <div v-if="state === 'idle'" class="flex flex-1 flex-col items-center justify-center gap-3">
+    <div v-if="state === 'idle'" class="flex flex-1 flex-col items-center justify-center gap-3 glass-panel">
       <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
         <Scan class="h-6 w-6 text-primary" />
       </div>
@@ -177,7 +177,7 @@ onUnmounted(() => {
     </div>
 
     <!-- SCANNING -->
-    <div v-else-if="state === 'scanning'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6">
+    <div v-else-if="state === 'scanning'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6 glass-panel">
       <Loader2 class="h-6 w-6 animate-spin text-primary" />
       <Progress class="h-1 w-48" />
       <div class="text-center">
@@ -193,14 +193,14 @@ onUnmounted(() => {
     </div>
 
     <!-- DELETING -->
-    <div v-else-if="state === 'deleting'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6">
+    <div v-else-if="state === 'deleting'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6 glass-panel">
       <Loader2 class="h-6 w-6 animate-spin text-primary" />
       <Progress class="h-1 w-48" />
       <p class="text-xs text-muted-foreground">清理中...</p>
     </div>
 
     <!-- ERROR -->
-    <div v-else-if="state === 'error'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6">
+    <div v-else-if="state === 'error'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6 glass-panel">
       <Alert variant="destructive" class="max-w-sm">
         <div class="flex items-start gap-2">
           <AlertCircle class="mt-0.5 h-4 w-4 shrink-0" />
@@ -219,7 +219,7 @@ onUnmounted(() => {
     </div>
 
     <!-- CANCELLED -->
-    <div v-else-if="state === 'cancelled'" class="flex flex-1 flex-col items-center justify-center gap-3">
+    <div v-else-if="state === 'cancelled'" class="flex flex-1 flex-col items-center justify-center gap-3 glass-panel">
       <p class="text-xs text-muted-foreground">扫描已取消</p>
       <Button variant="outline" size="sm" @click="handleStartScan">
         <RotateCcw class="mr-1.5 h-3.5 w-3.5" />
@@ -228,7 +228,7 @@ onUnmounted(() => {
     </div>
 
     <!-- DONE (empty) -->
-    <div v-else-if="state === 'done' && items.length === 0" class="flex flex-1 flex-col items-center justify-center gap-2">
+    <div v-else-if="state === 'done' && items.length === 0" class="flex flex-1 flex-col items-center justify-center gap-2 glass-panel">
       <div class="flex h-10 w-10 items-center justify-center rounded-full bg-success/10">
         <Check class="h-5 w-5 text-success" />
       </div>
@@ -241,7 +241,7 @@ onUnmounted(() => {
     </div>
 
     <!-- DONE (with items) -->
-    <div v-else-if="state === 'done' && items.length > 0" class="flex flex-1 flex-col overflow-hidden gap-2">
+    <div v-else-if="state === 'done' && items.length > 0" class="flex flex-1 flex-col overflow-hidden gap-2 glass-panel">
       <!-- Header summary -->
       <div class="flex items-center justify-between">
         <div>
@@ -273,7 +273,7 @@ onUnmounted(() => {
             :open="openCategories.has(group.category)"
             @update:open="(v) => { const n = new Set(openCategories); v ? n.add(group.category) : n.delete(group.category); openCategories = n }"
           >
-            <div class="rounded bg-muted/10">
+            <div class="rounded glass-panel overflow-hidden border-0">
               <!-- Category header -->
               <CollapsibleTrigger class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs font-medium hover:bg-muted/20 transition-colors">
                 <ChevronRight

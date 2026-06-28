@@ -108,7 +108,7 @@ function memTextColor(pct: number) {
 
 function fmMem(mb: number) {
   if (!Number.isFinite(mb)) return '—'
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)}GB`
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)}G`
   return `${Math.round(mb)}M`
 }
 
@@ -143,7 +143,7 @@ onUnmounted(() => {
   <div class="flex h-full flex-col gap-3">
     <!-- Summary bar -->
     <div class="flex items-center justify-center gap-6">
-      <!-- CPU -->
+            <!-- CPU -->
       <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-2.5">
         <Cpu class="h-5 w-5 shrink-0 text-muted-foreground" />
         <div class="flex flex-col items-center">
@@ -163,7 +163,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Memory -->
+            <!-- Memory -->
       <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-2.5">
         <MemoryStick class="h-5 w-5 shrink-0 text-muted-foreground" />
         <div class="flex flex-col items-center">
@@ -234,7 +234,7 @@ onUnmounted(() => {
     <!-- Process list -->
     <div v-else class="flex flex-1 flex-col -mx-1 px-1">
       <!-- Header -->
-      <div class="flex shrink-0 items-center gap-2 rounded bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+      <div class="flex shrink-0 items-center gap-2 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground glass-panel">
         <button class="flex-[6] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
           名称 {{ sortIcon('name') }}
         </button>
@@ -248,7 +248,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Rows -->
-      <div class="scrollbar-none flex-1 overflow-auto py-[1px]">
+      <div class="scrollbar-none flex-1 overflow-auto py-[1px] mt-0.5">
         <div class="space-y-[1px]">
           <div
             v-for="p in filtered"
