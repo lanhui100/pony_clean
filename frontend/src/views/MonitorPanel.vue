@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import { X, Search, Cpu, MemoryStick, Activity } from 'lucide-vue-next'
+import { X, Search, Cpu, MemoryStick } from 'lucide-vue-next'
 import { useMonitor, type ProcessInfo } from '../composables/useMonitor'
 
 const { processes, summary, loading, error, killProcess } = useMonitor()
@@ -30,13 +30,19 @@ const filtered = computed(() => {
   }
   const key = sortKey.value
   const dir = sortDir.value
-  return list.toSorted((a, b) => {
+return list.toSorted((a, b) => {
     let va: string | number = a[key]
     let vb: string | number = b[key]
     if (va < vb) return dir === 'asc' ? -1 : 1
     if (va > vb) return dir === 'asc' ? 1 : -1
     return 0
   })
+})
+
+const memPct = computed(() => {
+  const s = summary.value
+  if (!s || s.mem_total_mb <= 0) return 0
+  return (s.mem_used_mb / s.mem_total_mb) * 100
 })
 
 function toggleSort(key: typeof sortKey.value) {
@@ -77,6 +83,18 @@ function cpuTextColor(v: number) {
   if (t === 'low') return ''
   if (t === 'mid') return 'text-warning'
   return 'text-destructive'
+}
+
+function memColor(pct: number) {
+  const t = memThreshold(pct)
+  if (t === 'low') return 'bg-success'
+  if (t === 'mid') return 'bg-warning'
+  return 'bg-destructive'
+}
+
+function fmMemGb(mb: number) {
+  if (!Number.isFinite(mb)) return '—'
+  return (mb / 1024).toFixed(1)
 }
 
 function memTextColor(pct: number) {
@@ -122,23 +140,46 @@ onUnmounted(() => {
 <template>
   <div class="flex h-full flex-col gap-3">
     <!-- Summary bar -->
-    <div class="flex items-center gap-4 text-xs text-muted-foreground">
-      <span class="inline-flex items-center gap-1.5">
-        <Cpu class="h-3.5 w-3.5" />
-        <strong :class="['tabular-nums', cpuTextColor(summary?.cpu_total ?? 0)]">
-          {{ summary ? `${summary.cpu_total.toFixed(1)}%` : '—' }}
-        </strong>
-      </span>
-      <span class="inline-flex items-center gap-1.5">
-        <MemoryStick class="h-3.5 w-3.5" />
-        <strong :class="['tabular-nums', memTextColor(summary && summary.mem_total_mb > 0 ? (summary.mem_used_mb / summary.mem_total_mb) * 100 : 0)]">
-          {{ summary ? `${fmMem(summary.mem_used_mb)}/${fmMem(summary.mem_total_mb)}` : '—' }}
-        </strong>
-      </span>
-      <span class="inline-flex items-center gap-1.5">
-        <Activity class="h-3.5 w-3.5" />
-        <strong class="tabular-nums">{{ summary?.process_count ?? '—' }}</strong>
-      </span>
+    <div class="flex items-center justify-center gap-6">
+      <!-- CPU -->
+      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl bg-card px-5 py-4">
+        <Cpu class="h-6 w-6 shrink-0 text-muted-foreground" />
+        <div class="flex flex-col items-center">
+          <div class="flex items-baseline gap-0.5">
+            <span class="text-2xl font-bold tabular-nums leading-none" :class="cpuTextColor(summary?.cpu_total ?? 0)">
+              {{ summary ? summary.cpu_total.toFixed(1) : '—' }}
+            </span>
+            <span class="text-xs tabular-nums" :class="cpuTextColor(summary?.cpu_total ?? 0)">%</span>
+          </div>
+          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted/50">
+            <span
+              class="block h-full rounded-full transition-all"
+              :class="cpuColor(summary?.cpu_total ?? 0)"
+              :style="{ width: Math.min(summary?.cpu_total ?? 0, 100) + '%' }"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory -->
+      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl bg-card px-5 py-4">
+        <MemoryStick class="h-6 w-6 shrink-0 text-muted-foreground" />
+        <div class="flex flex-col items-center">
+          <div class="flex items-baseline gap-0.5">
+            <span class="text-2xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
+              {{ memPct ? memPct.toFixed(1) : '—' }}
+            </span>
+            <span class="text-xs tabular-nums" :class="memTextColor(memPct)">%</span>
+          </div>
+          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted/50">
+            <span
+              class="block h-full rounded-full transition-all"
+              :class="memColor(memPct)"
+              :style="{ width: memPct + '%' }"
+            />
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Search -->
