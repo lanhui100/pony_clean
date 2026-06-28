@@ -18,31 +18,31 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
-  --color-success: hsl(142 70% 55%);
-  --color-warning: hsl(38 90% 60%);
-  --color-info: hsl(199 85% 55%);
+  --color-success: hsl(140 45% 50%);
+  --color-warning: hsl(35 80% 55%);
+  --color-info: hsl(45 65% 55%);
   --radius: 0.5rem;
 }
 
 @layer base {
   :root {
-    --background: 0 0% 7%;
-    --foreground: 210 10% 92%;
-    --card: 220 10% 12%;
-    --card-foreground: 210 10% 92%;
-    --primary: 214 90% 76%;
-    --primary-foreground: 0 0% 7%;
-    --secondary: 220 8% 25%;
-    --secondary-foreground: 210 10% 92%;
-    --muted: 220 8% 20%;
-    --muted-foreground: 215 8% 60%;
-    --accent: 214 90% 76%;
-    --accent-foreground: 0 0% 7%;
-    --destructive: 0 80% 73%;
-    --destructive-foreground: 0 0% 7%;
-    --border: 220 8% 20%;
-    --input: 220 8% 20%;
-    --ring: 214 90% 76%;
+    --background: 30 12% 9%;
+    --foreground: 35 8% 88%;
+    --card: 30 10% 14%;
+    --card-foreground: 35 8% 88%;
+    --primary: 38 85% 58%;
+    --primary-foreground: 30 12% 9%;
+    --secondary: 30 8% 22%;
+    --secondary-foreground: 35 8% 88%;
+    --muted: 30 8% 18%;
+    --muted-foreground: 30 6% 55%;
+    --accent: 38 85% 58%;
+    --accent-foreground: 30 12% 9%;
+    --destructive: 8 65% 60%;
+    --destructive-foreground: 30 12% 9%;
+    --border: 30 8% 18%;
+    --input: 30 8% 18%;
+    --ring: 38 85% 58%;
   }
 
   * {
@@ -77,11 +77,11 @@
   background: transparent;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: hsl(220 8% 25%);
+  background: hsl(30 8% 22%);
   border-radius: 999px;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: hsl(220 8% 35%);
+  background: hsl(30 8% 30%);
 }
 
 @media (prefers-reduced-motion: reduce) {

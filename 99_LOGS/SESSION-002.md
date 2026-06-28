@@ -10,7 +10,7 @@
 - 写入 Cargo.toml、.gitignore、.gitattributes、.rustfmt.toml
 - 写入 .vscode/settings.json + extensions.json
 - 写入 justfile、scripts/dev.ps1、.github/workflows/ci.yml
-- Phase 1 2路对抗式审查 → 修复7项（eframe native feature、tokio 裁剪、wgpu dx12、Cargo.lock 追踪、gitattributes 换行、CI clippy 命令、RUSTFLAGS + doc step）
+- Phase 1 2路对抗式审查 → 修复7项（eframe native feature [已废弃]、tokio 裁剪、wgpu dx12 [已废弃]、Cargo.lock 追踪、gitattributes 换行、CI clippy 命令、RUSTFLAGS + doc step）
 
 ### Phase 2 — Rust 源码
 - 写入 error.rs、lib.rs、monitor.rs、cleaner.rs、app.rs、main.rs

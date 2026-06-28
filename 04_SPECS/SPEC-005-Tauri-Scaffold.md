@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-在当前 `pony_clean` 仓库中搭建 Tauri v2 项目骨架，与 egui 代码共存。
+在当前 `pony_clean` 仓库中搭建 Tauri v2 项目骨架，新旧结构并存不影响构建。
 
 ## ⚠️ 关键技术决策
 
@@ -24,8 +24,8 @@ npm install tailwindcss @tailwindcss/vite
 ```
 src/
 ├── lib.rs       → pub mod error; pub mod monitor; pub mod cleaner;
-├── main.rs      → eframe 入口
-├── app.rs       → egui App（~1086 行 GUI 代码）
+├── main.rs      → eframe 入口（已删除）
+├── app.rs       → egui App ~1086 行 GUI 代码（已删除）
 ├── monitor.rs   → 进程监控（275 行）
 ├── cleaner.rs   → C盘清理（783 行）
 ├── error.rs     → 错误类型（15 行）

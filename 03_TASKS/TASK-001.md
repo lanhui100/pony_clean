@@ -19,8 +19,8 @@
 |---|---|
 | `Cargo.toml` | 完整依赖 + dev-depends + profile 优化 |
 | `src/lib.rs` | 库入口（不依赖 GUI），业务模块统一 re-export |
-| `src/main.rs` | 薄 binary 层，仅初始化 tokio + eframe |
-| `src/app.rs` | egui App 骨架 |
+| `src/main.rs` | [已删除] 薄 binary 层，初始化 tokio + eframe |
+| `src/app.rs` | [已删除] egui App 骨架 |
 | `src/monitor.rs` | 模块占位 + 单元测试 |
 | `src/cleaner.rs` | 模块占位 + 单元测试 |
 | `src/error.rs` | 统一错误类型 |
@@ -43,7 +43,7 @@
 2. `cargo test` 通过（含单元测试 + 集成测试）
 3. `cargo clippy` 无 warning
 4. `cargo fmt --check` 通过
-5. `cargo run` 弹出半透明 egui 窗口 ⚠️ manual（CI 无桌面环境，需人肉验证）
+5. `cargo run` 弹出半透明窗口 ⚠️ manual（CI 无桌面环境，需人肉验证）
 6. `just build` / `just test` / `just lint` / `just run` 都可用
 7. CI 配置完整，能在 GitHub Actions 中跑通 build + test + clippy + fmt
 8. `.gitignore` 覆盖 Rust 产物、IDE 目录、OS 文件
@@ -104,8 +104,8 @@ windows = { version = "0.54", features = [
 ```
 src/
 ├── lib.rs           # pub mod 统一导出，不含 GUI
-├── main.rs          # 薄层：tokio runtime + eframe
-├── app.rs           # PonyCleanApp (egui::App)
+├── main.rs          # [已删除] 薄层：tokio runtime + eframe
+├── app.rs           # [已删除] PonyCleanApp (egui::App)
 ├── monitor.rs       # 进程监控模块
 ├── cleaner.rs       # C盘清理模块
 └── error.rs         # 统一错误类型
@@ -127,8 +127,6 @@ pub mod cleaner;
 这样 `src/main.rs` 只做一件事：
 
 ```rust
-use pony_clean::app::PonyCleanApp;
-
 fn main() -> eframe::Result<()> {
     // ... 初始化逻辑
 }
@@ -385,8 +383,8 @@ app.rs   (egui::App, UI 状态, update 渲染)
 
 | 目录/文件 | 职责 |
 |---|---|
-| `src/main.rs` | eframe::run_native + tokio runtime |
-| `src/app.rs` | egui 状态 + update 循环 |
+| `src/main.rs` | [已删除] eframe::run_native + tokio runtime |
+| `src/app.rs` | [已删除] egui 状态 + update 循环 |
 | `src/monitor.rs` | 进程快照、阈值检测、kill |
 | `src/cleaner.rs` | 路径扫描、安全分级、删除执行 |
 | `src/error.rs` | PonyError 枚举 + Result 别名 |
@@ -399,7 +397,7 @@ app.rs   (egui::App, UI 状态, update 渲染)
 ```markdown
 # 设计决策记录
 
-## ADR-001: 选择 egui 而非 Webview
+## ADR-001: 选择 egui 而非 Webview（已废弃）
 
 **状态**: 已采纳
 

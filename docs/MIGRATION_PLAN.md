@@ -1,17 +1,13 @@
-# PonyClean UI 迁移方案：egui → Tauri v2 + Vue 3 + shadcn-vue
+# PonyClean UI 迁移记录：egui → Tauri v2 + Vue 3 + shadcn-vue
 
-## 决策背景
+> **状态**: 迁移已完成 ✅
+> 原 egui 代码（`src/` 目录）已全部清理，当前项目使用纯 Tauri v2 + Vue 3 架构。
 
-当前 egui 架构在 UI 表现力上已触达上限：
-- 无设计系统/组件库，所有 UI 手写
-- 即时模式布局难以精确对齐
-- 无 CSS 级动画/过渡
-- 字体渲染依赖 ab_glyph 软件渲染，CJK 显示质量差
-- 无虚拟滚动，大列表性能不佳
+## 迁移背景
 
-迁移到 Tauri v2 后，前端获得完整 Web 生态能力，后端业务逻辑（monitor/cleaner）完全不动。
+原 egui 架构在 UI 表现力上已触达上限。迁移到 Tauri v2 后，前端获得完整 Web 生态能力，后端业务逻辑（monitor/cleaner）完全不动。
 
-## 目标技术栈
+## 当前技术栈
 
 | 层 | 技术 | 版本 |
 |---|---|---|
@@ -32,7 +28,7 @@
 ## 架构对比
 
 ```
-当前 (egui):
+迁移前 (egui):
 ┌─────────────────────────────────────────┐
 │  main.rs (eframe init)                  │
 │  app.rs (egui::App, 全部 UI 逻辑)       │

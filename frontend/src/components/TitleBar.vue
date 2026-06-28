@@ -34,22 +34,21 @@ async function handleClose() {
   <header @mousedown="onHeaderMouseDown" class="flex h-10 cursor-move items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-sm select-none">
     <div class="flex h-full flex-1 items-center gap-2">
       <PonyIcon :size="16" />
-      <span class="text-sm font-semibold text-primary">PonyClean</span>
-    </div>
-
-    <div class="flex h-full items-center gap-1">
-      <button
-        v-for="item in navItems"
-        :key="item.value"
-        class="flex h-7 w-7 items-center justify-center rounded-md transition-colors"
-        :class="activeTab === item.value
-          ? 'bg-primary/15 text-primary'
-          : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground/80'"
-        :title="item.label"
-        @click="emit('update:activeTab', item.value)"
-      >
-        <component :is="item.icon" :size="16" />
-      </button>
+      <span class="text-sm font-bold text-primary">Pony Clean</span>
+      <div class="ml-4 flex h-full items-center gap-1">
+        <button
+          v-for="item in navItems"
+          :key="item.value"
+          class="flex h-7 w-7 items-center justify-center rounded-md transition-colors"
+          :class="activeTab === item.value
+            ? 'bg-primary/15 text-primary'
+            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground/80'"
+          :title="item.label"
+          @click="emit('update:activeTab', item.value)"
+        >
+          <component :is="item.icon" :size="16" />
+        </button>
+      </div>
     </div>
 
     <button

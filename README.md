@@ -9,31 +9,30 @@ Windows 极简桌面小组件。两个核心功能：
 
 | 层 | 选型 |
 |---|---|
-| GUI | egui + eframe |
+| 桌面框架 | Tauri 2 |
+| 前端 | Vue 3 + TypeScript + shadcn-vue |
+| 样式 | TailwindCSS 4 |
+| 后端 | Rust (pony_core) |
 | 异步 | tokio |
 | 进程 | sysinfo |
 | 磁盘 | jwalk + windows-rs |
-| 通知 | egui-toast / tray-icon |
 
 ## 开发
 
 ```bash
-cargo build
-cargo run
+npm run dev:tauri      # Tauri dev（前端 HMR + Rust 热重载）
+cargo test -p pony_core # 运行单元测试
 ```
 
 ## 项目结构
 
 ```
 pony_clean/
-├── src/
-│   ├── main.rs        # eframe 入口 + tokio runtime
-│   ├── app.rs         # egui App 状态 + 渲染
-│   ├── monitor.rs     # 进程监控模块
-│   └── cleaner.rs     # C盘扫描与清理模块
-├── 00_DASHBOARD.md    # 总控面板
+├── crates/pony_core/  # 业务核心库（零框架依赖）
+├── src-tauri/         # Tauri 壳层
+├── frontend/          # Vue 3 前端
+├── docs/              # 项目文档
+├── 00_DASHBOARD.md    # 任务总控面板
 ├── 01_TASK_BOARD.md   # 任务板
-├── 03_TASKS/          # 任务卡
-├── 02_REVIEWS/        # 审核记录
-└── 99_LOGS/           # 会话日志
+└── 03_TASKS/          # 任务卡
 ```

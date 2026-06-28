@@ -6,7 +6,7 @@
 
 ## ADR-001: 选择 egui 而非 Webview
 
-**状态**: 已采纳
+**状态**: 已废弃（被 ADR-007 替代）
 
 **上下文**: 需要一个 Windows 桌面悬浮窗，要求启动快、内存低、单二进制分发。
 
@@ -17,15 +17,7 @@
 | Tauri + Webview | 1-3s | ~10MB | ~50MB+ | 需 hack |
 | Electron | 3-5s | ~150MB | ~100MB+ | 支持但笨重 |
 
-**决策**: 选 egui。
-
-**理由**:
-1. 单二进制分发，不需嵌入浏览器引擎
-2. 启动快（<1s），内存低（~10MB）
-3. 透明无边框悬浮窗原生支持
-4. 即时模式 GUI，状态管理简单
-
-**权衡**: 样式能力有限，不适合复杂布局；无 DOM，自定义控件需用 egui 原生 widget 组合。
+**决策**: 最初选 egui。后因 UI 表现力瓶颈迁移至 Tauri v2（参见 ADR-007）。
 
 ---
 
@@ -35,39 +27,22 @@
 
 **上下文**: 需要让业务逻辑可被单元测试直接 import，且为未来 CLI 模式预留扩展点。
 
-**决策**: `src/lib.rs` 统一 re-export 所有业务模块（`pub mod error; pub mod monitor; pub mod cleaner;`），`src/main.rs` 仅做初始化。
+**决策**: `crates/pony_core/src/lib.rs` 统一 re-export 所有业务模块（`pub mod error; pub mod monitor; pub mod cleaner;`），`src-tauri/src/main.rs` 仅做 Tauri 初始化。
 
 **理由**:
 1. 业务逻辑与 GUI 解耦，可直接被测试 import
-2. main.rs 保持薄层，只负责初始化
-3. 未来扩展 CLI 模式时只需换一个 binary 入口（如 `src/bin/cli.rs`）
-
-**结构**:
-```
-src/
-├── lib.rs      # 库入口
-├── main.rs     # 薄 binary，依赖 lib
-├── app.rs      # GUI 相关（不在 lib 中 re-export）
-└── monitor.rs  # 业务模块（在 lib 中 re-export）
-```
+2. Tauri 入口保持薄层，只负责命令注册
+3. 未来扩展 CLI 模式时只需新增一个 binary crate
 
 ---
 
 ## ADR-003: std::sync::mpsc 用于后台→UI 通信
 
-**状态**: 待定（TASK-004 验证后最终确定）
+**状态**: 已采纳（egui 内部）→ 被 Tauri IPC 替代
 
-**上下文**: 后台 tokio 任务需要将进程数据和扫描进度推送到 GUI 线程。
+**上下文**: 后台 tokio 任务需要将进程数据和扫描进度推送到 GUI 线程（egui 时代）。
 
-**选项**:
-1. `std::sync::mpsc` — 简单，Receiver 是 `Send + !Sync`，适合单消费者
-2. `tokio::sync::mpsc` — 需要 tokio 上下文，GUI 线程无 tokio runtime
-3. `tokio::sync::watch` — 适合流式状态广播，但需要 tokio context
-4. `Arc<Mutex<T>>` — 共享状态，适合连续更新的计数器
-
-**倾向方案**: `std::sync::mpsc`，因为 GUI 线程是唯一的消费者，不需要阻塞等待。
-
-**最终决定**: 待 TASK-004 时根据实际数据流模式确认。
+**决策**: 采用 `std::sync::mpsc` + `spawn_blocking`。Tauri 迁移后将前端通信层替换为 `tauri::command` + `AppHandle::emit`，mpsc 仅保留在 `pony_core` 内部用于后台线程间通信。
 
 ---
 
@@ -98,3 +73,23 @@ src/
 **决策**: 使用 `MoveFileExW + MOVEFILE_DELAY_UNTIL_REBOOT` 绕过占用锁，永久删除。回收站清空使用 `SHEmptyRecycleBinW`。
 
 **理由**: 清理工具的目的是释放空间，走回收站违背用户意图。延迟删除机制可以绕过当前被占用的文件。
+
+---
+
+## ADR-007: egui → Tauri v2 + Vue 3 + shadcn-vue 迁移
+
+**状态**: 已完成
+
+**上下文**: egui UI 表现力无法满足产品级需求（无组件库、字体渲染差、无动画）。
+
+**方案对比**:
+| 维度 | egui + eframe | Tauri v2 + shadcn-vue |
+|---|---|---|
+| 组件库 | 无 | shadcn-vue (30+ 组件) |
+| 字体渲染 | ab_glyph 软件渲染 | DirectWrite 原生 ClearType |
+| 动画 | 无 | CSS + motion-vue |
+| 开发效率 | 改 UI → 改 Rust → 编译 | HMR 热更新 |
+| 运行时内存 | ~35MB | ~42MB (含 WebView2) |
+| 二进制体积 | ~5MB (单二进制) | ~4.5MB (不含 WebView2 runtime) |
+
+**迁移策略**: `crates/pony_core` 零改动，前后端通过 Tauri IPC 通信。

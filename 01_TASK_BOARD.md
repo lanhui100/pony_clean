@@ -32,4 +32,4 @@ _(暂无)_
 | TASK-001 | 完整项目脚手架搭建 | P0 | @self |
 | TASK-002 | 进程监控模块 | P0 | @self |
 | TASK-003 | C盘扫描与安全清理模块 | P0 | @self |
-| TASK-004 | egui UI 集成与数据流打通 | P1 | @self |
+| TASK-004 | UI 集成与数据流打通 | P1 | @self |

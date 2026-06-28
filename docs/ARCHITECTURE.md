@@ -101,7 +101,7 @@ crates/pony_core/          (业务核心库，纯 Rust，无 Tauri 依赖)
 | `crates/pony_core/src/cleaner.rs` | C盘扫描清理（jwalk） |
 | `crates/pony_core/src/error.rs` | PonyError 枚举 + Result 别名 |
 | `crates/pony_core/` | 纯业务库，零框架依赖 |
-| `src/` | **已废弃的 egui 版本**，保留但不再维护 |
+
 | `tests/` | 集成测试 |
 | `docs/` | 项目文档 |
 | `00_DASHBOARD.md` | 任务系统总控面板 |

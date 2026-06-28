@@ -15,7 +15,6 @@ Windows 极简桌面小组件：进程监控报警 + C盘安全分析清理。Ru
 
 ## 关键约定
 - `crates/pony_core/src/lib.rs` 是业务入口，`src-tauri/src/main.rs` 仅为 Tauri 壳层
-- `src/` 目录（egui 版）已废弃，保留但不再维护
 - `crates/pony_core` 零 Tauri 依赖，纯业务逻辑，所有模块含 `#[cfg(test)]` 单元测试
 - 公开函数和类型必须有 `///` doc 注释
 - 后台任务与 UI 通过 Tauri invoke + events 通信，UI 永不阻塞

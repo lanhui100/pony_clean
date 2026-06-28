@@ -9,7 +9,7 @@
 - Depends: TASK-006, TASK-007
 
 ## Goal
-实现 C盘安全清理面板全部 UI，功能等价于当前 egui 版本，增加删除确认弹窗、删除结果反馈等 UX 提升。
+实现 C盘安全清理面板全部 UI，功能等价于旧版（egui 版本），增加删除确认弹窗、删除结果反馈等 UX 提升。
 
 ## Output
 - `frontend/src/views/CleanerPanel.vue` — 清理面板主视图

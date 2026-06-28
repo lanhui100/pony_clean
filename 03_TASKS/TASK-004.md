@@ -11,7 +11,7 @@
 - 依赖: TASK-002, TASK-003
 
 ## Goal
-将 TASK-002（进程监控）和 TASK-003（C盘清理）集成到 egui UI 中。实现双 Tab 面板、非阻塞数据流、窗口生命周期管理、状态保持。
+将 TASK-002（进程监控）和 TASK-003（C盘清理）集成到 UI 中。实现双 Tab 面板、非阻塞数据流、窗口生命周期管理、状态保持。
 
 ## Output
 - `src/app.rs` — 完整 UI 实现（~350 行，含状态管理、渲染、事件处理）
@@ -34,7 +34,7 @@
 ┌──────────────────────┐
 │  PonyClean     — □ × │  ← 点击拖动 (ViewportCommand::StartDrag)
 ├──────────────────────┤
-│  [进程]  [C盘清理]     │  ← egui 手动 Tab (mut selected_tab)
+│  [进程]  [C盘清理]     │  ← Tab (mut selected_tab)
 ├──────────────────────┤
 │                      │
 │   (Tab 内容区)        │
@@ -290,7 +290,7 @@ egui::Color32::from_rgb(207, 102, 102)   // #CF6666
 ## 测试策略
 - **状态机测试**: 构造 mock Snapshot 和 ScanEvent，验证 UI 状态机转换正确
 - **Kill 反馈测试**: 发送 Kill + 模拟 oneshot 响应，验证 UI 显示结果
-- **不测**: egui 像素级渲染、窗口行为
+- **不测**: 像素级渲染、窗口行为
 
 ## Current Progress
 - 尚未开始

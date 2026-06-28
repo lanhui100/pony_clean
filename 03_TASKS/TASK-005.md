@@ -8,7 +8,7 @@
 - Estimated: 4h
 
 ## Goal
-在现有 `pony_clean` 仓库中搭建 Tauri v2 项目骨架，集成 Vue 3 + shadcn-vue + Tailwind + motion-vue。与现有 egui 代码共存，不破坏已有构建。
+在现有 `pony_clean` 仓库中搭建 Tauri v2 项目骨架，集成 Vue 3 + shadcn-vue + Tailwind + motion-vue。新旧结构并存，不破坏已有构建。
 
 ## Output
 - `src-tauri/` — Tauri Rust 后端骨架（Cargo.toml、tauri.conf.json、main.rs）

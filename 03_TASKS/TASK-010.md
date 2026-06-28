@@ -9,7 +9,7 @@
 - Depends: TASK-008, TASK-009
 
 ## Goal
-端到端验证 Tauri 版本功能完整性，清理废弃的 egui 代码，更新架构文档和 ADR。
+端到端验证 Tauri 版本功能完整性，清理废弃的旧代码（egui 版），更新架构文档和 ADR。
 
 ## Output
 - 删除了 `src/app.rs`、`src/theme.rs`（egui 相关，不再需要）
@@ -17,11 +17,11 @@
 - 更新 `docs/ARCHITECTURE.md` 反映 Tauri 架构
 - 更新 `docs/DESIGN.md` 添加 ADR-007（egui → Tauri 迁移决策）
 - 更新 `AGENTS.md` 反映新技术栈
-- 清理 Cargo.toml 中 egui/eframe/wgpu 依赖
+- 清理 Cargo.toml 中废弃的 egui/eframe/wgpu 依赖（已完成）
 - 手动 E2E 验证清单
 
 ## Acceptance
-1. `cargo build` 通过（无 egui/eframe 依赖）
+1. `cargo build` 通过（无 egui/eframe 依赖，已验证通过）
 2. `cargo tauri build` 通过（release 二进制）
 3. `cargo test` 全部通过（pony_core 单元测试）
 4. E2E 验证清单全部通过监控 + 清理功能

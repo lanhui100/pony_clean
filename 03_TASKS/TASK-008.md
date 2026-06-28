@@ -9,7 +9,7 @@
 - Depends: TASK-006, TASK-007
 
 ## Goal
-实现进程监控面板全部 UI，功能等价于当前 egui 版本，UI 质量显著提升。
+实现进程监控面板全部 UI，功能等价于旧版（egui 版本），UI 质量显著提升。
 
 ## Output
 - `frontend/src/views/MonitorPanel.vue` — 监控面板主视图
@@ -18,7 +18,7 @@
 - 搜索、排序、kill、高亮阈值全部实现
 
 ## Acceptance
-1. 顶部紧凑摘要行：CPU 总和 / 内存 / 进程数（着色阈值与 egui 版本一致）
+1. 顶部紧凑摘要行：CPU 总和 / 内存 / 进程数（着色阈值与旧版一致）
 2. 进程列表每 2 秒自动刷新（不闪烁）
 3. 搜索框实时过滤进程名（URL case-insensitive substring match）
 4. 列头点击排序（Name / CPU% / Mem / Mem%），▲▼ 指示器
