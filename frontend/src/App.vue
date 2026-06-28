@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import TitleBar from '@/components/TitleBar.vue'
 import CleanerPanel from '@/views/CleanerPanel.vue'
 import MonitorPanel from '@/views/MonitorPanel.vue'
 
 const activeTab = ref('monitor')
 const searchQuery = ref('')
+
+onMounted(() => {
+  console.log('[PonyClean] App.vue mounted, activeTab:', activeTab.value)
+})
 </script>
 
 <template>

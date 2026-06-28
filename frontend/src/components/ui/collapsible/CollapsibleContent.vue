@@ -12,7 +12,7 @@ const { isOpen } = inject<{ toggle: () => void; isOpen: Ref<boolean> }>('collaps
 </script>
 
 <template>
-  <div v-if="isOpen.value" :class="cn('overflow-hidden', props.class)">
+  <div v-if="isOpen" :class="cn('overflow-hidden', props.class)">
     <slot />
   </div>
 </template>

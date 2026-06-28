@@ -11,6 +11,8 @@ use tauri::Manager;
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            eprintln!("[PonyClean] Rust backend starting up...");
+
             let snapshot = Arc::new(RwLock::new(None));
             let (cmd_tx, handle) = monitor::start_shared(snapshot.clone());
             app.manage(MonitorState {
@@ -22,6 +24,16 @@ fn main() {
                 is_scanning: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 cancel_token: Arc::new(std::sync::Mutex::new(None)),
             });
+
+            eprintln!("[PonyClean] Setup complete, opening window...");
+
+            #[cfg(debug_assertions)]
+            {
+                let win = app.get_webview_window("main").unwrap();
+                win.open_devtools();
+                eprintln!("[PonyClean] Devtools opened");
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

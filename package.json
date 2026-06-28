@@ -2,7 +2,7 @@
   "name": "pony-clean-root",
   "private": true,
   "scripts": {
-    "dev:tauri": "cd frontend && npm run dev:tauri",
+    "dev:tauri": "npx --prefix frontend tauri dev",
     "dev": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
     "install": "cd frontend && npm install"

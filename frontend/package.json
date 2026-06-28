@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:tauri": "cd /d .. && node frontend/node_modules/@tauri-apps/cli/tauri.js dev",
+    "dev:tauri": "npx tauri dev",
     "build": "vite build",
     "preview": "vite preview"
   },

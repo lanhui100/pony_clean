@@ -5,7 +5,7 @@ import { useMonitor, type ProcessInfo } from '../composables/useMonitor'
 
 const { processes, summary, loading, error, killProcess } = useMonitor()
 
-defineProps<{
+const props = defineProps<{
   search: string
 }>()
 
@@ -24,10 +24,10 @@ const filtered = computed(() => {
     ...p,
     mem_pct: total > 0 ? (p.mem_mb / total) * 100 : 0,
   }))
-  if (!search.trim()) {
+  if (!props.search.trim()) {
     list = list.filter(p => p.cpu > 10 || p.mem_mb > 200)
   } else {
-    const q = search.toLowerCase()
+    const q = props.search.toLowerCase()
     list = list.filter(p => p.name.toLowerCase().includes(q))
   }
   const key = sortKey.value
