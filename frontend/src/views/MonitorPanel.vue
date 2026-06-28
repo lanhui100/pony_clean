@@ -109,7 +109,7 @@ function memTextColor(pct: number) {
 function fmMem(mb: number) {
   if (!Number.isFinite(mb)) return '—'
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)}GB`
-  return `${Math.round(mb)}MB`
+  return `${Math.round(mb)}M`
 }
 
 function fmPct(v: number) {
@@ -144,11 +144,11 @@ onUnmounted(() => {
     <!-- Summary bar -->
     <div class="flex items-center justify-center gap-6">
       <!-- CPU -->
-      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-4">
-        <Cpu class="h-6 w-6 shrink-0 text-muted-foreground" />
+      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-2.5">
+        <Cpu class="h-5 w-5 shrink-0 text-muted-foreground" />
         <div class="flex flex-col items-center">
           <div class="flex items-baseline gap-0.5">
-            <span class="text-2xl font-bold tabular-nums leading-none" :class="cpuTextColor(summary?.cpu_total ?? 0)">
+            <span class="text-xl font-bold tabular-nums leading-none" :class="cpuTextColor(summary?.cpu_total ?? 0)">
               {{ summary ? summary.cpu_total.toFixed(1) : '—' }}
             </span>
             <span class="text-xs tabular-nums" :class="cpuTextColor(summary?.cpu_total ?? 0)">%</span>
@@ -164,11 +164,11 @@ onUnmounted(() => {
       </div>
 
       <!-- Memory -->
-      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-4">
-        <MemoryStick class="h-6 w-6 shrink-0 text-muted-foreground" />
+      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-2.5">
+        <MemoryStick class="h-5 w-5 shrink-0 text-muted-foreground" />
         <div class="flex flex-col items-center">
           <div class="flex items-baseline gap-0.5">
-            <span class="text-2xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
+            <span class="text-xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
               {{ memPct ? memPct.toFixed(1) : '—' }}
             </span>
             <span class="text-xs tabular-nums" :class="memTextColor(memPct)">%</span>
@@ -198,7 +198,7 @@ onUnmounted(() => {
       <div v-for="i in 8" :key="i" class="flex h-6 items-center gap-3 rounded px-2">
         <div class="h-2.5 w-32 rounded-sm bg-muted/50 animate-pulse" />
         <div class="h-2.5 w-12 rounded-sm bg-muted/50 animate-pulse" />
-        <div class="h-2.5 w-14 rounded-sm bg-muted/50 animate-pulse" />
+        <div class="h-2.5 w-20 rounded-sm bg-muted/50 animate-pulse" />
         <div class="ml-auto h-2.5 w-10 rounded-sm bg-muted/50 animate-pulse" />
       </div>
     </div>
@@ -232,34 +232,31 @@ onUnmounted(() => {
     </div>
 
     <!-- Process list -->
-    <div v-else class="scrollbar-thin flex-1 -mx-1 overflow-auto px-1">
-      <div class="flex h-full flex-col">
-        <!-- Header -->
-        <div class="flex items-center gap-2 rounded bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground shrink-0">
-          <button class="flex-1 text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
-            名称 {{ sortIcon('name') }}
-          </button>
-          <button class="w-14 text-right hover:text-foreground transition-colors" @click="toggleSort('cpu')">
-            CPU {{ sortIcon('cpu') }}
-          </button>
-          <button class="w-16 text-right hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
-            内存 {{ sortIcon('mem_mb') }}
-          </button>
-          <button class="w-12 text-right hover:text-foreground transition-colors" @click="toggleSort('mem_pct')">
-            % {{ sortIcon('mem_pct') }}
-          </button>
-          <div class="w-5" />
-        </div>
+    <div v-else class="flex flex-1 flex-col -mx-1 px-1">
+      <!-- Header -->
+      <div class="flex shrink-0 items-center gap-2 rounded bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+        <button class="flex-[6] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
+          名称 {{ sortIcon('name') }}
+        </button>
+        <button class="flex-[5] text-left hover:text-foreground transition-colors" @click="toggleSort('cpu')">
+          CPU {{ sortIcon('cpu') }}
+        </button>
+        <button class="flex-[4] text-center hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
+          内存 {{ sortIcon('mem_mb') }}
+        </button>
+        <div class="w-5" />
+      </div>
 
-        <!-- Rows -->
-        <div class="flex-1 space-y-[1px] py-[1px]">
+      <!-- Rows -->
+      <div class="scrollbar-none flex-1 overflow-auto py-[1px]">
+        <div class="space-y-[1px]">
           <div
             v-for="p in filtered"
             :key="p.pid"
             class="group flex items-center gap-2 rounded px-2 py-1 text-xs transition-colors hover:bg-muted/20"
           >
-            <span class="flex-1 truncate text-foreground/90" :title="p.name">{{ p.name }}</span>
-            <span class="flex w-14 items-center justify-end gap-1.5 tabular-nums">
+            <span class="flex-[6] truncate text-foreground/90" :title="p.name">{{ p.name }}</span>
+            <span class="flex flex-[5] items-center justify-start gap-1.5 tabular-nums">
               <span class="h-1 w-8 overflow-hidden rounded-full bg-muted/50">
                 <span
                   class="block h-full rounded-full transition-all"
@@ -269,15 +266,12 @@ onUnmounted(() => {
               </span>
               <span :class="['text-[11px]', cpuTextColor(p.cpu)]">{{ Math.min(p.cpu, 999).toFixed(1) }}%</span>
             </span>
-            <span :class="['w-16 text-right tabular-nums', memTextColor(p.mem_pct)]">
-              {{ fmMem(p.mem_mb) }}
+            <span :class="['flex-[4] text-center tabular-nums', memTextColor(p.mem_pct)]">
+              {{ fmMem(p.mem_mb) }} <span class="text-[11px] text-muted-foreground">{{ fmPct(p.mem_pct) }}</span>
             </span>
-            <span class="w-12 text-right text-[11px] tabular-nums text-muted-foreground">
-              {{ fmPct(p.mem_pct) }}
-            </span>
-            <div class="flex w-5 items-center justify-center">
+            <div class="ml-2 flex w-5 items-center justify-center">
               <button
-                class="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100 max-md:opacity-100"
+                class="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100"
                 :title="`终止 ${p.name}`"
                 @click="handleKill(p)"
               >
