@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, watch, onUnmounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
-import { Activity, HardDrive, Search } from 'lucide-vue-next'
+import { Activity, HardDrive, Search, X } from 'lucide-vue-next'
 import PonyIcon from './PonyIcon.vue'
 
 const appWindow = getCurrentWindow()
@@ -24,6 +24,20 @@ const navItems = [
 const showSearch = ref(false)
 const localSearch = ref('')
 const searchInputRef = ref<HTMLInputElement>()
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(localSearch, (val) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  if (showSearch.value) {
+    searchTimer = setTimeout(() => {
+      emit('update:searchQuery', val.trim())
+    }, 300)
+  }
+})
+
+onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
 
 function onHeaderMouseDown(e: MouseEvent) {
   const target = e.target as HTMLElement
@@ -47,6 +61,7 @@ function toggleSearch() {
 }
 
 function handleEnter() {
+  if (searchTimer) clearTimeout(searchTimer)
   emit('update:searchQuery', localSearch.value.trim())
 }
 
@@ -65,11 +80,14 @@ function handleBlur() {
 </script>
 
 <template>
-  <header @mousedown="onHeaderMouseDown" class="flex h-10 cursor-move items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-sm select-none">
-    <div class="flex h-full flex-1 items-center gap-2">
+  <header @mousedown="onHeaderMouseDown" class="flex h-10 cursor-move items-center border-b border-border/50 bg-background/60 px-4 backdrop-blur-xl select-none gap-4">
+    <div class="flex h-full items-center gap-2 shrink-0">
       <PonyIcon :size="16" />
-      <span class="text-sm font-bold text-primary">Pony Clean</span>
-      <div class="ml-4 flex h-full items-center gap-1">
+      <span class="text-sm font-bold text-white">Pony Clean</span>
+    </div>
+
+    <div class="flex h-full flex-1 items-center justify-end gap-1">
+      <div v-show="!showSearch" class="flex h-full items-center gap-1">
         <button
           v-for="item in navItems"
           :key="item.value"
@@ -83,24 +101,30 @@ function handleBlur() {
           <component :is="item.icon" :size="16" />
         </button>
       </div>
-    </div>
 
-    <div class="flex h-full items-center gap-1">
       <div
         class="overflow-hidden transition-all duration-300 ease-in-out"
         :class="showSearch ? 'w-36' : 'w-0'"
       >
-        <input
-          v-if="showSearch"
-          ref="searchInputRef"
-          v-model="localSearch"
-          maxlength="64"
-          placeholder="搜索进程..."
-          class="h-6 w-full rounded bg-muted/40 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 outline-none"
-          @keydown.enter="handleEnter"
-          @keydown.escape="handleEscape"
-          @blur="handleBlur"
-        />
+        <div v-if="showSearch" class="relative">
+          <input
+            ref="searchInputRef"
+            v-model="localSearch"
+            maxlength="64"
+            placeholder="搜索进程..."
+            class="h-6 w-full rounded bg-muted/40 px-2 pr-6 text-xs text-foreground placeholder:text-muted-foreground/60 outline-none"
+            @keydown.enter="handleEnter"
+            @keydown.escape="handleEscape"
+            @blur="handleBlur"
+          />
+          <button
+            v-if="localSearch"
+            class="absolute right-1 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            @click="handleEscape"
+          >
+            <X :size="10" />
+          </button>
+        </div>
       </div>
       <button
         class="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground/80"
@@ -109,27 +133,28 @@ function handleBlur() {
       >
         <Search :size="16" />
       </button>
-    </div>
 
-    <button
-      class="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
-      title="关闭"
-      @click="handleClose"
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
+      <button
+        v-show="!showSearch"
+        class="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+        title="关闭"
+        @click="handleClose"
       >
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </svg>
-    </button>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+    </div>
   </header>
 </template>
