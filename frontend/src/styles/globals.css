@@ -21,7 +21,7 @@
   --color-success: hsl(142 70% 55%);
   --color-warning: hsl(38 90% 60%);
   --color-info: hsl(199 85% 55%);
-  --radius: 0.75rem;
+  --radius: 0.5rem;
 }
 
 @layer base {
@@ -43,8 +43,21 @@
     --border: 220 8% 20%;
     --input: 220 8% 20%;
     --ring: 214 90% 76%;
-    --radius: 0.75rem;
   }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 @keyframes progress-indeterminate {
@@ -58,6 +71,7 @@
 
 .scrollbar-thin::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
 .scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
