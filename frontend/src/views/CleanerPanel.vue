@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useCleaner, type CleanItem } from '../composables/useCleaner'
 import { Button } from '../components/ui/button'
 import { Progress } from '../components/ui/progress'
@@ -116,10 +116,10 @@ const selectedBytes = computed(() => {
 const allSelected = computed(() => items.value.length > 0 && selectedPaths.value.size === items.value.length)
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
+  if (bytes <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[Math.min(i, 3)]}`
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 3)
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 
 function truncatePath(path: string, maxLen = 60): string {
@@ -150,8 +150,13 @@ watch(deleteResult, (val) => {
   if (val) {
     dismissTimer = setTimeout(() => {
       deleteResult.value = null
+      dismissTimer = null
     }, 5000)
   }
+})
+
+onUnmounted(() => {
+  if (dismissTimer) clearTimeout(dismissTimer)
 })
 </script>
 
@@ -225,8 +230,8 @@ watch(deleteResult, (val) => {
 
     <!-- DONE (empty) -->
     <div v-else-if="state === 'done' && items.length === 0" class="flex flex-1 flex-col items-center justify-center gap-3">
-      <div class="flex h-14 w-14 items-center justify-center rounded-full bg-green-500/10">
-        <Check class="h-7 w-7 text-green-500" />
+      <div class="flex h-14 w-14 items-center justify-center rounded-full bg-success/10">
+        <Check class="h-7 w-7 text-success" />
       </div>
       <h3 class="text-lg font-medium">没有发现可清理文件</h3>
       <p class="text-sm text-muted-foreground">你的 C 盘状况良好</p>
@@ -260,7 +265,7 @@ watch(deleteResult, (val) => {
       </div>
 
       <!-- Scrollable category list -->
-      <ScrollArea class="flex-1 -mx-1 px-1">
+      <ScrollArea class="scrollbar-thin flex-1 -mx-1 px-1">
         <div class="space-y-1 pb-4">
           <Collapsible
             v-for="group in groupedItems"
@@ -354,16 +359,39 @@ watch(deleteResult, (val) => {
           :variant="deleteResult.failed > 0 ? 'destructive' : 'default'"
           class="shadow-lg"
         >
-          <div class="flex items-center gap-3">
-            <Check v-if="deleteResult.failed === 0" class="h-5 w-5 shrink-0 text-green-500" />
-            <AlertCircle v-else class="h-5 w-5 shrink-0" />
-            <AlertDescription>
-              清理完成
-              <span class="font-medium text-green-500">{{ deleteResult.success }}</span> 项成功
-              <template v-if="deleteResult.failed > 0">
-                ，<span class="font-medium text-destructive">{{ deleteResult.failed }}</span> 项失败
+          <div class="flex items-start gap-3">
+            <Check v-if="deleteResult.failed === 0" class="mt-0.5 h-5 w-5 shrink-0 text-green-500" />
+            <AlertCircle v-else class="mt-0.5 h-5 w-5 shrink-0" />
+            <div class="flex-1 min-w-0">
+              <p class="text-sm">
+                清理完成
+                <span class="font-medium text-success">{{ deleteResult.success }}</span> 项成功
+                <template v-if="deleteResult.failed > 0">
+                  ，<span class="font-medium text-destructive">{{ deleteResult.failed }}</span> 项失败
+                </template>
+              </p>
+              <template v-if="deleteResult.failed > 0 && deleteResult.errors.length > 0">
+                <div class="mt-2 space-y-0.5">
+                  <p
+                    v-for="(err, ei) in deleteResult.errors.slice(0, 5)"
+                    :key="ei"
+                    class="truncate text-xs text-destructive/80"
+                    :title="err"
+                  >
+                    {{ err }}
+                  </p>
+                  <p v-if="deleteResult.errors.length > 5" class="text-xs text-muted-foreground">
+                    等 {{ deleteResult.errors.length - 5 }} 项
+                  </p>
+                </div>
               </template>
-            </AlertDescription>
+            </div>
+            <button
+              class="shrink-0 flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
+              @click="deleteResult = null"
+            >
+              <X class="h-3.5 w-3.5" />
+            </button>
           </div>
         </Alert>
       </div>

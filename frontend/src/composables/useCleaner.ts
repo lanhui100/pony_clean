@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, shallowRef } from 'vue'
 
 export interface CleanItem {
   path: string
@@ -30,26 +30,39 @@ export function useCleaner() {
   let unlistenDone: UnlistenFn | null = null
   let unlistenError: UnlistenFn | null = null
   let unlistenCancelled: UnlistenFn | null = null
+  let invokeSeq = 0
 
-  onMounted(async () => {
-    unlistenProgress = await listen<{ scanned: number; current: string }>('scan-progress', (e) => {
-      scanned.value = e.payload.scanned
-      currentFile.value = e.payload.current
+  function guardScanning(seq: number, fn: (e: any) => void) {
+    return (e: any) => { if (state.value === 'scanning' && invokeSeq === seq) fn(e) }
+  }
+
+  onMounted(() => {
+    const seq = invokeSeq
+    Promise.all([
+      listen<{ scanned: number; current: string }>('scan-progress', guardScanning(seq, (e) => {
+        scanned.value = e.payload.scanned
+        currentFile.value = e.payload.current
+      })),
+      listen<{ items: CleanItem[] }>('scan-items', guardScanning(seq, (e) => {
+        items.value = e.payload.items
+      })),
+      listen<{ total_items: number; total_bytes: number }>('scan-done', guardScanning(seq, (e) => {
+        state.value = 'done'
+        totalBytes.value = e.payload.total_bytes
+      })),
+      listen<{ message: string }>('scan-error', guardScanning(seq, (e) => {
+        state.value = 'error'
+        errorMessage.value = e.payload.message
+      })),
+      listen('scan-cancelled', guardScanning(seq, () => {
+        state.value = 'cancelled'
+      })),
+    ]).then((listeners) => {
+      ;[unlistenProgress, unlistenItems, unlistenDone, unlistenError, unlistenCancelled] = listeners
+    }).catch((e) => {
+      console.error('Failed to register cleaner event listeners:', e)
     })
-    unlistenItems = await listen<{ items: CleanItem[] }>('scan-items', (e) => {
-      items.value = e.payload.items
-    })
-    unlistenDone = await listen<{ total_items: number; total_bytes: number }>('scan-done', (e) => {
-      state.value = 'done'
-      totalBytes.value = e.payload.total_bytes
-    })
-    unlistenError = await listen<{ message: string }>('scan-error', (e) => {
-      state.value = 'error'
-      errorMessage.value = e.payload.message
-    })
-    unlistenCancelled = await listen('scan-cancelled', () => {
-      state.value = 'cancelled'
-    })
+    // TODO: checkResumedScan — 需要后端 get_scan_state 命令实现后再启用
   })
 
   onUnmounted(() => {
@@ -61,6 +74,7 @@ export function useCleaner() {
   })
 
   async function startScan() {
+    const seq = ++invokeSeq
     state.value = 'scanning'
     scanned.value = 0
     currentFile.value = ''
@@ -71,6 +85,7 @@ export function useCleaner() {
     try {
       await invoke('start_scan')
     } catch (e: any) {
+      if (seq !== invokeSeq) return
       state.value = 'error'
       errorMessage.value = String(e)
     }
@@ -79,8 +94,8 @@ export function useCleaner() {
   async function cancelScan() {
     try {
       await invoke('cancel_scan')
-    } catch {
-      // fallback: ignore if command doesn't exist yet
+    } catch (e) {
+      console.warn('cancelScan failed:', e)
     }
   }
 

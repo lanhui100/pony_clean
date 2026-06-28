@@ -10,12 +10,6 @@ use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let _ = window.close();
-                std::process::exit(0);
-            }
-        })
         .setup(|app| {
             let snapshot = Arc::new(RwLock::new(None));
             let (cmd_tx, handle) = monitor::start_shared(snapshot.clone());
@@ -37,6 +31,7 @@ fn main() {
             commands::cleaner::cancel_scan,
             commands::cleaner::execute_clean,
             commands::cleaner::empty_recycle_bin,
+            commands::window::quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

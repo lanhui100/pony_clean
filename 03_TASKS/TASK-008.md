@@ -25,8 +25,8 @@
 5. 仅显示 CPU>10% 或 MEM>200MB 的进程（搜索时不过滤）
 6. Kill 按钮 → 确认 → 反馈（成功/失败）
 7. 进程名过长时 text-ellipsis
-8. `<Table />` shadcn-vue 组件实现，支持 striped rows
+8. 使用原生 `<table>` 实现（非 shadcn-vue Table——需要自定义进度条/着色，原生 table 控制力更强），支持 striped rows（`even:bg-muted/5`）
 9. 加载态（等待首次数据）和空搜索态
 
 ## Spec
-详见 `04_SPECS/SPEC-008-Monitor-Panel.md`
+详见 `04_SPECS/SPEC-008-Monitor-Panel.md` 和 `04_SPECS/SPEC-011-UI-Design.md`（SPEC-011 覆盖设计规范和对抗式审核调优结果）

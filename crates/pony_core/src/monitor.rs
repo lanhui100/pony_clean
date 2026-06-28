@@ -126,6 +126,10 @@ pub fn start(
             let cpu_total = system.global_cpu_info().cpu_usage();
             let cpu_total = if cpu_total.is_nan() { 0.0 } else { cpu_total };
 
+            // 归一化：sysinfo 的 process.cpu_usage() 返回跨所有核心的累加值
+            // （最高 num_cpus × 100%），除以核心数使其与 global_cpu 同为 0-100% 刻度
+            let num_cpus = system.cpus().len().max(1) as f32;
+
             let summary = SystemSummary {
                 cpu_total,
                 mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
@@ -139,11 +143,11 @@ pub fn start(
                 processes.push(ProcessInfo {
                     pid: pid.as_u32(),
                     name: process.name().to_string(),
-                    cpu: if process.cpu_usage().is_nan() {
+                    cpu: (if process.cpu_usage().is_nan() {
                         0.0
                     } else {
                         process.cpu_usage()
-                    },
+                    }) / num_cpus,
                     mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
                     status: format!("{:?}", process.status()),
                 });
@@ -200,6 +204,7 @@ pub fn start_shared(
             }
             let cpu_total = system.global_cpu_info().cpu_usage();
             let cpu_total = if cpu_total.is_nan() { 0.0 } else { cpu_total };
+            let num_cpus = system.cpus().len().max(1) as f32;
             let summary = SystemSummary {
                 cpu_total,
                 mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
@@ -211,7 +216,7 @@ pub fn start_shared(
                 processes.push(ProcessInfo {
                     pid: pid.as_u32(),
                     name: process.name().to_string(),
-                    cpu: if process.cpu_usage().is_nan() { 0.0 } else { process.cpu_usage() },
+                    cpu: (if process.cpu_usage().is_nan() { 0.0 } else { process.cpu_usage() }) / num_cpus,
                     mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
                     status: format!("{:?}", process.status()),
                 });

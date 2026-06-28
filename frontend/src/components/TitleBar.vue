@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
+import PonyIcon from './PonyIcon.vue'
 
 const appWindow = getCurrentWindow()
 
+function onHeaderMouseDown(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (target.closest('button')) return
+  appWindow.startDragging()
+}
+
 async function handleClose() {
-  await appWindow.close()
+  await invoke('quit_app')
 }
 </script>
 
 <template>
-  <header
-    data-tauri-drag-region
-    class="flex h-10 items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-sm select-none"
-  >
-    <div class="flex items-center gap-2">
+  <header @mousedown="onHeaderMouseDown" class="flex h-10 cursor-move items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-sm select-none">
+    <div class="flex h-full flex-1 items-center gap-2">
+      <PonyIcon :size="16" />
       <span class="text-sm font-semibold text-primary">PonyClean</span>
     </div>
     <button
