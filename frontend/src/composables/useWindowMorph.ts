@@ -9,7 +9,7 @@ const FULL_H = 340
 const CAPSULE_W = 160
 const CAPSULE_H = 40
 const EDGE_PADDING = 8
-const IDLE_TIMEOUT = 15_000
+const IDLE_TIMEOUT = 10_000
 const IDLE_POLL_INTERVAL = 500
 const PAUSE_AFTER_SHRINK = 800
 const MORPH_ONBOARDED_KEY = 'pony_morph_onboarded'
@@ -194,14 +194,17 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     resetIdleTimer()
   }
 
-  function onCapsuleHover() {
-    if (morphState.value === 'docked') return
-    if (morphState.value === 'shrinking' || morphState.value === 'capsule' || morphState.value === 'docking') {
-      abortAndRestore()
-    }
+  function onCapsuleDblClick() {
+    expandToFull()
   }
 
-  function onCapsuleClick() { expandToFull() }
+  async function onCapsuleDragStart(e: MouseEvent) {
+    if (morphState.value === 'docked') {
+      morphState.value = 'capsule'
+    }
+    try { await win.startDragging() }
+    catch { /* best-effort */ }
+  }
 
   function setDockPref(pref: string | null) {
     userDockPref.value = pref
@@ -214,7 +217,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   return {
     morphState, showCapsule, isFirstDock, dockSide, userDockPref,
-    onUserActivity, onCapsuleHover, onCapsuleClick,
+    onUserActivity, onCapsuleDblClick, onCapsuleDragStart,
     onShrinkAnimEnd, onExpandAnimEnd, expandToFull, setDockPref,
   }
 }

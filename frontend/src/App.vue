@@ -15,7 +15,7 @@ const isScanning = ref(false)
 const { cpuPercent, memPercent, setPollInterval } = useMonitor()
 const {
   morphState, showCapsule, isFirstDock,
-  onUserActivity, onCapsuleHover, onCapsuleClick,
+  onUserActivity, onCapsuleDblClick, onCapsuleDragStart,
   onShrinkAnimEnd, onExpandAnimEnd, setDockPref, dockSide, userDockPref,
 } = useWindowMorph(isScanning)
 
@@ -61,13 +61,13 @@ function onFullWindowKeyDown() { onUserActivity() }
     <div
       v-if="showCapsule"
       class="capsule-layer"
-      @mouseenter="onCapsuleHover"
+      @mousedown="onCapsuleDragStart"
     >
       <CapsuleBar
         :cpu-percent="cpuPercent"
         :mem-percent="memPercent"
         :is-first-dock="isFirstDock"
-        @click="onCapsuleClick"
+        @dblclick="onCapsuleDblClick"
       />
     </div>
 
