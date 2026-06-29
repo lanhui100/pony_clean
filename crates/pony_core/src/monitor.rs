@@ -100,6 +100,7 @@ pub fn start(
     let handle = std::thread::spawn(move || {
         let mut system = System::new();
         let mut first_run = true;
+        let mut disks = Disks::new();
 
         loop {
             // 500ms 子间隔轮询，避免 Shutdown 响应延迟过长
@@ -134,7 +135,6 @@ pub fn start(
             let num_cpus = system.cpus().len().max(1) as f32;
 
             // 获取 C 盘信息
-            let mut disks = Disks::new();
             disks.refresh_list();
             let (disk_used_gb, disk_total_gb) = disks
                 .list()
@@ -206,6 +206,7 @@ pub fn start_shared(
     let (cmd_tx, cmd_rx) = mpsc::channel::<MonitorCommand>();
     let handle = thread::spawn(move || {
         let mut system = System::new();
+        let mut disks = Disks::new();
         loop {
             match cmd_rx.recv_timeout(Duration::from_millis(2000)) {
                 Ok(cmd) => {
@@ -225,7 +226,6 @@ pub fn start_shared(
             let cpu_total = if cpu_total.is_nan() { 0.0 } else { cpu_total };
             let num_cpus = system.cpus().len().max(1) as f32;
 
-            let mut disks = Disks::new();
             disks.refresh_list();
             let (disk_used_gb, disk_total_gb) = disks
                 .list()
