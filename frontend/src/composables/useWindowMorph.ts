@@ -194,14 +194,24 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     resetIdleTimer()
   }
 
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null
+
+  function cancelHoverTimer() {
+    if (hoverTimer) clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+
   function onCapsuleHover() {
-    if (morphState.value === 'docked') return
-    if (morphState.value === 'shrinking' || morphState.value === 'capsule' || morphState.value === 'docking') {
-      abortAndRestore()
-    }
+    if (morphState.value !== 'capsule' && morphState.value !== 'docked') return
+    cancelHoverTimer()
+    hoverTimer = setTimeout(() => {
+      if (morphState.value !== 'capsule' && morphState.value !== 'docked') return
+      expandToFull()
+    }, 500)
   }
 
   function onCapsuleDragStart() {
+    cancelHoverTimer()
     // Undock first so window moves freely
     if (morphState.value === 'docked') {
       morphState.value = 'capsule'
@@ -209,7 +219,14 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     win.startDragging().catch(() => {})
   }
 
-  function onCapsuleClick() { expandToFull() }
+  function onCapsuleLeave() {
+    cancelHoverTimer()
+  }
+
+  function onCapsuleClick() {
+    cancelHoverTimer()
+    expandToFull()
+  }
 
   function setDockPref(pref: string | null) {
     userDockPref.value = pref
@@ -218,11 +235,11 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   onMounted(() => { getMonitor(); startIdleDetection() })
-  onUnmounted(() => { stopIdleDetection(); if (pauseTimer) clearTimeout(pauseTimer) })
+  onUnmounted(() => { stopIdleDetection(); if (pauseTimer) clearTimeout(pauseTimer); cancelHoverTimer() })
 
   return {
     morphState, showCapsule, isFirstDock, dockSide, userDockPref,
-    onUserActivity, onCapsuleHover, onCapsuleDragStart, onCapsuleClick,
+    onUserActivity, onCapsuleHover, onCapsuleLeave, onCapsuleDragStart, onCapsuleClick,
     onShrinkAnimEnd, onExpandAnimEnd, expandToFull, setDockPref,
   }
 }
