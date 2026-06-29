@@ -87,7 +87,7 @@ function handleBlur() {
       <span class="text-sm font-bold text-white">Pony Clean</span>
     </div>
 
-    <div class="flex h-full flex-1 items-center justify-end gap-1">
+    <div class="flex h-full flex-1 items-center justify-between gap-1">
       <div v-show="!showSearch" class="flex h-full items-center gap-1">
         <button
           v-for="item in navItems"
@@ -127,35 +127,38 @@ function handleBlur() {
           </button>
         </div>
       </div>
-      <button
-        class="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground/80"
-        :title="showSearch ? '关闭搜索' : '搜索'"
-        @click="toggleSearch"
-      >
-        <Search :size="16" />
-      </button>
 
-      <button
-        v-show="!showSearch"
-        class="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
-        title="关闭"
-        @click="handleClose"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+      <div class="flex items-center gap-0.5">
+        <button
+          class="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground/80"
+          :title="showSearch ? '关闭搜索' : '搜索'"
+          @click="toggleSearch"
         >
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
+          <Search :size="16" />
+        </button>
+
+        <button
+          v-show="!showSearch"
+          class="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+          title="关闭"
+          @click="handleClose"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
     </div>
   </header>
 </template>
