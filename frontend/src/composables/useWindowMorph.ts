@@ -1,6 +1,7 @@
 import { ref, onMounted, onUnmounted, type Ref } from 'vue'
 import { getCurrentWindow, type Monitor } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export type MorphState = 'full' | 'shrinking' | 'capsule' | 'docking' | 'docked' | 'expanding'
 
@@ -42,6 +43,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let idlePollTimer: ReturnType<typeof setInterval> | null = null
   let pauseTimer: ReturnType<typeof setTimeout> | null = null
   let monitorInfo: Monitor | null = null
+  let unlistenEdgeEnter: UnlistenFn | null = null
+  let unlistenEdgeLeave: UnlistenFn | null = null
 
   async function getMonitor() {
     try { monitorInfo = await win.currentMonitor() }
@@ -234,8 +237,33 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     else localStorage.removeItem('pony_dock_pref')
   }
 
-  onMounted(() => { getMonitor(); startIdleDetection() })
-  onUnmounted(() => { stopIdleDetection(); if (pauseTimer) clearTimeout(pauseTimer); cancelHoverTimer() })
+  onMounted(async () => {
+    getMonitor()
+    startIdleDetection()
+    // Start Rust-side GetCursorPos polling for reliable edge detection
+    try {
+      await invoke('start_edge_cursor_detect')
+      unlistenEdgeEnter = await listen<void>('edge-cursor-enter', () => {
+        // Only react when in docked/capsule state
+        if (morphState.value === 'docked' || morphState.value === 'capsule') {
+          onCapsuleHover()
+        }
+      })
+      unlistenEdgeLeave = await listen<unknown>('edge-cursor-leave', () => {
+        /* no-op — hoverTimer handles leave via onCapsuleLeave when mouse actually leaves */
+      })
+    } catch (e) {
+      console.warn('[PonyClean] edge cursor detection not available:', e)
+    }
+  })
+  onUnmounted(() => {
+    stopIdleDetection()
+    if (pauseTimer) clearTimeout(pauseTimer)
+    cancelHoverTimer()
+    invoke('stop_edge_cursor_detect').catch(() => {})
+    unlistenEdgeEnter?.()
+    unlistenEdgeLeave?.()
+  })
 
   return {
     morphState, showCapsule, isFirstDock, dockSide, userDockPref,

@@ -54,6 +54,7 @@ function onFullWindowKeyDown() { onUserActivity() }
       'root h-screen w-screen overflow-hidden',
       morphState === 'shrinking' ? 'is-shrinking' : '',
       morphState === 'capsule' || morphState === 'docking' || morphState === 'docked' || morphState === 'expanding' ? 'is-capsule' : '',
+      morphState === 'docked' ? 'is-docked' : '',
       morphState === 'expanding' ? 'is-expanding' : '',
     ]"
   >
@@ -129,17 +130,25 @@ function onFullWindowKeyDown() { onUserActivity() }
   pointer-events: none;
 }
 
-/* ─── Capsule (bottom) ─── */
+/* ─── Capsule (centered in normal states, bottom-anchored when docked) ─── */
 .capsule-layer {
   position: absolute;
-  bottom: 0;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%) scale(1);
+  transform: translate(-50%, -50%) scale(1);
   width: 160px;
   height: 40px;
   z-index: 2;
   opacity: 1;
   pointer-events: auto;
+}
+
+/* ─── Docked: capsule at window bottom (visible at screen top edge) ─── */
+.is-docked .capsule-layer {
+  top: auto;
+  bottom: 0;
+  left: 50%;
+  transform: translate(-50%, 0);
 }
 
 /* ─── Shrinking: capsule enters from scaled center ─── */
@@ -149,27 +158,27 @@ function onFullWindowKeyDown() { onUserActivity() }
 
 @keyframes capsule-enter {
   from {
-    transform: translateX(-50%) scale(0.3) translateY(20px);
+    transform: translate(-50%, -50%) scale(0.3);
     opacity: 0;
   }
   to {
-    transform: translateX(-50%) scale(1) translateY(0);
+    transform: translate(-50%, -50%) scale(1);
     opacity: 1;
   }
 }
 
-/* ─── Expanding: capsule exits ─── */
+/* ─── Expanding: capsule exits, panel enters ─── */
 .is-expanding .capsule-layer {
   animation: capsule-exit 200ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 @keyframes capsule-exit {
   from {
-    transform: translateX(-50%) scale(1) translateY(0);
+    transform: translate(-50%, -50%) scale(1);
     opacity: 1;
   }
   to {
-    transform: translateX(-50%) scale(0.3) translateY(20px);
+    transform: translate(-50%, -50%) scale(0.3);
     opacity: 0;
   }
 }

@@ -4,12 +4,14 @@ mod commands;
 
 use commands::monitor::MonitorState;
 use commands::cleaner::CleanerState;
+use commands::window::EdgeCursorState;
 use pony_core::monitor;
 use std::sync::{Arc, RwLock};
 use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
+        .manage(EdgeCursorState::new())
         .setup(|app| {
             eprintln!("[PonyClean] Rust backend starting up...");
 
@@ -45,6 +47,8 @@ fn main() {
             commands::cleaner::empty_recycle_bin,
             commands::window::quit_app,
             commands::window::get_system_idle_ms,
+            commands::window::start_edge_cursor_detect,
+            commands::window::stop_edge_cursor_detect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
