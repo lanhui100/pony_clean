@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useCleaner, type CleanItem } from '../composables/useCleaner'
+import { useMonitor } from '../composables/useMonitor'
 import { Button } from '../components/ui/button'
 import { Progress } from '../components/ui/progress'
 import { Alert, AlertDescription } from '../components/ui/alert'
@@ -17,6 +18,34 @@ const emit = defineEmits<{
   (e: 'scan-start'): void
   (e: 'scan-end'): void
 }>()
+
+const { summary } = useMonitor()
+
+function diskThreshold(pct: number) {
+  if (pct < 65) return 'low'
+  if (pct < 85) return 'mid'
+  return 'high'
+}
+
+function diskColor(v: number) {
+  const t = diskThreshold(v)
+  if (t === 'low') return 'bg-success'
+  if (t === 'mid') return 'bg-warning'
+  return 'bg-destructive'
+}
+
+function diskTextColor(v: number) {
+  const t = diskThreshold(v)
+  if (t === 'low') return 'text-success'
+  if (t === 'mid') return 'text-warning'
+  return 'text-destructive'
+}
+
+const diskPct = computed(() => {
+  const s = summary.value
+  if (!s || s.disk_total_gb <= 0) return 0
+  return (s.disk_used_gb / s.disk_total_gb) * 100
+})
 
 const {
   state,
@@ -175,11 +204,28 @@ watch(() => state.value, (val, prev) => {
 <template>
   <div class="relative flex h-full flex-col">
     <!-- IDLE -->
-    <div v-if="state === 'idle'" class="flex flex-1 flex-col items-center justify-center gap-3 glass-panel">
-      <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-        <Scan class="h-6 w-6 text-primary" />
-      </div>
-      <h2 class="text-sm font-semibold">C盘安全清理</h2>
+    <div v-if="state === 'idle'" class="flex flex-1 flex-col items-center justify-center gap-3">
+      <template v-if="summary">
+<div class="flex flex-col items-center gap-1">
+            <div class="flex items-baseline gap-0.5">
+              <span class="text-6xl font-bold tabular-nums leading-none" :class="diskTextColor(diskPct)">{{ diskPct.toFixed(0) }}</span>
+              <span class="text-xs tabular-nums text-muted-foreground">%</span>
+            </div>
+            <span class="text-xs tabular-nums text-muted-foreground">{{ summary.disk_used_gb.toFixed(0) }}G / {{ summary.disk_total_gb.toFixed(0) }}G</span>
+          <div class="mt-1.5 h-1.5 w-40 overflow-hidden rounded-full bg-white/15">
+            <span
+              class="block h-full rounded-full transition-all"
+              :class="diskColor(diskPct)"
+              :style="{ width: Math.min(diskPct, 100) + '%' }"
+            />
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+          <Scan class="h-6 w-6 text-primary" />
+        </div>
+      </template>
       <p class="max-w-56 text-center text-[11px] text-muted-foreground">
         扫描 C 盘临时文件、浏览器缓存、Prefetch 和回收站，安全释放磁盘空间
       </p>
@@ -190,7 +236,7 @@ watch(() => state.value, (val, prev) => {
     </div>
 
     <!-- SCANNING -->
-    <div v-else-if="state === 'scanning'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6 glass-panel">
+    <div v-else-if="state === 'scanning'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6">
       <Loader2 class="h-6 w-6 animate-spin text-primary" />
       <Progress class="h-1 w-48" />
       <div class="text-center">
@@ -206,14 +252,14 @@ watch(() => state.value, (val, prev) => {
     </div>
 
     <!-- DELETING -->
-    <div v-else-if="state === 'deleting'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6 glass-panel">
+    <div v-else-if="state === 'deleting'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6">
       <Loader2 class="h-6 w-6 animate-spin text-primary" />
       <Progress class="h-1 w-48" />
       <p class="text-xs text-muted-foreground">清理中...</p>
     </div>
 
     <!-- ERROR -->
-    <div v-else-if="state === 'error'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6 glass-panel">
+    <div v-else-if="state === 'error'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6">
       <Alert variant="destructive" class="max-w-sm">
         <div class="flex items-start gap-2">
           <AlertCircle class="mt-0.5 h-4 w-4 shrink-0" />
@@ -232,7 +278,7 @@ watch(() => state.value, (val, prev) => {
     </div>
 
     <!-- CANCELLED -->
-    <div v-else-if="state === 'cancelled'" class="flex flex-1 flex-col items-center justify-center gap-3 glass-panel">
+    <div v-else-if="state === 'cancelled'" class="flex flex-1 flex-col items-center justify-center gap-3">
       <p class="text-xs text-muted-foreground">扫描已取消</p>
       <Button variant="outline" size="sm" @click="handleStartScan">
         <RotateCcw class="mr-1.5 h-3.5 w-3.5" />
@@ -241,7 +287,7 @@ watch(() => state.value, (val, prev) => {
     </div>
 
     <!-- DONE (empty) -->
-    <div v-else-if="state === 'done' && items.length === 0" class="flex flex-1 flex-col items-center justify-center gap-2 glass-panel">
+    <div v-else-if="state === 'done' && items.length === 0" class="flex flex-1 flex-col items-center justify-center gap-2">
       <div class="flex h-10 w-10 items-center justify-center rounded-full bg-success/10">
         <Check class="h-5 w-5 text-success" />
       </div>
@@ -254,7 +300,7 @@ watch(() => state.value, (val, prev) => {
     </div>
 
     <!-- DONE (with items) -->
-    <div v-else-if="state === 'done' && items.length > 0" class="flex flex-1 flex-col overflow-hidden gap-2 glass-panel">
+    <div v-else-if="state === 'done' && items.length > 0" class="flex flex-1 flex-col overflow-hidden gap-2">
       <!-- Header summary -->
       <div class="flex items-center justify-between">
         <div>
@@ -286,7 +332,7 @@ watch(() => state.value, (val, prev) => {
             :open="openCategories.has(group.category)"
             @update:open="(v) => { const n = new Set(openCategories); v ? n.add(group.category) : n.delete(group.category); openCategories = n }"
           >
-            <div class="rounded glass-panel overflow-hidden border-0">
+            <div class="rounded overflow-hidden border-0">
               <!-- Category header -->
               <CollapsibleTrigger class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs font-medium hover:bg-muted/20 transition-colors">
                 <ChevronRight

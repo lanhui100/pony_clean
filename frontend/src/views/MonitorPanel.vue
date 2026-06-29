@@ -166,7 +166,7 @@ onUnmounted(() => {
             </span>
             <span class="text-xs tabular-nums" :class="cpuTextColor(summary?.cpu_total ?? 0)">%</span>
           </div>
-          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted/50">
+          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/15">
             <span
               class="block h-full rounded-full transition-all"
               :class="cpuColor(summary?.cpu_total ?? 0)"
@@ -186,7 +186,7 @@ onUnmounted(() => {
             </span>
             <span class="text-xs tabular-nums" :class="memTextColor(memPct)">%</span>
           </div>
-          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted/50">
+          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/15">
             <span
               class="block h-full rounded-full transition-all"
               :class="memColor(memPct)"
@@ -211,10 +211,10 @@ onUnmounted(() => {
     <!-- Loading skeleton -->
     <div v-if="loading" class="flex flex-col gap-0.5">
       <div v-for="i in 8" :key="i" class="flex h-6 items-center gap-3 rounded px-2">
-        <div class="h-2.5 w-32 rounded-sm bg-muted/50 animate-pulse" />
-        <div class="h-2.5 w-12 rounded-sm bg-muted/50 animate-pulse" />
-        <div class="h-2.5 w-20 rounded-sm bg-muted/50 animate-pulse" />
-        <div class="ml-auto h-2.5 w-10 rounded-sm bg-muted/50 animate-pulse" />
+        <div class="h-2.5 w-32 rounded-sm bg-white/15 animate-pulse" />
+        <div class="h-2.5 w-12 rounded-sm bg-white/15 animate-pulse" />
+        <div class="h-2.5 w-20 rounded-sm bg-white/15 animate-pulse" />
+        <div class="ml-auto h-2.5 w-10 rounded-sm bg-white/15 animate-pulse" />
       </div>
     </div>
 
@@ -272,7 +272,7 @@ onUnmounted(() => {
           >
             <span class="flex-[6] truncate text-foreground/90" :title="p.name">{{ p.name }}</span>
             <span class="flex flex-[4] items-center justify-start gap-1.5 tabular-nums">
-              <span class="h-1 w-8 overflow-hidden rounded-full bg-muted/50">
+              <span class="h-1 w-8 overflow-hidden rounded-full bg-white/15">
                 <span
                   class="block h-full rounded-full transition-all"
                   :class="cpuColor(p.cpu)"

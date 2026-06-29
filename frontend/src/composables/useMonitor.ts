@@ -10,6 +10,8 @@ export interface SystemSummary {
   mem_used_mb: number
   mem_total_mb: number
   process_count: number
+  disk_used_gb: number
+  disk_total_gb: number
 }
 export interface ProcessInfo {
   pid: number
@@ -45,6 +47,14 @@ export function useMonitor() {
     if (!summary.value || summary.value.mem_total_mb === 0) return 0
     return Math.round((summary.value.mem_used_mb / summary.value.mem_total_mb) * 100)
   })
+
+  const diskPct = computed(() => {
+    if (!summary.value || summary.value.disk_total_gb <= 0) return 0
+    return (summary.value.disk_used_gb / summary.value.disk_total_gb) * 100
+  })
+
+  const diskUsedGb = computed(() => summary.value?.disk_used_gb ?? 0)
+  const diskTotalGb = computed(() => summary.value?.disk_total_gb ?? 0)
 
   async function fetch() {
     try {
@@ -109,6 +119,9 @@ export function useMonitor() {
     error,
     cpuPercent,
     memPercent,
+    diskPct,
+    diskUsedGb,
+    diskTotalGb,
     killProcess,
     fetch,
     setPollInterval,

@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::{Arc, RwLock, mpsc};
 use std::thread;
 use std::time::Duration;
+use sysinfo::Disks;
 use sysinfo::Pid;
 use sysinfo::System;
 use tokio::sync::oneshot;
@@ -24,6 +25,8 @@ pub struct SystemSummary {
     pub mem_used_mb: f64,
     pub mem_total_mb: f64,
     pub process_count: usize,
+    pub disk_used_gb: f64,
+    pub disk_total_gb: f64,
 }
 
 /// 完整快照：系统摘要 + 进程列表（按 CPU 降序）
@@ -130,11 +133,31 @@ pub fn start(
             // （最高 num_cpus × 100%），除以核心数使其与 global_cpu 同为 0-100% 刻度
             let num_cpus = system.cpus().len().max(1) as f32;
 
+            // 获取 C 盘信息
+            let mut disks = Disks::new();
+            disks.refresh_list();
+            let (disk_used_gb, disk_total_gb) = disks
+                .list()
+                .iter()
+                .find(|d| {
+                    let mp = d.mount_point().to_string_lossy();
+                    mp == "C:" || mp == "C:\\" || mp.starts_with("C:\\")
+                })
+                .map(|d| {
+                    let total = d.total_space() as f64;
+                    let available = d.available_space() as f64;
+                    let used = if total > 0.0 { total - available } else { 0.0 };
+                    (used / 1_073_741_824.0, total / 1_073_741_824.0)
+                })
+                .unwrap_or((0.0, 0.0));
+
             let summary = SystemSummary {
                 cpu_total,
                 mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
                 mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
                 process_count: system.processes().len(),
+                disk_used_gb,
+                disk_total_gb,
             };
 
             let count = system.processes().len();
@@ -201,11 +224,31 @@ pub fn start_shared(
             let cpu_total = system.global_cpu_info().cpu_usage();
             let cpu_total = if cpu_total.is_nan() { 0.0 } else { cpu_total };
             let num_cpus = system.cpus().len().max(1) as f32;
+
+            let mut disks = Disks::new();
+            disks.refresh_list();
+            let (disk_used_gb, disk_total_gb) = disks
+                .list()
+                .iter()
+                .find(|d| {
+                    let mp = d.mount_point().to_string_lossy();
+                    mp == "C:" || mp == "C:\\" || mp.starts_with("C:\\")
+                })
+                .map(|d| {
+                    let total = d.total_space() as f64;
+                    let available = d.available_space() as f64;
+                    let used = if total > 0.0 { total - available } else { 0.0 };
+                    (used / 1_073_741_824.0, total / 1_073_741_824.0)
+                })
+                .unwrap_or((0.0, 0.0));
+
             let summary = SystemSummary {
                 cpu_total,
                 mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
                 mem_total_mb: system.total_memory() as f64 / (1024.0 * 1024.0),
                 process_count: system.processes().len(),
+                disk_used_gb,
+                disk_total_gb,
             };
             let mut processes = Vec::with_capacity(system.processes().len());
             for (&pid, process) in system.processes().iter() {
