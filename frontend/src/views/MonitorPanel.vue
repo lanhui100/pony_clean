@@ -13,6 +13,8 @@ const sortKey = ref<'name' | 'cpu' | 'mem_mb' | 'mem_pct'>('cpu')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const killMsg = ref('')
 let killTimer: ReturnType<typeof setTimeout> | null = null
+const confirmPid = ref<number | null>(null)
+let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
 interface ProcessRow extends ProcessInfo {
   mem_pct: number
@@ -118,15 +120,23 @@ function fmPct(v: number) {
 }
 
 async function handleKill(p: ProcessRow) {
-  killMsg.value = ''
-  const exists = processes.value.some(proc => proc.pid === p.pid)
-  if (!exists) {
-    killMsg.value = '✓ 进程已结束'
+  if (confirmPid.value === p.pid) {
+    if (confirmTimer) clearTimeout(confirmTimer)
+    confirmTimer = null
+    confirmPid.value = null
+    killMsg.value = ''
+    const exists = processes.value.some(proc => proc.pid === p.pid)
+    if (!exists) {
+      killMsg.value = '✓ 进程已结束'
+      scheduleKillClear()
+      return
+    }
+    killMsg.value = await killProcess(p.pid, p.name)
     scheduleKillClear()
-    return
+  } else {
+    confirmPid.value = p.pid
+    confirmTimer = setTimeout(() => { confirmPid.value = null }, 3000)
   }
-  killMsg.value = await killProcess(p.pid, p.name)
-  scheduleKillClear()
 }
 
 function scheduleKillClear() {
@@ -136,11 +146,12 @@ function scheduleKillClear() {
 
 onUnmounted(() => {
   if (killTimer) clearTimeout(killTimer)
+  if (confirmTimer) clearTimeout(confirmTimer)
 })
 </script>
 
 <template>
-  <div class="flex h-full flex-col gap-3">
+  <div class="relative flex h-full flex-col gap-3">
     <!-- Summary bar -->
     <div class="flex items-center justify-center gap-6">
             <!-- CPU -->
@@ -184,14 +195,16 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Kill feedback toast -->
-    <div
-      v-if="killMsg"
-      class="rounded px-2.5 py-1.5 text-xs font-medium"
-      :class="killMsg.startsWith('✓') ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'"
-    >
-      {{ killMsg }}
-    </div>
+    <!-- Kill feedback toast — bottom floating -->
+    <Transition name="kill-fade">
+      <div
+        v-if="killMsg"
+        class="absolute bottom-0 left-1/2 z-10 -translate-x-1/2 rounded px-2.5 py-1.5 text-xs font-medium"
+        :class="killMsg.startsWith('✓') ? 'bg-success/30 text-success' : 'bg-destructive/30 text-destructive'"
+      >
+        {{ killMsg }}
+      </div>
+    </Transition>
 
     <!-- Loading skeleton -->
     <div v-if="loading" class="flex flex-col gap-0.5">
@@ -244,7 +257,7 @@ onUnmounted(() => {
         <button class="flex-[5] text-center hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
           内存 {{ summary ? (summary.mem_total_mb / 1024).toFixed(1) : '—' }}G {{ sortIcon('mem_mb') }}
         </button>
-        <div class="w-4" />
+        <div class="w-5" />
       </div>
 
       <!-- Rows -->
@@ -269,14 +282,27 @@ onUnmounted(() => {
             <span :class="['flex-[5] text-center tabular-nums whitespace-nowrap', memTextColor(p.mem_pct)]">
               {{ fmMem(p.mem_mb) }} <span class="text-[11px] text-muted-foreground">{{ fmPct(p.mem_pct) }}</span>
             </span>
-            <div class="flex w-4 shrink-0 items-center justify-center -ml-1">
-              <button
-                class="flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100"
-                :title="`终止 ${p.name}`"
-                @click="handleKill(p)"
-              >
-                <X class="h-2.5 w-2.5" />
-              </button>
+            <div class="flex w-5 shrink-0 items-center justify-center">
+              <Transition name="btn-swap" mode="out-in">
+                <button
+                  v-if="confirmPid !== p.pid"
+                  key="kill"
+                  class="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100"
+                  :title="`终止 ${p.name}`"
+                  @click="handleKill(p)"
+                >
+                  <X class="h-2.5 w-2.5" />
+                </button>
+                <button
+                  v-else
+                  key="confirm"
+                   class="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-destructive text-[11px] font-bold leading-none text-destructive-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/90 focus-visible:opacity-100"
+                  title="再次点击确认终止"
+                  @click="handleKill(p)"
+                >
+                  ?
+                </button>
+              </Transition>
             </div>
           </div>
         </div>
@@ -284,3 +310,24 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.kill-fade-enter-active,
+.kill-fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+.kill-fade-enter-from,
+.kill-fade-leave-to {
+  opacity: 0;
+}
+
+.btn-swap-enter-active,
+.btn-swap-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.btn-swap-enter-from,
+.btn-swap-leave-to {
+  opacity: 0;
+  transform: scale(0.85);
+}
+</style>
