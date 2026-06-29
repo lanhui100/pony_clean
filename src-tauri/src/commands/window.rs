@@ -1,13 +1,37 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use tokio_util::sync::CancellationToken;
 
 #[repr(C)]
 struct LastInputInfo {
     cb_size: u32,
     dw_time: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct POINT {
+    x: i32,
+    y: i32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct RECT {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct MONITORINFO {
+    cb_size: u32,
+    rc_monitor: RECT,
+    rc_work: RECT,
+    dw_flags: u32,
 }
 
 #[link(name = "user32")]
@@ -17,35 +41,13 @@ unsafe extern "system" {
     fn GetTickCount() -> u32;
     fn MonitorFromPoint(pt: POINT, dwFlags: u32) -> isize;
     fn GetMonitorInfoW(hMonitor: isize, lpmi: *mut MONITORINFO) -> i32;
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct POINT {
-    x: i32,
-    y: i32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct MONITORINFO {
-    cb_size: u32,
-    rc_monitor: RECT,
-    rc_work: RECT,
-    dw_flags: u32,
+    fn GetSystemMetrics(nIndex: i32) -> i32;
 }
 
 const MONITOR_DEFAULTTONEAREST: u32 = 2;
-const EDGE_THRESHOLD: i32 = 12;
+const SM_CXSCREEN: i32 = 0;
+const SM_CYSCREEN: i32 = 1;
+const EDGE_THRESHOLD: i32 = 20;
 
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
@@ -74,76 +76,71 @@ pub async fn get_system_idle_ms() -> Result<u64, String> {
     }
 }
 
-/// Polls `GetCursorPos` at 100ms intervals. Emits `edge-cursor-enter`
-/// when the cursor is within EDGE_THRESHOLD px of any screen edge,
-/// and `edge-cursor-leave` when it moves away.
-/// Uses a `CancellationToken` so the caller can stop polling by invoking
-/// `stop_edge_cursor_detect`.
+/// Polls `GetCursorPos` every 100ms in a background thread. Emits
+/// `edge-cursor-enter` / `edge-cursor-leave` Tauri events when the
+/// cursor enters or leaves the 20px screen-edge zone.
 #[tauri::command]
-pub async fn start_edge_cursor_detect(
+pub fn start_edge_cursor_detect(
     app: AppHandle,
     state: tauri::State<'_, EdgeCursorState>,
 ) -> Result<(), String> {
-    if state.running.load(Ordering::SeqCst) {
-        return Ok(()); // already polling
+    if state.running.swap(true, Ordering::SeqCst) {
+        return Ok(()); // already running
     }
 
-    let cancel = CancellationToken::new();
-    *state.cancel.lock().await = Some(cancel.child_token());
-    state.running.store(true, Ordering::SeqCst);
-
     let running = state.running.clone();
-    let app_clone = app.clone();
-    let cancel_token = cancel.clone();
-    let mut was_at_edge = false;
+    let app = app.clone();
 
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+    std::thread::spawn(move || {
+        let mut was_at_edge = false;
         loop {
-            tokio::select! {
-                _ = cancel_token.cancelled() => break,
-                _ = interval.tick() => {}
+            if !running.load(Ordering::SeqCst) {
+                break;
             }
-
-            let at_edge = is_cursor_at_edge().unwrap_or(false);
-
+            let at_edge = is_cursor_at_edge();
             if at_edge && !was_at_edge {
-                let _ = app_clone.emit("edge-cursor-enter", ());
+                let _ = app.emit("edge-cursor-enter", ());
             } else if !at_edge && was_at_edge {
-                let _ = app_clone.emit("edge-cursor-leave", ());
+                let _ = app.emit("edge-cursor-leave", ());
             }
             was_at_edge = at_edge;
+            std::thread::sleep(Duration::from_millis(100));
         }
-        running.store(false, Ordering::SeqCst);
     });
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn stop_edge_cursor_detect(
+pub fn stop_edge_cursor_detect(
     state: tauri::State<'_, EdgeCursorState>,
 ) -> Result<(), String> {
-    if let Some(token) = state.cancel.lock().await.take() {
-        token.cancel();
-    }
     state.running.store(false, Ordering::SeqCst);
     Ok(())
 }
 
-fn is_cursor_at_edge() -> Result<bool, String> {
+fn is_cursor_at_edge() -> bool {
     unsafe {
         let mut pt = POINT { x: 0, y: 0 };
         if GetCursorPos(&mut pt) == 0 {
-            return Err("GetCursorPos failed".into());
+            return false;
+        }
+
+        // Use actual screen resolution for edge detection
+        let sw = GetSystemMetrics(SM_CXSCREEN);
+        let sh = GetSystemMetrics(SM_CYSCREEN);
+        if sw <= 0 || sh <= 0 {
+            return false;
         }
 
         let h_mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
         if h_mon == 0 {
-            // fallback: assume 1920×1080
-            let in_x = pt.x < EDGE_THRESHOLD || pt.x > 1920 - EDGE_THRESHOLD;
-            let in_y = pt.y < EDGE_THRESHOLD || pt.y > 1080 - EDGE_THRESHOLD;
-            return Ok(in_x || in_y);
+            // fallback: use system metrics
+            let in_left = pt.x < EDGE_THRESHOLD;
+            let in_right = pt.x > sw - EDGE_THRESHOLD;
+            let in_top = pt.y < EDGE_THRESHOLD;
+            let in_bottom = pt.y > sh - EDGE_THRESHOLD;
+            return in_left || in_right || in_top || in_bottom;
         }
 
         let mut mi = MONITORINFO {
@@ -153,27 +150,25 @@ fn is_cursor_at_edge() -> Result<bool, String> {
             dw_flags: 0,
         };
         if GetMonitorInfoW(h_mon, &mut mi) == 0 {
-            return Err("GetMonitorInfoW failed".into());
+            return false;
         }
 
         let in_left = pt.x - mi.rc_monitor.left < EDGE_THRESHOLD;
         let in_right = mi.rc_monitor.right - pt.x < EDGE_THRESHOLD;
         let in_top = pt.y - mi.rc_monitor.top < EDGE_THRESHOLD;
         let in_bottom = mi.rc_monitor.bottom - pt.y < EDGE_THRESHOLD;
-        Ok(in_left || in_right || in_top || in_bottom)
+        in_left || in_right || in_top || in_bottom
     }
 }
 
 pub struct EdgeCursorState {
     pub running: Arc<AtomicBool>,
-    pub cancel: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 impl EdgeCursorState {
     pub fn new() -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
-            cancel: Arc::new(Mutex::new(None)),
         }
     }
 }

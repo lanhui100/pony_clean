@@ -244,9 +244,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     try {
       await invoke('start_edge_cursor_detect')
       unlistenEdgeEnter = await listen<void>('edge-cursor-enter', () => {
-        // Only react when in docked/capsule state
         if (morphState.value === 'docked' || morphState.value === 'capsule') {
-          onCapsuleHover()
+          cancelHoverTimer()
+          expandToFull()
         }
       })
       unlistenEdgeLeave = await listen<unknown>('edge-cursor-leave', () => {
