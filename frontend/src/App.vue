@@ -15,7 +15,8 @@ const isScanning = ref(false)
 const { cpuPercent, memPercent, setPollInterval } = useMonitor()
 const {
   morphState, showCapsule, isFirstDock,
-  onUserActivity, onCapsuleHover, onCapsuleLeave, onCapsuleDragStart, onCapsuleClick,
+  onUserActivity, onFullWindowMouseEnter, onFullWindowMouseLeave,
+  onCapsuleHover, onCapsuleLeave, onCapsuleDragStart, onCapsuleClick,
   onShrinkAnimEnd, onExpandAnimEnd,
 } = useWindowMorph(isScanning)
 
@@ -73,6 +74,8 @@ function onFullWindowKeyDown() { onUserActivity() }
       class="panel-layer"
       :class="(morphState === 'full' || (morphState === 'expanding' && panelReady)) ? 'panel-visible' : 'panel-hidden'"
       @transitionend="morphState === 'shrinking' ? onShrinkAnimEnd() : (morphState === 'expanding' ? onExpandAnimEnd() : null)"
+      @mouseenter="onFullWindowMouseEnter"
+      @mouseleave="onFullWindowMouseLeave"
       @mousemove="onFullWindowMouseMove"
       @mousedown="onFullWindowMouseDown"
       @keydown="onFullWindowKeyDown"

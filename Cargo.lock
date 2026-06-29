@@ -2259,6 +2259,7 @@ version = "0.1.0"
 dependencies = [
  "jwalk",
  "serde",
+ "serde_json",
  "sysinfo",
  "thiserror 2.0.18",
  "tokio",

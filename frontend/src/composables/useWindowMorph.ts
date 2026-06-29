@@ -10,8 +10,8 @@ const FULL_H = 340
 const CAPSULE_W = 160
 const CAPSULE_H = 40
 const EDGE_PADDING = 8
-const IDLE_TIMEOUT = 10_000
-const IDLE_POLL_INTERVAL = 500
+const IDLE_TIMEOUT = 5_000
+const IDLE_POLL_INTERVAL = 1000
 const PAUSE_AFTER_SHRINK = 800
 const MORPH_ONBOARDED_KEY = 'pony_morph_onboarded'
 
@@ -37,6 +37,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   const showCapsule = ref(false)
   const isFirstDock = ref(!localStorage.getItem(MORPH_ONBOARDED_KEY))
   const dockSide = ref<'top' | 'left' | 'right'>('top')
+  const isMouseInside = ref(false)
 
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let idlePollTimer: ReturnType<typeof setInterval> | null = null
@@ -45,6 +46,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let unlistenEdgeEnter: UnlistenFn | null = null
   let unlistenEdgeLeave: UnlistenFn | null = null
   let dockAborted = false
+  let lastActivityMs = Date.now()
 
   async function getMonitor() {
     try { monitorInfo = await win.currentMonitor() }
@@ -60,8 +62,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   function resetIdleTimer() {
+    lastActivityMs = Date.now()
     if (idleTimer) clearTimeout(idleTimer)
-    if (scanning.value || morphState.value !== 'full') return
+    if (scanning.value || morphState.value !== 'full' || isMouseInside.value) return
     idleTimer = setTimeout(startShrinking, IDLE_TIMEOUT)
   }
 
@@ -69,7 +72,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     resetIdleTimer()
     idlePollTimer = setInterval(async () => {
       if (morphState.value !== 'full') return
-      if (scanning.value) { resetIdleTimer(); return }
+      if (scanning.value || isMouseInside.value) { resetIdleTimer(); return }
+      const elapsed = Date.now() - lastActivityMs
+      if (elapsed < IDLE_TIMEOUT) return
       try {
         if (await invoke<number>('get_system_idle_ms') >= IDLE_TIMEOUT) startShrinking()
       } catch { /* fallback: WebView events */ }
@@ -83,6 +88,27 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   function onUserActivity() { resetIdleTimer() }
+
+  function onFullWindowMouseEnter() {
+    isMouseInside.value = true
+    resetIdleTimer()
+  }
+
+  function onFullWindowMouseLeave() {
+    isMouseInside.value = false
+    resetIdleTimer()
+  }
+
+  function onWindowBlur() {
+    isMouseInside.value = false
+    resetIdleTimer()
+  }
+
+  function onWindowFocus() {
+    if (morphState.value === 'full') {
+      resetIdleTimer()
+    }
+  }
 
   function startShrinking() {
     if (morphState.value !== 'full') return
@@ -161,6 +187,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     if (morphState.value !== 'expanding') return
     showCapsule.value = false
     morphState.value = 'full'
+    isMouseInside.value = false
     resetIdleTimer()
   }
 
@@ -274,6 +301,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   onMounted(async () => {
     getMonitor()
     startIdleDetection()
+    window.addEventListener('blur', onWindowBlur)
+    window.addEventListener('focus', onWindowFocus)
     // Start Rust-side GetCursorPos polling for reliable edge detection
     try {
       await invoke('start_edge_cursor_detect')
@@ -292,6 +321,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     stopIdleDetection()
     if (pauseTimer) clearTimeout(pauseTimer)
     cancelHoverTimer()
+    window.removeEventListener('blur', onWindowBlur)
+    window.removeEventListener('focus', onWindowFocus)
     invoke('stop_edge_cursor_detect').catch(() => {})
     unlistenEdgeEnter?.()
     unlistenEdgeLeave?.()
@@ -299,7 +330,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   return {
     morphState, showCapsule, isFirstDock, dockSide,
-    onUserActivity, onCapsuleHover, onCapsuleLeave, onCapsuleDragStart, onCapsuleClick,
+    onUserActivity, onFullWindowMouseEnter, onFullWindowMouseLeave,
+    onCapsuleHover, onCapsuleLeave, onCapsuleDragStart, onCapsuleClick,
     onShrinkAnimEnd, onExpandAnimEnd, expandToFull,
   }
 }

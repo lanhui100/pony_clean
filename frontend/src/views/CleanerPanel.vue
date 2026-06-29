@@ -12,7 +12,9 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from '../components/ui/collapsible'
-import { Scan, Trash2, RotateCcw, X, Check, AlertCircle, ChevronRight, Loader2 } from 'lucide-vue-next'
+import {
+  Scan, Trash2, RotateCcw, X, Check, AlertCircle, ChevronRight, Loader2,
+} from 'lucide-vue-next'
 
 const emit = defineEmits<{
   (e: 'scan-start'): void
@@ -53,6 +55,8 @@ const {
   currentFile,
   items,
   totalBytes,
+  skippedSmall,
+  deleteProgress,
   deleteResult,
   errorMessage,
   startScan,
@@ -120,10 +124,11 @@ function toggleCategory(category: string) {
 }
 
 function toggleAll() {
-  if (selectedPaths.value.size === items.value.length) {
+  const safeItems = items.value.filter(i => i.level !== 'Confirm')
+  if (selectedPaths.value.size === safeItems.length) {
     selectedPaths.value = new Set()
   } else {
-    selectedPaths.value = new Set(items.value.map(i => i.path))
+    selectedPaths.value = new Set(safeItems.map(i => i.path))
   }
 }
 
@@ -146,7 +151,10 @@ const selectedBytes = computed(() => {
   }
   return total
 })
-const allSelected = computed(() => items.value.length > 0 && selectedPaths.value.size === items.value.length)
+const allSelected = computed(() => {
+  const safeItems = items.value.filter(i => i.level !== 'Confirm')
+  return safeItems.length > 0 && selectedPaths.value.size === safeItems.length
+})
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B'
@@ -160,6 +168,8 @@ function truncatePath(path: string, maxLen = 60): string {
   return '...' + path.slice(-(maxLen - 3))
 }
 
+const showConfirmDialog = ref(false)
+
 async function handleStartScan() {
   selectedPaths.value = new Set()
   openCategories.value = new Set()
@@ -167,6 +177,13 @@ async function handleStartScan() {
 }
 
 async function handleClean() {
+  const paths = Array.from(selectedPaths.value)
+  if (paths.length === 0) return
+  showConfirmDialog.value = true
+}
+
+async function confirmClean() {
+  showConfirmDialog.value = false
   const paths = Array.from(selectedPaths.value)
   if (paths.length === 0) return
   await executeClean(paths)
@@ -252,10 +269,21 @@ watch(() => state.value, (val, prev) => {
     </div>
 
     <!-- DELETING -->
-    <div v-else-if="state === 'deleting'" class="flex flex-1 flex-col items-center justify-center gap-3 px-6">
-      <Loader2 class="h-6 w-6 animate-spin text-primary" />
-      <Progress class="h-1 w-48" />
-      <p class="text-xs text-muted-foreground">清理中...</p>
+    <div v-else-if="state === 'deleting'" class="flex flex-1 flex-col items-center justify-center gap-2">
+      <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
+      <template v-if="deleteProgress.total > 0">
+        <Progress
+          :model-value="Math.round((deleteProgress.done / deleteProgress.total) * 100)"
+          class="h-1.5 w-48"
+        />
+        <p class="text-[11px] text-muted-foreground">
+          已清理 {{ deleteProgress.done }}/{{ deleteProgress.total }} 项
+        </p>
+      </template>
+      <template v-else>
+        <Progress class="h-1.5 w-48" />
+        <p class="text-[11px] text-muted-foreground">清理中...</p>
+      </template>
     </div>
 
     <!-- ERROR -->
@@ -306,6 +334,9 @@ watch(() => state.value, (val, prev) => {
         <div>
           <p class="text-[11px] text-muted-foreground">可清理</p>
           <p class="text-lg font-bold tabular-nums">{{ formatBytes(totalBytes) }}</p>
+          <p v-if="skippedSmall > 0" class="text-[10px] text-muted-foreground/60">
+            已跳过 {{ skippedSmall }} 个微效文件
+          </p>
         </div>
         <Button variant="outline" size="sm" @click="handleStartScan">
           <RotateCcw class="mr-1 h-3.5 w-3.5" />
@@ -404,6 +435,32 @@ watch(() => state.value, (val, prev) => {
       </div>
     </div>
 
+    <!-- Confirmation dialog overlay -->
+    <Transition name="overlay">
+      <div
+        v-if="showConfirmDialog"
+        class="absolute inset-0 z-20 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+      >
+        <div class="mx-4 w-full max-w-xs rounded-lg border bg-card p-4 shadow-lg">
+          <h4 class="text-sm font-medium">确认清理</h4>
+          <p class="mt-2 text-[11px] text-muted-foreground">
+            即将永久删除
+            <span class="font-medium text-foreground/80">{{ selectedCount }}</span> 项
+            (<span class="font-medium text-foreground/80">{{ formatBytes(selectedBytes) }}</span>)，
+            此操作不可撤销。
+          </p>
+          <div class="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" @click="showConfirmDialog = false">
+              取消
+            </Button>
+            <Button variant="destructive" size="sm" @click="confirmClean">
+              确认删除
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Delete result toast -->
     <Transition name="toast">
       <div
@@ -467,6 +524,14 @@ watch(() => state.value, (val, prev) => {
 }
 .toast-leave-to {
   transform: translateY(10px);
+  opacity: 0;
+}
+.overlay-enter-active,
+.overlay-leave-active {
+  transition: opacity 0.2s ease;
+}
+.overlay-enter-from,
+.overlay-leave-to {
   opacity: 0;
 }
 </style>

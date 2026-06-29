@@ -1,4 +1,4 @@
-use pony_core::cleaner::{self, CleanItem, DeleteResult};
+use pony_core::cleaner::{self, CleanItem, DeleteProgress, DeleteResult};
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -23,6 +23,18 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
     let app_handle = app.clone();
 
     tokio::task::spawn_blocking(move || {
+        struct ScanGuard {
+            flag: Arc<AtomicBool>,
+        }
+        impl Drop for ScanGuard {
+            fn drop(&mut self) {
+                self.flag.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = ScanGuard {
+            flag: is_scanning.clone(),
+        };
+
         let (tx, rx) = std::sync::mpsc::channel();
         match cleaner::start_scan(tx) {
             Ok((cmd, cancel_token)) => {
@@ -39,25 +51,33 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                             );
                         }
                         Ok(cleaner::ScanEvent::ItemsFound { items, .. }) => {
-                            accumulated.extend(items);
+                            let batch: Vec<CleanItem> = items;
+                            let total = accumulated.iter().map(|i| i.size_bytes).sum::<u64>()
+                                + batch.iter().map(|i| i.size_bytes).sum::<u64>();
+                            accumulated.extend(batch.iter().cloned());
                             let _ = app_handle.emit("scan-items", serde_json::json!({
-                                "items": accumulated,
-                                "total_bytes": accumulated.iter().map(|i| i.size_bytes).sum::<u64>()
+                                "items": batch,
+                                "total_bytes": total
                             }));
                         }
-                        Ok(cleaner::ScanEvent::Done { .. }) => {
+                        Ok(cleaner::ScanEvent::Done { skipped_small, .. }) => {
                             let total: u64 = accumulated.iter().map(|i| i.size_bytes).sum();
                             let _ = app_handle.emit(
                                 "scan-done",
                                 serde_json::json!({
-                                    "total_items": accumulated.len(), "total_bytes": total
+                                    "total_items": accumulated.len(), "total_bytes": total,
+                                    "skipped_small": skipped_small
                                 }),
                             );
                             break;
                         }
-                        Ok(cleaner::ScanEvent::Cancelled) => break,
+                        Ok(cleaner::ScanEvent::Cancelled) => {
+                            let _ = app_handle.emit("scan-cancelled", serde_json::json!({}));
+                            break;
+                        }
                         Ok(cleaner::ScanEvent::Warning(msg)) => {
-                            tracing::warn!("Scan warning: {msg}")
+                            tracing::warn!("Scan warning: {msg}");
+                            let _ = app_handle.emit("scan-warning", serde_json::json!({ "message": msg }));
                         }
                         Err(_) => break,
                     }
@@ -68,7 +88,6 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                 let _ = app_handle.emit("scan-error", serde_json::json!({ "message": e }));
             }
         }
-        is_scanning.store(false, Ordering::SeqCst);
     });
 
     Ok(())
@@ -85,11 +104,26 @@ pub fn cancel_scan(state: State<'_, CleanerState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn execute_clean(paths: Vec<String>) -> Result<DeleteResult, String> {
+pub async fn execute_clean(app: AppHandle, paths: Vec<String>) -> Result<DeleteResult, String> {
     let pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    let result = tokio::task::spawn_blocking(move || cleaner::delete_files(&pathbufs))
+    let app_handle = app.clone();
+    let (progress_tx, progress_rx) = std::sync::mpsc::channel::<DeleteProgress>();
+
+    let progress_handle = tokio::task::spawn_blocking(move || {
+        for p in progress_rx {
+            let _ = app_handle.emit("delete-progress", serde_json::json!({
+                "done": p.done, "total": p.total, "current": p.current
+            }));
+        }
+    });
+
+    let result = tokio::task::spawn_blocking(move || {
+        cleaner::delete_files_with_progress(&pathbufs, Some(progress_tx))
+    })
         .await
         .map_err(|e| e.to_string())?;
+
+    let _ = progress_handle.await;
     Ok(result)
 }
 

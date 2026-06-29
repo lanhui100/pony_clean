@@ -1,10 +1,15 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const BATCH_SIZE: usize = 500;
+/// 最小清理文件大小（小于此值的文件跳过，避免微效文件浪费 UI 和内存）
+const MIN_CLEAN_SIZE: u64 = 1024;
+/// 扫描结果上限（超过此值的文件不再收集，发送 Warning 并提前结束）
+const MAX_SCAN_ITEMS: u64 = 300_000;
 
 /// 安全级别
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -37,6 +42,7 @@ pub enum ScanEvent {
     Done {
         total_items: u64,
         total_bytes: u64,
+        skipped_small: u64,
     },
     Cancelled,
     Warning(String),
@@ -51,7 +57,13 @@ pub enum CleanCommand {
     Shutdown,
 }
 
-/// 删除结果
+/// 删除进度事件
+#[derive(Clone, Debug, Serialize)]
+pub struct DeleteProgress {
+    pub done: u64,
+    pub total: u64,
+    pub current: String,
+}
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DeleteResult {
     pub success: u64,
@@ -66,6 +78,48 @@ pub struct ScanTarget {
     pub level: SafetyLevel,
     pub category: String,
     pub description: &'static str,
+}
+
+/// 用户配置（持久化到 JSON 文件）
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PonyConfig {
+    pub disabled_targets: Vec<String>,
+    pub custom_exclude_paths: Vec<String>,
+}
+
+/// 加载用户配置
+pub fn load_config() -> PonyConfig {
+    let path = config_path();
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 保存用户配置
+pub fn save_config(config: &PonyConfig) -> Result<(), String> {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(config).map_err(|e| format!("Serialize config: {e}"))?;
+    fs::write(path, json).map_err(|e| format!("Write config: {e}"))
+}
+
+/// 获取过滤后的扫描目标（排除用户禁用的目标）
+pub fn get_filtered_targets(config: &PonyConfig) -> Vec<ScanTarget> {
+    let all = get_clean_targets();
+    all.into_iter()
+        .filter(|t| !config.disabled_targets.contains(&t.path))
+        .collect()
+}
+
+fn config_path() -> PathBuf {
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| r"C:\Users\Default".into());
+        format!("{home}\\AppData\\Local")
+    });
+    PathBuf::from(local).join("PonyClean").join("config.json")
 }
 
 /// 获取系统盘符
@@ -125,19 +179,61 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             path: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache".into(),
             level: SafetyLevel::Safe,
             category: "cache".into(),
-            description: "Chrome 缓存",
+            description: "Chrome JS Code Cache",
+        },
+        ScanTarget {
+            path: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache".into(),
+            level: SafetyLevel::Safe,
+            category: "cache".into(),
+            description: "Chrome 磁盘缓存",
+        },
+        ScanTarget {
+            path: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\CacheStorage".into(),
+            level: SafetyLevel::Safe,
+            category: "cache".into(),
+            description: "Chrome CacheStorage",
         },
         ScanTarget {
             path: "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache".into(),
             level: SafetyLevel::Safe,
             category: "cache".into(),
-            description: "Edge 缓存",
+            description: "Edge JS Code Cache",
         },
         ScanTarget {
-            path: "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles".into(),
+            path: "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache".into(),
+            level: SafetyLevel::Safe,
+            category: "cache".into(),
+            description: "Edge 磁盘缓存",
+        },
+        ScanTarget {
+            path: "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\CacheStorage".into(),
+            level: SafetyLevel::Safe,
+            category: "cache".into(),
+            description: "Edge CacheStorage",
+        },
+        ScanTarget {
+            path: "%APPDATA%\\Mozilla\\Firefox\\Profiles".into(),
             level: SafetyLevel::Safe,
             category: "cache".into(),
             description: "Firefox 缓存（自动匹配 profile 目录）",
+        },
+        ScanTarget {
+            path: "%WINDIR%\\SoftwareDistribution\\Download".into(),
+            level: SafetyLevel::Confirm,
+            category: "temp".into(),
+            description: "Windows Update 缓存（清空后需重新下载更新）",
+        },
+        ScanTarget {
+            path: format!("{d}\\Windows\\System32\\DriverStore\\FileRepository"),
+            level: SafetyLevel::Confirm,
+            category: "cache".into(),
+            description: "旧驱动备份（清空后无法回滚驱动）",
+        },
+        ScanTarget {
+            path: "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache".into(),
+            level: SafetyLevel::Safe,
+            category: "cache".into(),
+            description: "Internet 临时文件缓存",
         },
         ScanTarget {
             path: format!("{d}\\$Recycle.Bin"),
@@ -216,21 +312,38 @@ pub fn resolve_targets(targets: &[ScanTarget]) -> Vec<PathBuf> {
             }
 
             if t.category == "cache" && expanded.contains("Profiles") {
-                // Firefox: 需要遍历 profiles 目录
+                // Firefox: 需要遍历 profiles 目录，匹配多种 profile 命名模式
                 if let Ok(entries) = std::fs::read_dir(&p) {
-                    let results: Vec<PathBuf> = entries
+                    let profile_dirs: Vec<PathBuf> = entries
                         .filter_map(|e| e.ok())
-                        .filter(|e| e.file_name().to_string_lossy().contains("default"))
-                        .map(|e| e.path().join("cache2").join("entries"))
+                        .filter(|e| {
+                            let name = e.file_name();
+                            let name_str = name.to_string_lossy();
+                            name_str.contains("default")
+                                || name_str.ends_with(".default-release")
+                                || name_str.ends_with(".default-esr")
+                                || name_str.ends_with(".default-nightly")
+                                || name_str.ends_with(".dev-edition-default")
+                        })
+                        .map(|e| e.path())
                         .collect();
-                    if results.is_empty() {
-                        // 未找到 profile 目录，不返回父路径
-                        vec![]
-                    } else {
-                        results
+                    let mut results: Vec<PathBuf> = Vec::new();
+                    for dir in &profile_dirs {
+                        let cache_dirs = [
+                            "cache2/entries",
+                            "startupCache",
+                            "thumbnails",
+                            "offlineCache",
+                        ];
+                        for sub in &cache_dirs {
+                            let full = dir.join(sub);
+                            if full.exists() {
+                                results.push(full);
+                            }
+                        }
                     }
+                    results
                 } else {
-                    // Firefox 未安装或 profiles 不可访问，跳过
                     vec![]
                 }
             } else {
@@ -259,7 +372,8 @@ pub fn start_scan(
     let cancel_token = CancellationToken::new();
     let cancel_token_clone = cancel_token.clone();
 
-    let targets = get_clean_targets();
+    let config = load_config();
+    let targets = get_filtered_targets(&config);
     let resolved = resolve_targets(&targets);
     if resolved.is_empty() {
         SCAN_IN_PROGRESS.store(false, Ordering::SeqCst);
@@ -283,9 +397,11 @@ pub fn start_scan(
 
         let mut total_items = 0u64;
         let mut total_bytes = 0u64;
+        let mut skipped_small = 0u64;
+        let mut hit_max = false;
         let mut batch = Vec::with_capacity(BATCH_SIZE);
 
-        for target in &resolved {
+        'outer: for target in &resolved {
             if cancel_token_clone.is_cancelled() {
                 // flush 剩余批次
                 if !batch.is_empty() {
@@ -298,7 +414,7 @@ pub fn start_scan(
                 return;
             }
 
-            let category = targets
+            let target_entry = targets
                 .iter()
                 .find(|t| {
                     expand_env(&t.path).to_lowercase() == target.to_string_lossy().to_lowercase()
@@ -306,13 +422,22 @@ pub fn start_scan(
                             .to_string_lossy()
                             .to_lowercase()
                             .starts_with(&expand_env(&t.path).to_lowercase())
-                })
-                .map(|t| t.category.clone())
-                .unwrap_or_default();
+                });
+            let category = target_entry.map(|t| t.category.clone()).unwrap_or_default();
+            let level = target_entry.map(|t| t.level.clone()).unwrap_or(SafetyLevel::Safe);
 
             let walk_dir = jwalk::WalkDir::new(target)
                 .follow_links(false)
-                .process_read_dir(|_depth, _path, _read_dir_state, children| {
+                .max_depth(20)
+                .process_read_dir(|depth, _path, _read_dir_state, children| {
+                    if depth.unwrap_or(0) > 5 {
+                        children.retain(|e| {
+                            e.as_ref().ok().is_none_or(|entry| {
+                                let name = entry.file_name.to_string_lossy();
+                                !(name == "node_modules" || name == ".git" || name == "__pycache__" || name == ".svn")
+                            })
+                        });
+                    }
                     children.retain(|e| e.is_ok());
                 });
 
@@ -336,8 +461,20 @@ pub fn start_scan(
                     Ok(m) => m.len(),
                     Err(_) => continue,
                 };
-                if size == 0 {
+                if size < MIN_CLEAN_SIZE {
+                    skipped_small += 1;
                     continue;
+                }
+
+                if total_items >= MAX_SCAN_ITEMS {
+                    if !batch.is_empty() {
+                        let _ = tx.send(ScanEvent::ItemsFound {
+                            items: std::mem::take(&mut batch),
+                            batch_complete: false,
+                        });
+                    }
+                    hit_max = true;
+                    break 'outer;
                 }
 
                 total_items += 1;
@@ -346,7 +483,7 @@ pub fn start_scan(
                 batch.push(CleanItem {
                     path: entry.path(),
                     size_bytes: size,
-                    level: SafetyLevel::Safe,
+                    level: level.clone(),
                     category: category.clone(),
                 });
 
@@ -357,7 +494,7 @@ pub fn start_scan(
                     });
                 }
 
-                if total_items % 1000 == 0 {
+                if total_items % 100 == 0 {
                     let _ = tx.send(ScanEvent::Progress {
                         scanned: total_items,
                         current: target.to_string_lossy().to_string(),
@@ -374,9 +511,16 @@ pub fn start_scan(
             });
         }
 
+        if hit_max {
+            let _ = tx.send(ScanEvent::Warning(
+                format!("扫描结果达到上限 ({} 项)，已截断。建议清理部分文件后重新扫描。", MAX_SCAN_ITEMS)
+            ));
+        }
+
         let _ = tx.send(ScanEvent::Done {
             total_items,
             total_bytes,
+            skipped_small,
         });
     });
 
@@ -404,8 +548,18 @@ pub fn start_scan(
 /// 2. MoveFileExW + MOVEFILE_DELAY_UNTIL_REBOOT — 被占用时降级
 /// 3. 跳过
 pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
+    delete_files_with_progress(paths, None)
+}
+
+/// 删除文件并推送进度（供 Tauri 命令层使用）
+pub fn delete_files_with_progress(
+    paths: &[PathBuf],
+    progress_tx: Option<mpsc::Sender<DeleteProgress>>,
+) -> DeleteResult {
     let targets = get_clean_targets();
     let mut result = DeleteResult::default();
+    let total = paths.len() as u64;
+    let mut done = 0u64;
 
     for path in paths {
         // 规范化路径防止 .. 遍历和正斜杠绕过
@@ -413,9 +567,11 @@ pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
             Ok(p) => p,
             Err(e) => {
                 result.failed += 1;
+                done += 1;
                 result
                     .errors
                     .push(format!("Cannot resolve path {}: {e}", path.display()));
+                send_progress(&progress_tx, done, total, path);
                 continue;
             }
         };
@@ -423,16 +579,20 @@ pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
         // 后端强制执行安全验证
         if is_path_protected(&safe_path) {
             result.failed += 1;
+            done += 1;
             result
                 .errors
                 .push(format!("Protected path: {}", safe_path.display()));
+            send_progress(&progress_tx, done, total, path);
             continue;
         }
         if !is_path_allowed(&safe_path, &targets) {
             result.failed += 1;
+            done += 1;
             result
                 .errors
                 .push(format!("Path not in scan scope: {}", safe_path.display()));
+            send_progress(&progress_tx, done, total, path);
             continue;
         }
 
@@ -454,9 +614,23 @@ pub fn delete_files(paths: &[PathBuf]) -> DeleteResult {
                 }
             }
         }
+        done += 1;
+        if done % 10 == 0 || done == total {
+            send_progress(&progress_tx, done, total, path);
+        }
     }
 
     result
+}
+
+fn send_progress(tx: &Option<mpsc::Sender<DeleteProgress>>, done: u64, total: u64, current: &Path) {
+    if let Some(tx) = tx {
+        let _ = tx.send(DeleteProgress {
+            done,
+            total,
+            current: current.to_string_lossy().to_string(),
+        });
+    }
 }
 
 #[cfg(windows)]
@@ -763,9 +937,13 @@ mod tests {
         let d = ScanEvent::Done {
             total_items: 1000,
             total_bytes: 50_000_000,
+            skipped_small: 42,
         };
         match d {
-            ScanEvent::Done { total_items, .. } => assert_eq!(total_items, 1000),
+            ScanEvent::Done { total_items, skipped_small, .. } => {
+                assert_eq!(total_items, 1000);
+                assert_eq!(skipped_small, 42);
+            }
             _ => panic!("wrong variant"),
         }
     }
