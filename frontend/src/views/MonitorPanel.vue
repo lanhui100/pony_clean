@@ -236,15 +236,15 @@ onUnmounted(() => {
       <!-- Header -->
       <div class="flex shrink-0 items-center gap-2 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground glass-panel">
         <button class="flex-[6] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
-          名称 {{ sortIcon('name') }}
+          进程 TOP {{ filtered.length }} {{ sortIcon('name') }}
         </button>
-        <button class="flex-[5] text-left hover:text-foreground transition-colors" @click="toggleSort('cpu')">
+        <button class="flex-[4] text-left hover:text-foreground transition-colors" @click="toggleSort('cpu')">
           CPU {{ sortIcon('cpu') }}
         </button>
-        <button class="flex-[4] text-center hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
-          内存 {{ sortIcon('mem_mb') }}
+        <button class="flex-[5] text-center hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
+          内存 {{ summary ? (summary.mem_total_mb / 1024).toFixed(1) : '—' }}G {{ sortIcon('mem_mb') }}
         </button>
-        <div class="w-5" />
+        <div class="w-4" />
       </div>
 
       <!-- Rows -->
@@ -256,7 +256,7 @@ onUnmounted(() => {
             class="group flex items-center gap-2 rounded px-2 py-1 text-xs transition-colors hover:bg-muted/20"
           >
             <span class="flex-[6] truncate text-foreground/90" :title="p.name">{{ p.name }}</span>
-            <span class="flex flex-[5] items-center justify-start gap-1.5 tabular-nums">
+            <span class="flex flex-[4] items-center justify-start gap-1.5 tabular-nums">
               <span class="h-1 w-8 overflow-hidden rounded-full bg-muted/50">
                 <span
                   class="block h-full rounded-full transition-all"
@@ -266,16 +266,16 @@ onUnmounted(() => {
               </span>
               <span :class="['text-[11px]', cpuTextColor(p.cpu)]">{{ Math.min(p.cpu, 999).toFixed(1) }}%</span>
             </span>
-            <span :class="['flex-[4] text-center tabular-nums', memTextColor(p.mem_pct)]">
+            <span :class="['flex-[5] text-center tabular-nums whitespace-nowrap', memTextColor(p.mem_pct)]">
               {{ fmMem(p.mem_mb) }} <span class="text-[11px] text-muted-foreground">{{ fmPct(p.mem_pct) }}</span>
             </span>
-            <div class="ml-2 flex w-5 items-center justify-center">
+            <div class="flex w-4 shrink-0 items-center justify-center -ml-1">
               <button
-                class="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100"
+                class="flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100"
                 :title="`终止 ${p.name}`"
                 @click="handleKill(p)"
               >
-                <X class="h-3 w-3" />
+                <X class="h-2.5 w-2.5" />
               </button>
             </div>
           </div>
