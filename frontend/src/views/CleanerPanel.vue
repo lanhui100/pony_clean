@@ -13,6 +13,11 @@ import {
 } from '../components/ui/collapsible'
 import { Scan, Trash2, RotateCcw, X, Check, AlertCircle, ChevronRight, Loader2 } from 'lucide-vue-next'
 
+const emit = defineEmits<{
+  (e: 'scan-start'): void
+  (e: 'scan-end'): void
+}>()
+
 const {
   state,
   scanned,
@@ -157,6 +162,14 @@ watch(deleteResult, (val) => {
 onUnmounted(() => {
   if (dismissTimer) clearTimeout(dismissTimer)
 })
+
+watch(() => state.value, (val, prev) => {
+  if (prev === 'idle' && val === 'scanning') emit('scan-start')
+  if (val === 'done' || val === 'error' || val === 'cancelled') {
+    if (prev === 'scanning' || prev === 'deleting') emit('scan-end')
+  }
+  if (prev === 'deleting' && val === 'idle') emit('scan-end')
+}, { immediate: false })
 </script>
 
 <template>

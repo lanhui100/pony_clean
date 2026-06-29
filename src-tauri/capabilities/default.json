@@ -5,6 +5,10 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
-    "core:window:allow-set-effects"
+    "core:window:allow-set-effects",
+    "core:window:allow-set-shadow",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-position",
+    "core:window:allow-current-monitor"
   ]
 }

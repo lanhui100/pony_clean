@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { ref, shallowRef, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, onMounted, onUnmounted, computed } from 'vue'
 
 export interface Snapshot {
   summary: SystemSummary
@@ -19,14 +19,32 @@ export interface ProcessInfo {
   status: string
 }
 
+const sharedProcesses = shallowRef<ProcessInfo[]>([])
+const sharedSummary = ref<SystemSummary | null>(null)
+const sharedLoading = ref(true)
+const sharedError = ref<string | null>(null)
+let sharedTimer: ReturnType<typeof setInterval> | null = null
+let sharedRefCount = 0
+let hasData = false
+let currentInterval = 2000
+
 export function useMonitor() {
-  const processes = shallowRef<ProcessInfo[]>([])
-  const summary = ref<SystemSummary | null>(null)
-  const loading = ref(true)
-  const error = ref<string | null>(null)
-  let timer: ReturnType<typeof setInterval> | null = null
-  let loadTimer: ReturnType<typeof setTimeout> | null = null
-  let hasData = false
+  sharedRefCount++
+
+  const processes = sharedProcesses
+  const summary = sharedSummary
+  const loading = sharedLoading
+  const error = sharedError
+
+  const cpuPercent = computed(() => {
+    if (!summary.value) return 0
+    return Math.round(summary.value.cpu_total)
+  })
+
+  const memPercent = computed(() => {
+    if (!summary.value || summary.value.mem_total_mb === 0) return 0
+    return Math.round((summary.value.mem_used_mb / summary.value.mem_total_mb) * 100)
+  })
 
   async function fetch() {
     try {
@@ -44,6 +62,16 @@ export function useMonitor() {
     }
   }
 
+  function setPollInterval(ms: number) {
+    if (ms === currentInterval) return
+    currentInterval = ms
+    if (sharedTimer) {
+      clearInterval(sharedTimer)
+      fetch()
+      sharedTimer = setInterval(fetch, ms)
+    }
+  }
+
   async function killProcess(pid: number, name: string): Promise<string> {
     try {
       await invoke('kill_process', { pid, name })
@@ -53,20 +81,38 @@ export function useMonitor() {
     }
   }
 
-  onMounted(() => {
+  function start() {
+    if (sharedTimer) return
     fetch()
-    timer = setInterval(fetch, 2000)
-    loadTimer = setTimeout(() => {
-      if (!hasData) {
-        error.value = '进程数据获取超时，请检查系统权限或重启应用'
-        loading.value = false
-      }
-    }, 15000)
-  })
+    sharedTimer = setInterval(fetch, currentInterval)
+  }
+
+  function stop() {
+    if (sharedRefCount > 1) return
+    if (sharedTimer) clearInterval(sharedTimer)
+    sharedTimer = null
+  }
+
+  onMounted(start)
   onUnmounted(() => {
-    if (timer) clearInterval(timer)
-    if (loadTimer) clearTimeout(loadTimer)
+    sharedRefCount--
+    if (sharedRefCount <= 0) {
+      if (sharedTimer) clearInterval(sharedTimer)
+      sharedTimer = null
+    }
   })
 
-  return { processes, summary, loading, error, killProcess }
+  return {
+    processes,
+    summary,
+    loading,
+    error,
+    cpuPercent,
+    memPercent,
+    killProcess,
+    fetch,
+    setPollInterval,
+    start,
+    stop,
+  }
 }

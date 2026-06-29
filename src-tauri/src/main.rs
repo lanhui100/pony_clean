@@ -44,6 +44,7 @@ fn main() {
             commands::cleaner::execute_clean,
             commands::cleaner::empty_recycle_bin,
             commands::window::quit_app,
+            commands::window::get_system_idle_ms,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

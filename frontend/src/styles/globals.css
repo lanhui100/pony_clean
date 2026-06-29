@@ -55,6 +55,11 @@
   body {
     font-family: 'Plus Jakarta Sans Variable', 'MiSans', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
+    background: transparent !important;
+  }
+
+  #app {
+    background: transparent !important;
   }
 }
 
