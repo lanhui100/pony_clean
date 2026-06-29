@@ -129,12 +129,12 @@ function onFullWindowKeyDown() { onUserActivity() }
   pointer-events: none;
 }
 
-/* ─── Capsule (centered) ─── */
+/* ─── Capsule (bottom) ─── */
 .capsule-layer {
   position: absolute;
-  top: 50%;
+  bottom: 0;
   left: 50%;
-  transform: translate(-50%, -50%) scale(1);
+  transform: translateX(-50%) scale(1);
   width: 160px;
   height: 40px;
   z-index: 2;
@@ -149,27 +149,27 @@ function onFullWindowKeyDown() { onUserActivity() }
 
 @keyframes capsule-enter {
   from {
-    transform: translate(-50%, -50%) scale(0.3);
+    transform: translateX(-50%) scale(0.3) translateY(20px);
     opacity: 0;
   }
   to {
-    transform: translate(-50%, -50%) scale(1);
+    transform: translateX(-50%) scale(1) translateY(0);
     opacity: 1;
   }
 }
 
-/* ─── Expanding: capsule exits, panel enters ─── */
+/* ─── Expanding: capsule exits ─── */
 .is-expanding .capsule-layer {
   animation: capsule-exit 200ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 @keyframes capsule-exit {
   from {
-    transform: translate(-50%, -50%) scale(1);
+    transform: translateX(-50%) scale(1) translateY(0);
     opacity: 1;
   }
   to {
-    transform: translate(-50%, -50%) scale(0.3);
+    transform: translateX(-50%) scale(0.3) translateY(20px);
     opacity: 0;
   }
 }
