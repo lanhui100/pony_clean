@@ -15,6 +15,7 @@ export default defineConfig({
     host: process.env.TAURI_DEV_HOST || '127.0.0.1',
     port: 5183,
     strictPort: true,
+    hmr: { overlay: false },
     watch: {
       ignored: ['**/src-tauri/target/**', '**/target/**'],
     },

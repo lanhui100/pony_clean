@@ -29,12 +29,7 @@ fn main() {
 
             eprintln!("[PonyClean] Setup complete, opening window...");
 
-            #[cfg(debug_assertions)]
-            {
-                let win = app.get_webview_window("main").unwrap();
-                win.open_devtools();
-                eprintln!("[PonyClean] Devtools opened");
-            }
+            // DevTools 已移除 — 自动打开 DevTools 窗口会导致右上角短暂闪烁"分辨率"信息
 
             Ok(())
         })
