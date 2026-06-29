@@ -234,6 +234,14 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       if (rafId !== null) cancelAnimationFrame(rafId)
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
+
+      const sw = getSw()
+      const centerX = Math.round((sw - CAPSULE_W) / 2)
+      win.setPosition(new PhysicalPosition(centerX, 0)).catch(() => {})
+      dockSide.value = 'top'
+      if (morphState.value === 'capsule' || morphState.value === 'docking') {
+        morphState.value = 'docked'
+      }
     }
 
     document.addEventListener('mousemove', onMove)

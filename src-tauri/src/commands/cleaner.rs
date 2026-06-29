@@ -1,6 +1,9 @@
 use pony_core::cleaner::{self, CleanItem, DeleteResult};
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::path::PathBuf;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
@@ -28,9 +31,12 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                 loop {
                     match rx.recv() {
                         Ok(cleaner::ScanEvent::Progress { scanned, current }) => {
-                            let _ = app_handle.emit("scan-progress", serde_json::json!({
-                                "scanned": scanned, "current": current
-                            }));
+                            let _ = app_handle.emit(
+                                "scan-progress",
+                                serde_json::json!({
+                                    "scanned": scanned, "current": current
+                                }),
+                            );
                         }
                         Ok(cleaner::ScanEvent::ItemsFound { items, .. }) => {
                             accumulated.extend(items);
@@ -41,13 +47,18 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                         }
                         Ok(cleaner::ScanEvent::Done { .. }) => {
                             let total: u64 = accumulated.iter().map(|i| i.size_bytes).sum();
-                            let _ = app_handle.emit("scan-done", serde_json::json!({
-                                "total_items": accumulated.len(), "total_bytes": total
-                            }));
+                            let _ = app_handle.emit(
+                                "scan-done",
+                                serde_json::json!({
+                                    "total_items": accumulated.len(), "total_bytes": total
+                                }),
+                            );
                             break;
                         }
                         Ok(cleaner::ScanEvent::Cancelled) => break,
-                        Ok(cleaner::ScanEvent::Warning(msg)) => tracing::warn!("Scan warning: {msg}"),
+                        Ok(cleaner::ScanEvent::Warning(msg)) => {
+                            tracing::warn!("Scan warning: {msg}")
+                        }
                         Err(_) => break,
                     }
                 }
@@ -77,7 +88,8 @@ pub fn cancel_scan(state: State<'_, CleanerState>) -> Result<(), String> {
 pub async fn execute_clean(paths: Vec<String>) -> Result<DeleteResult, String> {
     let pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     let result = tokio::task::spawn_blocking(move || cleaner::delete_files(&pathbufs))
-        .await.map_err(|e| e.to_string())?;
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(result)
 }
 

@@ -1,7 +1,7 @@
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 const BATCH_SIZE: usize = 500;

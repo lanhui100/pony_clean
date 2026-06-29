@@ -2,8 +2,8 @@
 
 mod commands;
 
-use commands::monitor::MonitorState;
 use commands::cleaner::CleanerState;
+use commands::monitor::MonitorState;
 use commands::window::EdgeCursorState;
 use pony_core::monitor;
 use std::sync::{Arc, RwLock};

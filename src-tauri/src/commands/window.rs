@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -112,9 +112,7 @@ pub fn start_edge_cursor_detect(
 }
 
 #[tauri::command]
-pub fn stop_edge_cursor_detect(
-    state: tauri::State<'_, EdgeCursorState>,
-) -> Result<(), String> {
+pub fn stop_edge_cursor_detect(state: tauri::State<'_, EdgeCursorState>) -> Result<(), String> {
     state.running.store(false, Ordering::SeqCst);
     Ok(())
 }
@@ -145,8 +143,18 @@ fn is_cursor_at_edge() -> bool {
 
         let mut mi = MONITORINFO {
             cb_size: std::mem::size_of::<MONITORINFO>() as u32,
-            rc_monitor: RECT { left: 0, top: 0, right: 0, bottom: 0 },
-            rc_work: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            rc_monitor: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            rc_work: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
             dw_flags: 0,
         };
         if GetMonitorInfoW(h_mon, &mut mi) == 0 {

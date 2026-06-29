@@ -19,9 +19,9 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
-  --color-success: hsl(140 45% 50%);
-  --color-warning: hsl(35 80% 55%);
-  --color-info: hsl(45 65% 55%);
+  --color-success: hsl(140 48% 55%);
+  --color-warning: hsl(35 82% 60%);
+  --color-info: hsl(45 68% 60%);
   --radius: 0.5rem;
 }
 
@@ -41,7 +41,7 @@
     --muted-foreground: 30 6% 55%;
     --accent: 38 85% 58%;
     --accent-foreground: 30 12% 9%;
-    --destructive: 8 65% 60%;
+    --destructive: 8 68% 65%;
     --destructive-foreground: 30 12% 9%;
     --border: 30 8% 18%;
     --input: 30 8% 18%;

@@ -1,10 +1,10 @@
+use serde::Serialize;
 use std::fmt;
-use std::sync::{Arc, mpsc, RwLock};
+use std::sync::{Arc, RwLock, mpsc};
 use std::thread;
 use std::time::Duration;
 use sysinfo::Pid;
 use sysinfo::System;
-use serde::Serialize;
 use tokio::sync::oneshot;
 
 /// 进程信息快照

@@ -15,6 +15,7 @@ const killMsg = ref('')
 let killTimer: ReturnType<typeof setTimeout> | null = null
 const confirmPid = ref<number | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
+const killingPids = ref<Record<number, boolean>>({})
 
 interface ProcessRow extends ProcessInfo {
   mem_pct: number
@@ -123,8 +124,9 @@ async function handleKill(p: ProcessRow) {
   if (confirmPid.value === p.pid) {
     if (confirmTimer) clearTimeout(confirmTimer)
     confirmTimer = null
-    confirmPid.value = null
     killMsg.value = ''
+    killingPids.value = { ...killingPids.value, [p.pid]: true }
+    confirmPid.value = null
     const exists = processes.value.some(proc => proc.pid === p.pid)
     if (!exists) {
       killMsg.value = '✓ 进程已结束'
@@ -247,7 +249,7 @@ onUnmounted(() => {
     <!-- Process list -->
     <div v-else class="flex flex-1 flex-col -mx-1 px-1">
       <!-- Header -->
-      <div class="flex shrink-0 items-center gap-2 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground glass-panel">
+      <div class="flex shrink-0 items-center gap-2 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground">
         <button class="flex-[6] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
           进程 TOP {{ filtered.length }} {{ sortIcon('name') }}
         </button>
@@ -282,7 +284,7 @@ onUnmounted(() => {
             <span :class="['flex-[5] text-center tabular-nums whitespace-nowrap', memTextColor(p.mem_pct)]">
               {{ fmMem(p.mem_mb) }} <span class="text-[11px] text-muted-foreground">{{ fmPct(p.mem_pct) }}</span>
             </span>
-            <div class="flex w-5 shrink-0 items-center justify-center">
+            <div v-if="!killingPids[p.pid]" class="flex w-5 shrink-0 items-center justify-center">
               <Transition name="btn-swap" mode="out-in">
                 <button
                   v-if="confirmPid !== p.pid"
@@ -304,6 +306,7 @@ onUnmounted(() => {
                 </button>
               </Transition>
             </div>
+            <div v-else class="w-5 shrink-0" />
           </div>
         </div>
       </div>
