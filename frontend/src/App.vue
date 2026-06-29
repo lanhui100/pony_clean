@@ -16,7 +16,7 @@ const { cpuPercent, memPercent, setPollInterval } = useMonitor()
 const {
   morphState, showCapsule, isFirstDock,
   onUserActivity, onCapsuleHover, onCapsuleLeave, onCapsuleDragStart, onCapsuleClick,
-  onShrinkAnimEnd, onExpandAnimEnd, setDockPref, dockSide, userDockPref,
+  onShrinkAnimEnd, onExpandAnimEnd,
 } = useWindowMorph(isScanning)
 
 const panelReady = ref(false)
@@ -89,9 +89,6 @@ function onFullWindowKeyDown() { onUserActivity() }
           v-model:activeTab="activeTab"
           v-model:searchQuery="searchQuery"
           :morph-state="morphState"
-          :dock-side="dockSide"
-          :user-dock-pref="userDockPref"
-          @update:dockPref="setDockPref"
         />
         <main class="flex-1 overflow-hidden p-4 pt-2">
           <div class="h-full">
@@ -117,6 +114,8 @@ function onFullWindowKeyDown() { onUserActivity() }
   position: absolute;
   inset: 0;
   z-index: 1;
+  transform-origin: top center;
+  will-change: transform, opacity;
   transition: transform 400ms cubic-bezier(0.32, 0.72, 0, 1),
               opacity 400ms cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -130,55 +129,48 @@ function onFullWindowKeyDown() { onUserActivity() }
   pointer-events: none;
 }
 
-/* ─── Capsule (centered in normal states, bottom-anchored when docked) ─── */
+/* ─── Capsule (top-center in normal states, stays top-center when docked) ─── */
 .capsule-layer {
   position: absolute;
-  top: 50%;
+  top: 0;
   left: 50%;
-  transform: translate(-50%, -50%) scale(1);
+  transform: translate(-50%, 0) scale(1);
   width: 160px;
   height: 40px;
   z-index: 2;
   opacity: 1;
   pointer-events: auto;
+  will-change: transform, opacity;
 }
 
-/* ─── Docked: capsule at window bottom (visible at screen top edge) ─── */
-.is-docked .capsule-layer {
-  top: auto;
-  bottom: 0;
-  left: 50%;
-  transform: translate(-50%, 0);
-}
-
-/* ─── Shrinking: capsule enters from scaled center ─── */
+/* ─── Shrinking: capsule enters at window top-center ─── */
 .is-shrinking .capsule-layer {
   animation: capsule-enter 300ms cubic-bezier(0.32, 0.72, 0, 1) 200ms both;
 }
 
 @keyframes capsule-enter {
   from {
-    transform: translate(-50%, -50%) scale(0.3);
+    transform: translate(-50%, 0) scale(0.3);
     opacity: 0;
   }
   to {
-    transform: translate(-50%, -50%) scale(1);
+    transform: translate(-50%, 0) scale(1);
     opacity: 1;
   }
 }
 
-/* ─── Expanding: capsule exits, panel enters ─── */
+/* ─── Expanding: capsule exits at window top-center ─── */
 .is-expanding .capsule-layer {
-  animation: capsule-exit 200ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  animation: capsule-exit 250ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 @keyframes capsule-exit {
   from {
-    transform: translate(-50%, -50%) scale(1);
+    transform: translate(-50%, 0) scale(1);
     opacity: 1;
   }
   to {
-    transform: translate(-50%, -50%) scale(0.3);
+    transform: translate(-50%, 0) scale(0.3);
     opacity: 0;
   }
 }

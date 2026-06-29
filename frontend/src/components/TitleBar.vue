@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, nextTick, watch, onUnmounted, onMounted } from 'vue'
+import { ref, nextTick, watch, onUnmounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
-import { Activity, HardDrive, Search, X, Settings } from 'lucide-vue-next'
+import { Activity, HardDrive, Search, X } from 'lucide-vue-next'
 import PonyIcon from './PonyIcon.vue'
 
 const appWindow = getCurrentWindow()
@@ -10,17 +10,12 @@ const appWindow = getCurrentWindow()
 const props = defineProps<{
   activeTab: string
   morphState: string
-  dockSide: string
-  userDockPref: string | null
 }>()
 
 const emit = defineEmits<{
   (e: 'update:activeTab', value: string): void
   (e: 'update:searchQuery', value: string): void
-  (e: 'update:dockPref', value: string | null): void
 }>()
-
-const showDockMenu = ref(false)
 
 const navItems = [
   { value: 'monitor', icon: Activity, label: '进程监控' },
@@ -83,29 +78,6 @@ function handleBlur() {
     emit('update:searchQuery', '')
   }
 }
-
-function selectDock(value: string) {
-  const current = userDockPref.value
-  const next = current === value ? null : value
-  emit('update:dockPref', next)
-  showDockMenu.value = false
-}
-
-function onClickOutside(e: MouseEvent) {
-  if (showDockMenu.value) {
-    showDockMenu.value = false
-  }
-}
-
-onUnmounted(() => {
-  if (searchTimer) clearTimeout(searchTimer)
-  document.removeEventListener('mousedown', onClickOutside)
-})
-
-// Register click-outside on mount via next tick
-onMounted(() => {
-  document.addEventListener('mousedown', onClickOutside)
-})
 </script>
 
 <template>
@@ -146,33 +118,6 @@ onMounted(() => {
             @keydown.escape="handleEscape"
             @blur="handleBlur"
           />
-      <button
-        v-show="!showSearch"
-        class="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground/80 relative"
-        title="吸附设置"
-        @click.stop="showDockMenu = !showDockMenu"
-      >
-        <Settings :size="12" />
-        <div
-          v-if="showDockMenu"
-          class="absolute top-full right-0 mt-1 z-50 w-36 rounded-lg border border-border/50 bg-background/95 backdrop-blur-xl py-1 shadow-xl"
-          @click.stop
-        >
-          <div class="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">吸附方位</div>
-          <button
-            v-for="opt in [ { value: 'top', label: '顶部' }, { value: 'left', label: '左侧' }, { value: 'right', label: '右侧' }, { value: 'none', label: '禁用自动' } ]"
-            :key="opt.value"
-            class="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-foreground/80 hover:bg-muted/40 transition-colors"
-            @click="selectDock(opt.value)"
-          >
-            <span class="flex h-3 w-3 items-center justify-center rounded-full border border-muted-foreground/40">
-              <span v-if="(userDockPref ?? 'top') === opt.value" class="h-1.5 w-1.5 rounded-full bg-primary" />
-            </span>
-            {{ opt.label }}
-          </button>
-        </div>
-      </button>
-
       <button
             v-if="localSearch"
             class="absolute right-1 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

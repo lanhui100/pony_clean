@@ -1,5 +1,5 @@
 import { ref, onMounted, onUnmounted, type Ref } from 'vue'
-import { getCurrentWindow, type Monitor } from '@tauri-apps/api/window'
+import { getCurrentWindow, PhysicalPosition, type Monitor } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
@@ -37,7 +37,6 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   const showCapsule = ref(false)
   const isFirstDock = ref(!localStorage.getItem(MORPH_ONBOARDED_KEY))
   const dockSide = ref<'top' | 'left' | 'right'>('top')
-  const userDockPref = ref<string | null>(localStorage.getItem('pony_dock_pref'))
 
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let idlePollTimer: ReturnType<typeof setInterval> | null = null
@@ -45,6 +44,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let monitorInfo: Monitor | null = null
   let unlistenEdgeEnter: UnlistenFn | null = null
   let unlistenEdgeLeave: UnlistenFn | null = null
+  let dockAborted = false
 
   async function getMonitor() {
     try { monitorInfo = await win.currentMonitor() }
@@ -86,6 +86,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   function startShrinking() {
     if (morphState.value !== 'full') return
+    clearWindowEffects()
+    win.setShadow(false).catch(() => {})
     morphState.value = 'shrinking'
     showCapsule.value = true
   }
@@ -94,9 +96,6 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   function onShrinkAnimEnd() {
     if (morphState.value !== 'shrinking') return
     morphState.value = 'capsule'
-    // Remove DWM shadow so the 315×340 window area has no visible border/shadow remnant
-    clearWindowEffects()
-    win.setShadow(false).catch(() => {})
     pauseTimer = setTimeout(() => {
       if (morphState.value !== 'capsule') return
       startDocking()
@@ -106,49 +105,17 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   async function startDocking() {
     if (morphState.value !== 'capsule') return
     morphState.value = 'docking'
+    dockAborted = false
 
     const pos = await win.outerPosition()
-    const x = pos.x; const y = pos.y
-    const sw = getSw(); const sh = getSh()
-    const cx = x + FULL_W / 2
-    const cy = y + FULL_H / 2
-    const pref = userDockPref.value
-    let targetX: number, targetY: number, side: 'top' | 'left' | 'right'
+    if (dockAborted) return
+    const sw = getSw()
+    const targetX = Math.round((sw - FULL_W) / 2)
+    const targetY = 0
 
-    if (pref === 'left') {
-      side = 'left'
-      targetX = EDGE_PADDING - (FULL_W - CAPSULE_W)
-      targetY = clamp(EDGE_PADDING, y, sh - FULL_H - EDGE_PADDING)
-    } else if (pref === 'right') {
-      side = 'right'
-      targetX = sw - CAPSULE_W - EDGE_PADDING
-      targetY = clamp(EDGE_PADDING, y, sh - FULL_H - EDGE_PADDING)
-    } else if (pref === 'none') {
-      morphState.value = 'docked'; dockSide.value = 'top'; return
-    } else {
-      // Euclidean distance from capsule center to each edge
-      const topD = Math.sqrt((cx - sw / 2) ** 2 + (cy - 0) ** 2)
-      const leftD = Math.sqrt((cx - 0) ** 2 + (cy - sh / 2) ** 2)
-      const rightD = Math.sqrt((cx - sw) ** 2 + (cy - sh / 2) ** 2)
-      const minD = Math.min(topD, leftD, rightD)
-      if (minD === topD) side = 'top'
-      else if (minD === leftD) side = 'left'
-      else side = 'right'
-
-      if (side === 'top') {
-        targetX = clamp(EDGE_PADDING, cx - CAPSULE_W / 2, sw - FULL_W - EDGE_PADDING)
-        targetY = EDGE_PADDING - (FULL_H - CAPSULE_H)
-      } else if (side === 'left') {
-        targetX = EDGE_PADDING - (FULL_W - CAPSULE_W)
-        targetY = clamp(EDGE_PADDING, y, sh - FULL_H - EDGE_PADDING)
-      } else {
-        targetX = sw - CAPSULE_W - EDGE_PADDING
-        targetY = clamp(EDGE_PADDING, y, sh - FULL_H - EDGE_PADDING)
-      }
-    }
-
-    dockSide.value = side
-    await win.setPosition({ x: targetX, y: targetY })
+    dockSide.value = 'top'
+    await win.setPosition(new PhysicalPosition(targetX, targetY))
+    if (dockAborted) return
     morphState.value = 'docked'
     if (isFirstDock.value) {
       localStorage.setItem(MORPH_ONBOARDED_KEY, '1')
@@ -157,29 +124,41 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   async function expandToFull() {
-    if (morphState.value !== 'docked' && morphState.value !== 'capsule') return
+    if (morphState.value !== 'docked' && morphState.value !== 'capsule' && morphState.value !== 'docking') return
     if (pauseTimer) clearTimeout(pauseTimer); pauseTimer = null
+    dockAborted = true
 
-    const pos = await win.outerPosition()
-    const x = pos.x; const y = pos.y
     const sw = getSw()
+    const targetX = Math.round((sw - FULL_W) / 2)
+    const targetY = -1
 
-    let targetX: number, targetY: number
-    if (x < sw / 3) targetX = EDGE_PADDING
-    else if (x > sw * 2 / 3) targetX = sw - FULL_W - EDGE_PADDING
-    else targetX = clamp(EDGE_PADDING, x + FULL_W / 2 - FULL_W / 2, sw - FULL_W - EDGE_PADDING)
-    targetY = clamp(EDGE_PADDING, y + FULL_H / 2 - FULL_H / 2, getSh() - FULL_H - EDGE_PADDING)
+    // Animate Y from current position to target smoothly
+    const currentPos = await win.outerPosition()
+    const startY = currentPos.y
 
-    await win.setPosition({ x: targetX, y: targetY })
-    // Keep capsule visible, mount panel hidden, then trigger transition
+    // Set X immediately, restore shadow+effects, then start CSS animation
+    await win.setPosition(new PhysicalPosition(targetX, startY))
+    win.setShadow(true).catch(() => {})
+    restoreWindowEffects()
     morphState.value = 'expanding'
-    // shadow + effects restored on transitionend
+
+    if (startY !== targetY) {
+      const duration = 250
+      const startTime = performance.now()
+      const animateY = () => {
+        const elapsed = performance.now() - startTime
+        const t = Math.min(elapsed / duration, 1)
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+        const y = Math.round(startY + (targetY - startY) * ease)
+        win.setPosition(new PhysicalPosition(targetX, y)).catch(() => {})
+        if (t < 1) requestAnimationFrame(animateY)
+      }
+      requestAnimationFrame(animateY)
+    }
   }
 
   function onExpandAnimEnd() {
     if (morphState.value !== 'expanding') return
-    win.setShadow(true).catch(() => {})
-    restoreWindowEffects()
     showCapsule.value = false
     morphState.value = 'full'
     resetIdleTimer()
@@ -198,28 +177,80 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   let hoverTimer: ReturnType<typeof setTimeout> | null = null
+  let hoverIntent = false
 
   function cancelHoverTimer() {
     if (hoverTimer) clearTimeout(hoverTimer)
     hoverTimer = null
+    hoverIntent = false
   }
 
   function onCapsuleHover() {
-    if (morphState.value !== 'capsule' && morphState.value !== 'docked') return
+    if (morphState.value !== 'capsule' && morphState.value !== 'docked' && morphState.value !== 'docking') return
     cancelHoverTimer()
+    hoverIntent = true
     hoverTimer = setTimeout(() => {
-      if (morphState.value !== 'capsule' && morphState.value !== 'docked') return
-      expandToFull()
-    }, 500)
+      hoverTimer = null
+      if (morphState.value !== 'capsule' && morphState.value !== 'docked' && morphState.value !== 'docking') return
+      if (!hoverIntent) return
+      expandToFull().catch(() => {})
+    }, 2000)
   }
 
-  function onCapsuleDragStart() {
+  function onCapsuleDragStart(e: MouseEvent) {
     cancelHoverTimer()
-    // Undock first so window moves freely
+    if (morphState.value !== 'docked' && morphState.value !== 'capsule' && morphState.value !== 'docking') return
+    e.preventDefault()
+
     if (morphState.value === 'docked') {
       morphState.value = 'capsule'
     }
-    win.startDragging().catch(() => {})
+
+    const startMouseX = e.screenX
+    let startWinX: number | null = null
+    let scaleFactor = 1
+    let rafId: number | null = null
+    let pendingX: number | null = null
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.screenX - startMouseX
+      if (startWinX === null) {
+        pendingX = dx
+        return
+      }
+      pendingX = startWinX + Math.round(dx * scaleFactor)
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          if (pendingX !== null) {
+            win.setPosition(new PhysicalPosition(pendingX, 0)).catch(() => {})
+          }
+          rafId = null
+          pendingX = null
+        })
+      }
+    }
+
+    const onUp = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+
+    Promise.all([
+      win.outerPosition(),
+      win.scaleFactor().catch(() => 1),
+    ]).then(([pos, sf]) => {
+      startWinX = pos.x
+      scaleFactor = sf
+      if (pendingX !== null) {
+        const applyX = startWinX + Math.round(pendingX * scaleFactor)
+        win.setPosition(new PhysicalPosition(applyX, 0)).catch(() => {})
+        pendingX = null
+      }
+    }).catch(() => {})
   }
 
   function onCapsuleLeave() {
@@ -228,13 +259,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   function onCapsuleClick() {
     cancelHoverTimer()
-    expandToFull()
-  }
-
-  function setDockPref(pref: string | null) {
-    userDockPref.value = pref
-    if (pref) localStorage.setItem('pony_dock_pref', pref)
-    else localStorage.removeItem('pony_dock_pref')
+    dockAborted = true
+    expandToFull().catch(() => {})
   }
 
   onMounted(async () => {
@@ -243,15 +269,13 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     // Start Rust-side GetCursorPos polling for reliable edge detection
     try {
       await invoke('start_edge_cursor_detect')
-      unlistenEdgeEnter = await listen<void>('edge-cursor-enter', () => {
-        if (morphState.value === 'docked' || morphState.value === 'capsule') {
+    unlistenEdgeEnter = await listen<void>('edge-cursor-enter', async () => {
+        if (morphState.value === 'docked' || morphState.value === 'capsule' || morphState.value === 'docking') {
           cancelHoverTimer()
-          expandToFull()
+          await expandToFull().catch(() => {})
         }
       })
-      unlistenEdgeLeave = await listen<unknown>('edge-cursor-leave', () => {
-        /* no-op — hoverTimer handles leave via onCapsuleLeave when mouse actually leaves */
-      })
+      unlistenEdgeLeave = await listen<unknown>('edge-cursor-leave', () => {})
     } catch (e) {
       console.warn('[PonyClean] edge cursor detection not available:', e)
     }
@@ -266,12 +290,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   })
 
   return {
-    morphState, showCapsule, isFirstDock, dockSide, userDockPref,
+    morphState, showCapsule, isFirstDock, dockSide,
     onUserActivity, onCapsuleHover, onCapsuleLeave, onCapsuleDragStart, onCapsuleClick,
-    onShrinkAnimEnd, onExpandAnimEnd, expandToFull, setDockPref,
+    onShrinkAnimEnd, onExpandAnimEnd, expandToFull,
   }
-}
-
-function clamp(min: number, val: number, max: number) {
-  return Math.max(min, Math.min(val, max))
 }
