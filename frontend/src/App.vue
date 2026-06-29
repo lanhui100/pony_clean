@@ -32,15 +32,8 @@ watch(morphState, async (state) => {
   }
 })
 
-onMounted(async () => {
-  try {
-    await getCurrentWindow().setEffects({
-      effects: [{ effect: 'acrylic' }],
-      color: { r: 30, g: 28, b: 26, a: 200 },
-    })
-  } catch (e) {
-    console.warn('[PonyClean] window effects not supported:', e)
-  }
+onMounted(() => {
+  // window effects removed — transparent window + CSS provides the visual
 })
 
 function onFullWindowMouseMove() { onUserActivity() }
