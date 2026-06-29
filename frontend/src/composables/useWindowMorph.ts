@@ -194,17 +194,22 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     resetIdleTimer()
   }
 
-  function onCapsuleDblClick() {
-    expandToFull()
+  function onCapsuleHover() {
+    if (morphState.value === 'docked') return
+    if (morphState.value === 'shrinking' || morphState.value === 'capsule' || morphState.value === 'docking') {
+      abortAndRestore()
+    }
   }
 
-  async function onCapsuleDragStart(e: MouseEvent) {
+  function onCapsuleDragStart() {
+    // Undock first so window moves freely
     if (morphState.value === 'docked') {
       morphState.value = 'capsule'
     }
-    try { await win.startDragging() }
-    catch { /* best-effort */ }
+    win.startDragging().catch(() => {})
   }
+
+  function onCapsuleClick() { expandToFull() }
 
   function setDockPref(pref: string | null) {
     userDockPref.value = pref
@@ -217,7 +222,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   return {
     morphState, showCapsule, isFirstDock, dockSide, userDockPref,
-    onUserActivity, onCapsuleDblClick, onCapsuleDragStart,
+    onUserActivity, onCapsuleHover, onCapsuleDragStart, onCapsuleClick,
     onShrinkAnimEnd, onExpandAnimEnd, expandToFull, setDockPref,
   }
 }
