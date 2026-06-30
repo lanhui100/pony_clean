@@ -286,9 +286,8 @@ watch(() => state.value, (val, prev) => {
       <p class="max-w-56 text-center text-[11px] text-muted-foreground">
         扫描 C 盘临时文件、浏览器缓存、Prefetch 和回收站，安全释放磁盘空间
       </p>
-      <Button size="sm" @click="handleStartScan">
-        <Scan class="mr-1.5 h-3.5 w-3.5" />
-        开始扫描
+      <Button size="sm" @click="handleStartScan" :title="'开始扫描'">
+        <Scan class="h-3.5 w-3.5" />
       </Button>
     </div>
 
@@ -361,7 +360,6 @@ watch(() => state.value, (val, prev) => {
       <Button variant="outline" size="sm" class="mt-1" @click="handleStartScan" :title="'重新扫描'">
           <RotateCcw class="h-3.5 w-3.5" />
         </Button>
-      </div>
     </div>
 
     <!-- DONE (with items) -->
