@@ -15,6 +15,37 @@ export interface DeleteResult {
   errors: string[]
 }
 
+export interface CategorySummary {
+  files: number
+  bytes: number
+}
+
+export interface CleanLogEntry {
+  timestamp: string
+  total_files: number
+  total_bytes: number
+  success: number
+  failed: number
+  errors: string[]
+  by_category: Record<string, CategorySummary>
+}
+
+export interface CleanLogSummary {
+  entries: CleanLogEntry[]
+  total_cleaned_bytes: number
+  total_cleaned_files: number
+}
+
+export interface ScanWarningPayload {
+  type: string
+  target_id?: string
+  items?: number
+  path?: string
+  pattern?: string
+  service?: string
+  reason?: string
+}
+
 export type ScanState = 'idle' | 'scanning' | 'done' | 'cancelled' | 'error' | 'deleting'
 
 export function useCleaner() {
@@ -27,6 +58,9 @@ export function useCleaner() {
   const deleteResult = ref<DeleteResult | null>(null)
   const errorMessage = ref('')
   const deleteProgress = ref({ done: 0, total: 0, current: '' })
+  const cleanLogs = ref<CleanLogEntry[]>([])
+  const totalCleanedBytes = ref(0)
+  const totalCleanedFiles = ref(0)
 
   let unlistenProgress: UnlistenFn | null = null
   let unlistenItems: UnlistenFn | null = null
@@ -34,6 +68,7 @@ export function useCleaner() {
   let unlistenError: UnlistenFn | null = null
   let unlistenCancelled: UnlistenFn | null = null
   let unlistenDeleteProgress: UnlistenFn | null = null
+  let unlistenWarning: UnlistenFn | null = null
   let invokeSeq = 0
 
   function guardScanning(fn: (e: any) => void) {
@@ -72,10 +107,14 @@ export function useCleaner() {
           deleteProgress.value = e.payload
         }
       }),
+      listen<ScanWarningPayload>('scan-warning', (e) => {
+        console.warn('Scan warning:', e.payload.type, e.payload)
+      }),
     ]).then((listeners) => {
-      ;[unlistenProgress, unlistenItems, unlistenDone, unlistenError, unlistenCancelled, unlistenDeleteProgress] = listeners
+      ;[unlistenProgress, unlistenItems, unlistenDone, unlistenError, unlistenCancelled, unlistenDeleteProgress, unlistenWarning] = listeners
       listenersReady = true
       listenersReadyResolve?.()
+      loadCleanLogs()
     }).catch((e) => {
       console.error('Failed to register cleaner event listeners:', e)
       listenersReady = true
@@ -90,6 +129,7 @@ export function useCleaner() {
     unlistenError?.()
     unlistenCancelled?.()
     unlistenDeleteProgress?.()
+    unlistenWarning?.()
   })
 
   async function startScan() {
@@ -130,12 +170,24 @@ export function useCleaner() {
       if (seq !== invokeSeq) return result
       deleteResult.value = result
       state.value = 'idle'
+      await loadCleanLogs()
       return result
     } catch (e: any) {
       if (seq !== invokeSeq) throw e
       state.value = 'error'
       errorMessage.value = String(e)
       throw e
+    }
+  }
+
+  async function loadCleanLogs() {
+    try {
+      const result = await invoke<CleanLogSummary>('get_clean_logs', { limit: 50 })
+      cleanLogs.value = result.entries
+      totalCleanedBytes.value = result.total_cleaned_bytes
+      totalCleanedFiles.value = result.total_cleaned_files
+    } catch (e) {
+      console.warn('Failed to load clean logs:', e)
     }
   }
 
@@ -165,5 +217,9 @@ export function useCleaner() {
     cancelScan,
     executeClean,
     reset,
+    cleanLogs,
+    totalCleanedBytes,
+    totalCleanedFiles,
+    loadCleanLogs,
   }
 }
