@@ -40,6 +40,7 @@ fn main() {
             commands::cleaner::cancel_scan,
             commands::cleaner::execute_clean,
             commands::cleaner::empty_recycle_bin,
+            commands::cleaner::get_clean_logs,
             commands::window::quit_app,
             commands::window::get_system_idle_ms,
             commands::window::start_edge_cursor_detect,

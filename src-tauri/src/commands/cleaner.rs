@@ -1,4 +1,4 @@
-use pony_core::cleaner::{self, CleanItem, DeleteProgress, DeleteResult};
+use pony_core::cleaner::{self, CleanItem, DeleteProgress, DeleteResult, ScanWarning};
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -75,9 +75,26 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                             let _ = app_handle.emit("scan-cancelled", serde_json::json!({}));
                             break;
                         }
-                        Ok(cleaner::ScanEvent::Warning(msg)) => {
-                            tracing::warn!("Scan warning: {msg}");
-                            let _ = app_handle.emit("scan-warning", serde_json::json!({ "message": msg }));
+                        Ok(cleaner::ScanEvent::Warning(w)) => {
+                            let payload = match &w {
+                                ScanWarning::MaxItemsReached { target_id, items } => serde_json::json!({
+                                    "type": "max_items_reached", "target_id": target_id, "items": items
+                                }),
+                                ScanWarning::PermissionDenied { target_id, path } => serde_json::json!({
+                                    "type": "permission_denied", "target_id": target_id, "path": path
+                                }),
+                                ScanWarning::GlobNoMatch { target_id, pattern } => serde_json::json!({
+                                    "type": "glob_no_match", "target_id": target_id, "pattern": pattern
+                                }),
+                                ScanWarning::ServiceStopFailed { target_id, service, reason } => serde_json::json!({
+                                    "type": "service_stop_failed", "target_id": target_id, "service": service, "reason": reason
+                                }),
+                                ScanWarning::EnvInjectionDetected { target_id, path } => serde_json::json!({
+                                    "type": "env_injection_detected", "target_id": target_id, "path": path
+                                }),
+                            };
+                            tracing::warn!("Scan warning: {w:?}");
+                            let _ = app_handle.emit("scan-warning", payload);
                         }
                         Err(_) => break,
                     }
@@ -117,6 +134,21 @@ pub async fn execute_clean(app: AppHandle, paths: Vec<String>) -> Result<DeleteR
         }
     });
 
+    // 删除前收集分类统计和总大小
+    let num_files = pathbufs.len() as u64;
+    let mut by_cat = std::collections::HashMap::new();
+    let mut total_bytes = 0u64;
+    for p in &pathbufs {
+        if let Ok(meta) = p.metadata() {
+            total_bytes += meta.len();
+        }
+        let entry = by_cat.entry("other".to_string()).or_insert_with(|| cleaner::CategorySummary { files: 0, bytes: 0 });
+        entry.files += 1;
+        if let Ok(meta) = p.metadata() {
+            entry.bytes += meta.len();
+        }
+    }
+
     let result = tokio::task::spawn_blocking(move || {
         cleaner::delete_files_with_progress(&pathbufs, Some(progress_tx))
     })
@@ -124,6 +156,34 @@ pub async fn execute_clean(app: AppHandle, paths: Vec<String>) -> Result<DeleteR
         .map_err(|e| e.to_string())?;
 
     let _ = progress_handle.await;
+
+    // 写入审计日志（错误信息已脱敏 — 只保留错误原因，移除具体路径）
+    fn sanitize_error(e: &str) -> String {
+        // 常见错误格式: "Protected path: C:\Users\..."、"Cannot resolve path C:\foo: os error 2"
+        let lower = e.to_lowercase();
+        if lower.contains("protected") { "protected path".to_string() }
+        else if lower.contains("not in scan scope") { "path not in scan scope".to_string() }
+        else if lower.contains("cannot resolve") { "cannot resolve path".to_string() }
+        else if let Some(fname) = std::path::Path::new(e).file_name() {
+            // 纯路径格式 → 只保留文件名
+            fname.to_string_lossy().to_string()
+        } else {
+            // fallback: 截断到 30 字符
+            e.chars().take(30).collect()
+        }
+    }
+    let sanitized_errors: Vec<String> = result.errors.iter().map(|e| sanitize_error(e)).collect();
+    let log_entry = cleaner::CleanLogEntry {
+        timestamp: cleaner::timestamp_now(),
+        total_files: num_files,
+        total_bytes,
+        success: result.success,
+        failed: result.failed,
+        errors: sanitized_errors,
+        by_category: by_cat,
+    };
+    let _ = cleaner::append_clean_log(&log_entry);
+
     Ok(result)
 }
 
@@ -132,4 +192,9 @@ pub async fn empty_recycle_bin() -> Result<(), String> {
     tokio::task::spawn_blocking(cleaner::empty_recycle_bin)
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_clean_logs(limit: Option<usize>) -> Result<cleaner::CleanLogSummary, String> {
+    cleaner::get_clean_logs(limit.unwrap_or(50))
 }
