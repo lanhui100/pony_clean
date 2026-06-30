@@ -93,3 +93,59 @@
 | 二进制体积 | ~5MB (单二进制) | ~4.5MB (不含 WebView2 runtime) |
 
 **迁移策略**: `crates/pony_core` 零改动，前后端通过 Tauri IPC 通信。
+
+---
+
+## ADR-008: C盘清理策略 v2 — 基于社区调研的目标扩展
+
+**状态**: 已采纳
+
+**上下文**: v1 仅有 15 个硬编码扫描目标，与行业头部项目（BleachBit 1000+、FluentCleaner winapp2.ini）覆盖差距显著。
+
+**决策**: 采用三阶段渐进式扩展策略，经 3 路对抗审查（安全/架构/工程）调优后定稿。
+
+**审查采纳的主要变更**:
+- **移除清理目标**: winevt\Logs, catroot2, spool\drivers 从 Confirm 升至 PROTECTED；Videos 移除；SleepStudy 从 target 移除
+- **降级**: spool\printers 从 Safe 降为 Confirm
+- **移除特性**: 安全擦除模式（SSD 无意义）、winapp2.ini 解析器（80h 成本不匹配）
+- **推迟到 v3**: CLI + Task Scheduler、大文件扫描
+- **分类合并**: logs + error_reports 合并为 logs（6 类替代原 9 类）
+- **安全加固**: `is_path_allowed` 增加分隔符边界检查；PROTECTED_PREFIXES 从 12 增至 20+；环境变量注入防御
+- **审计**: 删除前快照改为 DPAPI 加密操作日志，永久保留
+- **实现约束**: 按分类最小阈值（cache:512B, temp:1024B, logs:4096B）、每 target 上限 50K 项
+- **工时重估**: S1 从 2h 重估为 8h，总计从 24h 重估为 25h
+- **添加 P0 门禁**: Phase 2 必须在全部 P0 项验收关闭后启动
+
+| 阶段 | 目标数 | 覆盖范围 | 目标 |
+|------|:------:|---------|------|
+| Phase 1 (P0) | 38 | Windows 系统垃圾全覆盖（日志/错误报告/缩略图/Update/打印机/UWP） | 对标 Disk Cleanup |
+| Phase 2 (P1) | 22 | 应用层（浏览器扩展 + 开发工具 + 通信/媒体应用） | 对标 BleachBit 应用层 |
+| Phase 3 (P1-P2) | - | 大文件扫描 + 磁盘分析 + 重复文件 | 差异化能力 |
+
+**删除策略升级**:
+- 保留 v1 三层降级（DeleteFileW → MoveFileExW 延迟 → Skip）
+- 新增安全擦除模式（logs / error_reports 类别可选 1-pass 覆写）
+- 新增删除前审计快照（路径 + 大小写入 JSON 日志，保留 30 天）
+- 新增 Windows.old 检测（DISM 清理，Confirm 级别）
+
+**安全补充**:
+- 新增 9 条受保护路径（Recovery, System Volume Information, CSC, Registration, SAM config 等）
+- 移除现有 `SleepStudy` 双向保护（只允许清理过期文件，不允许删除目录本身）
+
+**类别体系**:
+- 从 4 类扩展为 9 类（新增：logs, error_reports, dev_cache, update_cache, old_install, analysis）
+- 每类定义默认勾选行为、安全擦除可用性、UI 颜色和图标
+
+**不纳入**:
+- 注册表清理（风险 > 收益）
+- 系统还原点管理（需管理员提权）
+- 后台常驻自动清理（违背"按需启动"定位）
+- 浏览器扩展 / 驱动管理 / 启动项管理（超出清理职责）
+
+**详细方案**: 参见 `docs/CLEAN_STRATEGY.md`
+
+**理由**:
+1. 社区调研（BleachBit, burnbytes, FluentCleaner, Cleanmgr+）一致证明：清理工具的覆盖率直接影响用户感知价值
+2. 系统级清理安全性高（Windows 自身 API 确认可删），值得优先补齐
+3. 分阶段实施控制风险，每阶段均可独立测试和发布
+4. 保留 v1 安全架构不变（三级分级 + 受保护路径 + 后端强制执行），新目标仅在安全框架内扩展
