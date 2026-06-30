@@ -72,8 +72,6 @@ const {
   executeClean,
   reset,
   cleanLogs,
-  totalCleanedBytes,
-  totalCleanedFiles,
 } = useCleaner()
 
 const categoryColors: Record<string, string> = {
@@ -478,10 +476,6 @@ watch(() => state.value, (val, prev) => {
       <!-- Bottom action bar -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <span v-if="totalCleanedBytes > 0" class="text-[11px] text-muted-foreground">
-            累计清理 <span class="font-medium tabular-nums text-foreground/80">{{ formatBytes(totalCleanedBytes) }}</span>
-          </span>
-          <span v-if="totalCleanedBytes > 0" class="text-[10px] text-muted-foreground/40">|</span>
           <span class="text-[11px] text-muted-foreground">
             <template v-if="selectedCount > 0">
               已选 <span class="font-medium text-foreground/80">{{ selectedCount }}</span> 项

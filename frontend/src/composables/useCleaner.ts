@@ -32,8 +32,6 @@ export interface CleanLogEntry {
 
 export interface CleanLogSummary {
   entries: CleanLogEntry[]
-  total_cleaned_bytes: number
-  total_cleaned_files: number
 }
 
 export interface ScanWarningPayload {
@@ -59,8 +57,6 @@ export function useCleaner() {
   const errorMessage = ref('')
   const deleteProgress = ref({ done: 0, total: 0, current: '' })
   const cleanLogs = ref<CleanLogEntry[]>([])
-  const totalCleanedBytes = ref(0)
-  const totalCleanedFiles = ref(0)
 
   let unlistenProgress: UnlistenFn | null = null
   let unlistenItems: UnlistenFn | null = null
@@ -184,8 +180,6 @@ export function useCleaner() {
     try {
       const result = await invoke<CleanLogSummary>('get_clean_logs', { limit: 50 })
       cleanLogs.value = result.entries
-      totalCleanedBytes.value = result.total_cleaned_bytes
-      totalCleanedFiles.value = result.total_cleaned_files
     } catch (e) {
       console.warn('Failed to load clean logs:', e)
     }
@@ -218,8 +212,6 @@ export function useCleaner() {
     executeClean,
     reset,
     cleanLogs,
-    totalCleanedBytes,
-    totalCleanedFiles,
     loadCleanLogs,
   }
 }

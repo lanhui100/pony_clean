@@ -945,22 +945,12 @@ pub struct CategorySummary {
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct CleanStats {
-    pub total_files: u64,
-    pub total_bytes: u64,
-    pub last_cleaned_at: String,
-}
-
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct CleanLogSummary {
     pub entries: Vec<CleanLogEntry>,
-    pub total_cleaned_files: u64,
-    pub total_cleaned_bytes: u64,
 }
 
 const CLEAN_LOG_FILE: &str = "clean_log.jsonl";
-const STATS_FILE: &str = "clean_stats.json";
 const MAX_LOG_BYTES: u64 = 1_048_576;
 const MAX_LOG_BACKUPS: u32 = 5;
 static LOG_LOCK: Mutex<()> = Mutex::new(());
@@ -1019,7 +1009,6 @@ fn append_clean_log_at(entry: &CleanLogEntry, dir: &Path) -> Result<(), String> 
         .map_err(|e| format!("open log: {e}"))?;
     use std::io::Write;
     writeln!(file, "{json}").map_err(|e| format!("write log: {e}"))?;
-    update_stats_at(dir, entry.total_files, entry.total_bytes);
     Ok(())
 }
 
@@ -1049,23 +1038,7 @@ fn get_clean_logs_at(limit: usize, dir: &Path) -> Result<CleanLogSummary, String
     } else {
         vec![]
     };
-    let stats = fs::read_to_string(dir.join(STATS_FILE)).ok()
-        .and_then(|s| serde_json::from_str::<CleanStats>(&s).ok())
-        .unwrap_or_default();
-    Ok(CleanLogSummary { entries, total_cleaned_files: stats.total_files, total_cleaned_bytes: stats.total_bytes })
-}
-
-fn update_stats_at(dir: &Path, files: u64, bytes: u64) {
-    let path = dir.join(STATS_FILE);
-    let mut stats = fs::read_to_string(&path).ok()
-        .and_then(|s| serde_json::from_str::<CleanStats>(&s).ok())
-        .unwrap_or_default();
-    stats.total_files += files;
-    stats.total_bytes += bytes;
-    stats.last_cleaned_at = timestamp_now();
-    if let Ok(json) = serde_json::to_string(&stats) {
-        let _ = fs::write(&path, json);
-    }
+    Ok(CleanLogSummary { entries })
 }
 
 #[cfg(test)]
@@ -1416,7 +1389,6 @@ mod tests {
 
     #[test]
     fn test_clean_log_append_and_read() {
-        use std::io::Write;
         let dir = tempfile::tempdir().unwrap();
         let entry = CleanLogEntry {
             timestamp: "2026-01-01T00:00:00Z".into(),
