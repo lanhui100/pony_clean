@@ -407,10 +407,14 @@ pub fn is_path_protected(path: &Path) -> bool {
         || cleaned.trim_end_matches('\\') == format!("c:\\windows\\system32\\sleepstudy")
 }
 
-/// 验证路径是否在允许的扫描目标内（含分隔符边界）
+/// 验证路径是否在允许的扫描目标内（含分隔符边界 + Win32 ns 剥离）
 pub fn is_path_allowed(path: &Path, targets: &[ScanTarget]) -> bool {
-    let path_str = path.to_string_lossy().to_lowercase();
-    let path_str = path_str.trim_end_matches(&[' ', '.'][..]);
+    let raw = path.to_string_lossy().to_lowercase();
+    // 剥离 Win32 命名空间前缀，与 is_path_protected / canonicalize 行为一致
+    let raw = raw.trim_start_matches("\\\\?\\");
+    let raw = raw.trim_start_matches("\\\\.\\");
+    let raw = raw.trim_start_matches("//?/");
+    let path_str = raw.trim_end_matches(&[' ', '.'][..]);
     targets.iter().any(|t| {
         let expanded = expand_env(&t.path).to_lowercase();
         let trimmed = expanded.trim_end_matches('\\');

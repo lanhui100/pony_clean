@@ -302,10 +302,9 @@ watch(() => state.value, (val, prev) => {
           {{ truncatePath(currentFile) }}
         </p>
       </div>
-      <Button variant="ghost" size="sm" @click="handleCancel">
-        <X class="mr-1 h-3.5 w-3.5" />
-        取消
-      </Button>
+      <Button variant="ghost" size="sm" @click="handleCancel" :title="'取消'">
+          <X class="h-3.5 w-3.5" />
+        </Button>
     </div>
 
     <!-- DELETING -->
@@ -339,19 +338,17 @@ watch(() => state.value, (val, prev) => {
           </div>
         </div>
       </Alert>
-      <Button variant="outline" size="sm" @click="handleStartScan">
-        <RotateCcw class="mr-1.5 h-3.5 w-3.5" />
-        重试
-      </Button>
+      <Button variant="outline" size="sm" @click="handleStartScan" :title="'重试'">
+          <RotateCcw class="h-3.5 w-3.5" />
+        </Button>
     </div>
 
     <!-- CANCELLED -->
     <div v-else-if="state === 'cancelled'" class="flex flex-1 flex-col items-center justify-center gap-3">
       <p class="text-xs text-muted-foreground">扫描已取消</p>
-      <Button variant="outline" size="sm" @click="handleStartScan">
-        <RotateCcw class="mr-1.5 h-3.5 w-3.5" />
-        重新扫描
-      </Button>
+      <Button variant="outline" size="sm" @click="handleStartScan" :title="'开始扫描'">
+          <Scan class="h-3.5 w-3.5" />
+        </Button>
     </div>
 
     <!-- DONE (empty) -->
@@ -361,27 +358,21 @@ watch(() => state.value, (val, prev) => {
       </div>
       <h3 class="text-sm font-medium">没有发现可清理文件</h3>
       <p class="text-[11px] text-muted-foreground">你的 C 盘状况良好</p>
-      <Button variant="outline" size="sm" class="mt-1" @click="handleStartScan">
-        <RotateCcw class="mr-1.5 h-3.5 w-3.5" />
-        重新扫描
-      </Button>
+      <Button variant="outline" size="sm" class="mt-1" @click="handleStartScan" :title="'重新扫描'">
+          <RotateCcw class="h-3.5 w-3.5" />
+        </Button>
+      </div>
     </div>
 
     <!-- DONE (with items) -->
     <div v-else-if="state === 'done' && items.length > 0" class="flex flex-1 flex-col overflow-hidden gap-2">
       <!-- Header summary -->
-      <div class="flex items-center justify-between">
-        <div>
-          <p class="text-[11px] text-muted-foreground">可清理</p>
-          <p class="text-lg font-bold tabular-nums">{{ formatBytes(totalBytes) }}</p>
-          <p v-if="skippedSmall > 0" class="text-[10px] text-muted-foreground/60">
-            已跳过 {{ skippedSmall }} 个微效文件
-          </p>
-        </div>
-        <Button variant="outline" size="sm" @click="handleStartScan">
-          <RotateCcw class="mr-1 h-3.5 w-3.5" />
-          重新扫描
-        </Button>
+      <div>
+        <p class="text-[11px] text-muted-foreground">可清理</p>
+        <p class="text-lg font-bold tabular-nums">{{ formatBytes(totalBytes) }}</p>
+        <p v-if="skippedSmall > 0" class="text-[10px] text-muted-foreground/60">
+          已跳过 {{ skippedSmall }} 个微效文件
+        </p>
       </div>
 
       <!-- Category legend (vertical) -->
@@ -467,12 +458,11 @@ watch(() => state.value, (val, prev) => {
             {{ allSelected ? '取消全选' : '全选' }}
           </button>
         </div>
-        <div class="flex items-center gap-1.5">
+        <div class="flex items-center gap-1">
           <Sheet>
             <SheetTrigger>
-              <Button variant="ghost" size="sm">
-                <History class="mr-1 h-3.5 w-3.5" />
-                操作记录
+              <Button variant="ghost" size="sm" :title="'操作记录'">
+                <History class="h-3.5 w-3.5" />
               </Button>
             </SheetTrigger>
             <SheetContent side="right">
@@ -526,14 +516,17 @@ watch(() => state.value, (val, prev) => {
               </div>
             </SheetContent>
           </Sheet>
+          <Button variant="outline" size="sm" @click="handleStartScan" :title="'重新扫描'">
+            <RotateCcw class="h-3.5 w-3.5" />
+          </Button>
           <Button
             variant="destructive"
             size="sm"
             :disabled="selectedCount === 0"
             @click="handleClean"
+            :title="'清理选中'"
           >
-            <Trash2 class="mr-1.5 h-3.5 w-3.5" />
-            清理选中
+            <Trash2 class="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
