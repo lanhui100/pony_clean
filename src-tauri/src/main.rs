@@ -44,6 +44,7 @@ fn main() {
             commands::window::get_system_idle_ms,
             commands::window::start_edge_cursor_detect,
             commands::window::stop_edge_cursor_detect,
+            commands::window::set_capsule_hit_rect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

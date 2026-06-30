@@ -2244,6 +2244,7 @@ name = "pony_clean"
 version = "0.1.0"
 dependencies = [
  "pony_core",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "tauri",
