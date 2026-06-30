@@ -365,12 +365,52 @@ watch(() => state.value, (val, prev) => {
     <!-- DONE (with items) -->
     <div v-else-if="state === 'done' && items.length > 0" class="flex flex-1 flex-col overflow-hidden gap-2">
       <!-- Header summary -->
-      <div>
-        <p class="text-[11px] text-muted-foreground">可清理</p>
-        <p class="text-lg font-bold tabular-nums">{{ formatBytes(totalBytes) }}</p>
-        <p v-if="skippedSmall > 0" class="text-[10px] text-muted-foreground/60">
-          已跳过 {{ skippedSmall }} 个微效文件
-        </p>
+      <div class="flex items-start justify-between">
+        <div>
+          <p class="text-[11px] text-muted-foreground">可清理</p>
+          <p class="text-lg font-bold tabular-nums">{{ formatBytes(totalBytes) }}</p>
+          <p v-if="skippedSmall > 0" class="text-[10px] text-muted-foreground/60">
+            已跳过 {{ skippedSmall }} 个微效文件
+          </p>
+        </div>
+        <div class="flex items-center gap-1 pt-0.5">
+          <Sheet>
+            <SheetTrigger>
+              <Button variant="ghost" size="sm" :title="'操作记录'">
+                <History class="h-3.5 w-3.5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right">
+              <template #title><SheetTitle>操作记录</SheetTitle></template>
+              <template #description><SheetDescription>最近 50 条清理记录</SheetDescription></template>
+              <template v-if="cleanLogs.length === 0">
+                <p class="text-[11px] text-muted-foreground">暂无清理记录</p>
+              </template>
+              <div v-else class="space-y-2">
+                <div v-for="(entry, ei) in cleanLogs" :key="ei" class="rounded border p-2 text-[11px]">
+                  <div class="flex items-center justify-between">
+                    <span class="text-muted-foreground">{{ formatTimestamp(entry.timestamp) }}</span>
+                    <div class="flex items-center gap-1">
+                      <Badge variant="secondary" class="text-[10px]">{{ entry.total_files }} 项</Badge>
+                      <Badge variant="secondary" class="text-[10px]">{{ formatBytes(entry.total_bytes) }}</Badge>
+                    </div>
+                  </div>
+                  <div class="mt-1 flex items-center gap-1.5">
+                    <Badge variant="secondary" class="text-[10px] text-success border-success/30">成功 {{ entry.success }}</Badge>
+                    <Badge v-if="entry.failed > 0" variant="destructive" class="text-[10px]">失败 {{ entry.failed }}</Badge>
+                  </div>
+                  <div v-if="entry.failed > 0 && entry.errors.length > 0" class="mt-1 space-y-0.5">
+                    <p v-for="(err, erri) in entry.errors.slice(0, 3)" :key="erri" class="truncate text-[10px] text-destructive/70">{{ err }}</p>
+                    <p v-if="entry.errors.length > 3" class="text-[10px] text-muted-foreground">等 {{ entry.errors.length - 3 }} 项</p>
+                  </div>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+          <Button variant="outline" size="sm" @click="handleStartScan" :title="'重新扫描'">
+            <RotateCcw class="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
       <!-- Category legend (vertical) -->
@@ -456,77 +496,15 @@ watch(() => state.value, (val, prev) => {
             {{ allSelected ? '取消全选' : '全选' }}
           </button>
         </div>
-        <div class="flex items-center gap-1">
-          <Sheet>
-            <SheetTrigger>
-              <Button variant="ghost" size="sm" :title="'操作记录'">
-                <History class="h-3.5 w-3.5" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="right">
-              <template #title>
-                <SheetTitle>操作记录</SheetTitle>
-              </template>
-              <template #description>
-                <SheetDescription>最近 50 条清理记录</SheetDescription>
-              </template>
-              <template v-if="cleanLogs.length === 0">
-                <p class="text-[11px] text-muted-foreground">暂无清理记录</p>
-              </template>
-              <div v-else class="space-y-2">
-                <div
-                  v-for="(entry, ei) in cleanLogs"
-                  :key="ei"
-                  class="rounded border p-2 text-[11px]"
-                >
-                  <div class="flex items-center justify-between">
-                    <span class="text-muted-foreground">{{ formatTimestamp(entry.timestamp) }}</span>
-                    <div class="flex items-center gap-1">
-                      <Badge variant="secondary" class="text-[10px]">
-                        {{ entry.total_files }} 项
-                      </Badge>
-                      <Badge variant="secondary" class="text-[10px]">
-                        {{ formatBytes(entry.total_bytes) }}
-                      </Badge>
-                    </div>
-                  </div>
-                  <div class="mt-1 flex items-center gap-1.5">
-                    <Badge variant="secondary" class="text-[10px] text-success border-success/30">
-                      成功 {{ entry.success }}
-                    </Badge>
-                    <Badge v-if="entry.failed > 0" variant="destructive" class="text-[10px]">
-                      失败 {{ entry.failed }}
-                    </Badge>
-                  </div>
-                  <div v-if="entry.failed > 0 && entry.errors.length > 0" class="mt-1 space-y-0.5">
-                    <p
-                      v-for="(err, erri) in entry.errors.slice(0, 3)"
-                      :key="erri"
-                      class="truncate text-[10px] text-destructive/70"
-                    >
-                      {{ err }}
-                    </p>
-                    <p v-if="entry.errors.length > 3" class="text-[10px] text-muted-foreground">
-                      等 {{ entry.errors.length - 3 }} 项
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
-          <Button variant="outline" size="sm" @click="handleStartScan" :title="'重新扫描'">
-            <RotateCcw class="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            :disabled="selectedCount === 0"
-            @click="handleClean"
-            :title="'清理选中'"
-          >
-            <Trash2 class="h-3.5 w-3.5" />
-          </Button>
-        </div>
+        <Button
+          variant="destructive"
+          size="sm"
+          :disabled="selectedCount === 0"
+          @click="handleClean"
+          :title="'清理选中'"
+        >
+          <Trash2 class="h-3.5 w-3.5" />
+        </Button>
       </div>
     </div>
 
