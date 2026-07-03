@@ -1,6 +1,6 @@
 mod common;
 
-use pony_core::cleaner::{self, SafetyLevel, Category, ScanTarget};
+use pony_core::cleaner::{self, Category, SafetyLevel, ScanTarget};
 
 /// 测试 resolve_targets 在有 mock 环境时不 panic，能正确展开路径
 #[test]
@@ -11,11 +11,21 @@ fn test_resolve_targets_basic() {
 
     let targets = vec![
         ScanTarget::new("t1", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""),
-        ScanTarget::new("t2", "%WINDIR%\\Temp", SafetyLevel::Confirm, Category::Temp, ""),
+        ScanTarget::new(
+            "t2",
+            "%WINDIR%\\Temp",
+            SafetyLevel::Confirm,
+            Category::Temp,
+            "",
+        ),
     ];
     let resolved = cleaner::resolve_targets(&targets);
     assert!(!resolved.is_empty(), "should resolve at least TEMP");
-    assert!(resolved.iter().any(|(p, _)| p.to_string_lossy().to_lowercase().contains("temp")));
+    assert!(
+        resolved
+            .iter()
+            .any(|(p, _)| p.to_string_lossy().to_lowercase().contains("temp"))
+    );
 }
 
 /// 测试 resolve_targets 排除 Forbidden 级别
@@ -23,18 +33,32 @@ fn test_resolve_targets_basic() {
 fn test_resolve_targets_excludes_forbidden() {
     let targets = vec![
         ScanTarget::new("t1", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""),
-        ScanTarget::new("t2", "%WINDIR%\\System32", SafetyLevel::Forbidden, Category::Temp, ""),
+        ScanTarget::new(
+            "t2",
+            "%WINDIR%\\System32",
+            SafetyLevel::Forbidden,
+            Category::Temp,
+            "",
+        ),
     ];
     let resolved = cleaner::resolve_targets(&targets);
     assert!(!resolved.is_empty());
-    assert!(!resolved.iter().any(|(p, _)| p.to_string_lossy().contains("System32")));
+    assert!(
+        !resolved
+            .iter()
+            .any(|(p, _)| p.to_string_lossy().contains("System32"))
+    );
 }
 
-/// 测试 get_clean_targets 返回 43 个目标
+/// 测试 get_clean_targets 返回 60 个目标
 #[test]
 fn test_get_clean_targets_count() {
     let targets = cleaner::get_clean_targets();
-    assert_eq!(targets.len(), 43, "should have 43 targets");
+    assert_eq!(
+        targets.len(),
+        60,
+        "should have 60 targets (43 original + 17 new)"
+    );
 }
 
 /// 测试 target id 唯一性
@@ -52,16 +76,20 @@ fn test_target_ids_unique() {
 #[test]
 fn test_load_config_default() {
     let config = cleaner::load_config();
-    // 默认配置应与 v2 格式一致
-    assert!(config.version.is_none() || config.version == Some(2));
+    // 默认配置应与 v3 格式一致
+    assert!(config.version.is_none() || config.version == Some(3));
 }
 
 /// 测试 delete_files 拒绝保护路径
 #[test]
 fn test_delete_rejects_protected() {
-    let result = cleaner::delete_files(&[
-        std::path::PathBuf::from(r"C:\Windows\System32\config\SAM"),
-    ]);
+    let result =
+        cleaner::delete_files(&[std::path::PathBuf::from(r"C:\Windows\System32\config\SAM")]);
     assert_eq!(result.success, 0);
-    assert!(result.errors.iter().any(|e| e.contains("Protected") || e.contains("SAM")));
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.contains("Protected") || e.contains("SAM"))
+    );
 }

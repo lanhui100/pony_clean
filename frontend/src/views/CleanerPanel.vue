@@ -81,6 +81,9 @@ const categoryColors: Record<string, string> = {
   prefetch: 'bg-green-400',
   recycle_bin: 'bg-amber-500',
   old_install: 'bg-red-400',
+  large_files: 'bg-red-500',
+  app_cache: 'bg-pink-400',
+  dev_cache: 'bg-indigo-400',
 }
 
 const categoryLabels: Record<string, string> = {
@@ -90,6 +93,9 @@ const categoryLabels: Record<string, string> = {
   prefetch: 'Prefetch',
   recycle_bin: '回收站',
   old_install: '旧系统安装',
+  large_files: '大文件',
+  app_cache: '应用缓存',
+  dev_cache: '开发工具缓存',
 }
 
 interface CategoryGroup {
@@ -282,7 +288,7 @@ watch(() => state.value, (val, prev) => {
         </div>
       </template>
       <p class="max-w-56 text-center text-[11px] text-muted-foreground">
-        扫描 C 盘临时文件、浏览器缓存、Prefetch 和回收站，安全释放磁盘空间
+        扫描临时文件、浏览器/应用缓存、大文件、开发工具缓存等，安全释放磁盘空间
       </p>
       <Button size="sm" @click="handleStartScan" :title="'开始扫描'">
         <Scan class="h-3.5 w-3.5" />

@@ -55,10 +55,13 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                             let total = accumulated.iter().map(|i| i.size_bytes).sum::<u64>()
                                 + batch.iter().map(|i| i.size_bytes).sum::<u64>();
                             accumulated.extend(batch.iter().cloned());
-                            let _ = app_handle.emit("scan-items", serde_json::json!({
-                                "items": batch,
-                                "total_bytes": total
-                            }));
+                            let _ = app_handle.emit(
+                                "scan-items",
+                                serde_json::json!({
+                                    "items": batch,
+                                    "total_bytes": total
+                                }),
+                            );
                         }
                         Ok(cleaner::ScanEvent::Done { skipped_small, .. }) => {
                             let total: u64 = accumulated.iter().map(|i| i.size_bytes).sum();
@@ -77,21 +80,33 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                         }
                         Ok(cleaner::ScanEvent::Warning(w)) => {
                             let payload = match &w {
-                                ScanWarning::MaxItemsReached { target_id, items } => serde_json::json!({
-                                    "type": "max_items_reached", "target_id": target_id, "items": items
-                                }),
-                                ScanWarning::PermissionDenied { target_id, path } => serde_json::json!({
-                                    "type": "permission_denied", "target_id": target_id, "path": path
-                                }),
-                                ScanWarning::GlobNoMatch { target_id, pattern } => serde_json::json!({
-                                    "type": "glob_no_match", "target_id": target_id, "pattern": pattern
-                                }),
-                                ScanWarning::ServiceStopFailed { target_id, service, reason } => serde_json::json!({
+                                ScanWarning::MaxItemsReached { target_id, items } => {
+                                    serde_json::json!({
+                                        "type": "max_items_reached", "target_id": target_id, "items": items
+                                    })
+                                }
+                                ScanWarning::PermissionDenied { target_id, path } => {
+                                    serde_json::json!({
+                                        "type": "permission_denied", "target_id": target_id, "path": path
+                                    })
+                                }
+                                ScanWarning::GlobNoMatch { target_id, pattern } => {
+                                    serde_json::json!({
+                                        "type": "glob_no_match", "target_id": target_id, "pattern": pattern
+                                    })
+                                }
+                                ScanWarning::ServiceStopFailed {
+                                    target_id,
+                                    service,
+                                    reason,
+                                } => serde_json::json!({
                                     "type": "service_stop_failed", "target_id": target_id, "service": service, "reason": reason
                                 }),
-                                ScanWarning::EnvInjectionDetected { target_id, path } => serde_json::json!({
-                                    "type": "env_injection_detected", "target_id": target_id, "path": path
-                                }),
+                                ScanWarning::EnvInjectionDetected { target_id, path } => {
+                                    serde_json::json!({
+                                        "type": "env_injection_detected", "target_id": target_id, "path": path
+                                    })
+                                }
                             };
                             tracing::warn!("Scan warning: {w:?}");
                             let _ = app_handle.emit("scan-warning", payload);
@@ -128,9 +143,12 @@ pub async fn execute_clean(app: AppHandle, paths: Vec<String>) -> Result<DeleteR
 
     let progress_handle = tokio::task::spawn_blocking(move || {
         for p in progress_rx {
-            let _ = app_handle.emit("delete-progress", serde_json::json!({
-                "done": p.done, "total": p.total, "current": p.current
-            }));
+            let _ = app_handle.emit(
+                "delete-progress",
+                serde_json::json!({
+                    "done": p.done, "total": p.total, "current": p.current
+                }),
+            );
         }
     });
 
@@ -142,7 +160,9 @@ pub async fn execute_clean(app: AppHandle, paths: Vec<String>) -> Result<DeleteR
         if let Ok(meta) = p.metadata() {
             total_bytes += meta.len();
         }
-        let entry = by_cat.entry("other".to_string()).or_insert_with(|| cleaner::CategorySummary { files: 0, bytes: 0 });
+        let entry = by_cat
+            .entry("other".to_string())
+            .or_insert_with(|| cleaner::CategorySummary { files: 0, bytes: 0 });
         entry.files += 1;
         if let Ok(meta) = p.metadata() {
             entry.bytes += meta.len();
@@ -152,8 +172,8 @@ pub async fn execute_clean(app: AppHandle, paths: Vec<String>) -> Result<DeleteR
     let result = tokio::task::spawn_blocking(move || {
         cleaner::delete_files_with_progress(&pathbufs, Some(progress_tx))
     })
-        .await
-        .map_err(|e| e.to_string())?;
+    .await
+    .map_err(|e| e.to_string())?;
 
     let _ = progress_handle.await;
 
@@ -161,10 +181,13 @@ pub async fn execute_clean(app: AppHandle, paths: Vec<String>) -> Result<DeleteR
     fn sanitize_error(e: &str) -> String {
         // 常见错误格式: "Protected path: C:\Users\..."、"Cannot resolve path C:\foo: os error 2"
         let lower = e.to_lowercase();
-        if lower.contains("protected") { "protected path".to_string() }
-        else if lower.contains("not in scan scope") { "path not in scan scope".to_string() }
-        else if lower.contains("cannot resolve") { "cannot resolve path".to_string() }
-        else if let Some(fname) = std::path::Path::new(e).file_name() {
+        if lower.contains("protected") {
+            "protected path".to_string()
+        } else if lower.contains("not in scan scope") {
+            "path not in scan scope".to_string()
+        } else if lower.contains("cannot resolve") {
+            "cannot resolve path".to_string()
+        } else if let Some(fname) = std::path::Path::new(e).file_name() {
             // 纯路径格式 → 只保留文件名
             fname.to_string_lossy().to_string()
         } else {

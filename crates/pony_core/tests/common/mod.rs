@@ -1,13 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-
-static TRACING_INIT: OnceLock<()> = OnceLock::new();
-
-pub fn init_logging() {
-    TRACING_INIT.get_or_init(|| {
-        tracing_subscriber::fmt().with_test_writer().init();
-    });
-}
 
 /// 测试环境模拟：创建 Windows 目录结构用于集成测试
 pub struct TestEnv {
@@ -49,11 +40,15 @@ impl TestEnv {
         create_dirs(&user.join("AppData\\Local\\Microsoft\\Media Player"));
         create_dirs(&user.join("AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache"));
         create_dirs(&user.join("AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cache"));
-        create_dirs(&user.join("AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\abcd.default-release\\cache2\\entries"));
+        create_dirs(&user.join(
+            "AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\abcd.default-release\\cache2\\entries",
+        ));
         create_dirs(&user.join("Downloads"));
         // UWP 包
         for i in 0..3 {
-            create_dirs(&r.join(format!("Users\\TestUser\\AppData\\Local\\Packages\\Pkg{i}\\AC\\Temp")));
+            create_dirs(&r.join(format!(
+                "Users\\TestUser\\AppData\\Local\\Packages\\Pkg{i}\\AC\\Temp"
+            )));
         }
         // 系统级
         create_dirs(&r.join("ProgramData\\Microsoft\\Windows\\WER"));
@@ -65,9 +60,22 @@ impl TestEnv {
         // set_var is unsafe in Rust 2024; we accept the risk in test code
         unsafe {
             std::env::set_var("SystemRoot", r.join("Windows").to_str().unwrap());
-            std::env::set_var("TEMP", r.join("Users\\TestUser\\AppData\\Local\\Temp").to_str().unwrap());
-            std::env::set_var("LOCALAPPDATA", r.join("Users\\TestUser\\AppData\\Local").to_str().unwrap());
-            std::env::set_var("APPDATA", r.join("Users\\TestUser\\AppData\\Roaming").to_str().unwrap());
+            std::env::set_var(
+                "TEMP",
+                r.join("Users\\TestUser\\AppData\\Local\\Temp")
+                    .to_str()
+                    .unwrap(),
+            );
+            std::env::set_var(
+                "LOCALAPPDATA",
+                r.join("Users\\TestUser\\AppData\\Local").to_str().unwrap(),
+            );
+            std::env::set_var(
+                "APPDATA",
+                r.join("Users\\TestUser\\AppData\\Roaming")
+                    .to_str()
+                    .unwrap(),
+            );
             std::env::set_var("USERPROFILE", r.join("Users\\TestUser").to_str().unwrap());
             std::env::set_var("ALLUSERSPROFILE", r.join("ProgramData").to_str().unwrap());
             std::env::set_var("PUBLIC", r.join("Users\\Public").to_str().unwrap());
@@ -75,4 +83,6 @@ impl TestEnv {
     }
 }
 
-fn create_dirs(p: &Path) { std::fs::create_dir_all(p).unwrap(); }
+fn create_dirs(p: &Path) {
+    std::fs::create_dir_all(p).unwrap();
+}

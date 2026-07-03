@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
@@ -30,7 +30,7 @@ pub enum SafetyLevel {
 }
 
 /// 清理目标分类，序列化为小写 JSON
-/// 前端类型: type Category = 'temp' | 'cache' | 'logs' | 'prefetch' | 'recycle_bin' | 'old_install'
+/// 前端类型: type Category = 'temp' | 'cache' | 'logs' | 'prefetch' | 'recycle_bin' | 'old_install' | 'large_files' | 'app_cache' | 'dev_cache'
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
@@ -40,6 +40,12 @@ pub enum Category {
     Prefetch,
     RecycleBin,
     OldInstall,
+    /// 大文件（≥50MB 的可清理文件）
+    LargeFiles,
+    /// 应用缓存（Discord/Steam/微信/QQ/Electron 等）
+    AppCache,
+    /// 开发工具缓存（npm/pip/cargo/gradle 等）
+    DevCache,
 }
 
 impl Category {
@@ -47,6 +53,7 @@ impl Category {
         match self {
             Category::Cache => 512,
             Category::Logs => 4096,
+            Category::LargeFiles => 52_428_800, // 50MB
             _ => 1024,
         }
     }
@@ -61,6 +68,9 @@ impl fmt::Display for Category {
             Category::Prefetch => "prefetch",
             Category::RecycleBin => "recycle_bin",
             Category::OldInstall => "old_install",
+            Category::LargeFiles => "large_files",
+            Category::AppCache => "app_cache",
+            Category::DevCache => "dev_cache",
         };
         write!(f, "{s}")
     }
@@ -85,11 +95,27 @@ pub struct CleanItem {
 /// 类型化的扫描警告
 #[derive(Clone, Debug)]
 pub enum ScanWarning {
-    MaxItemsReached { target_id: String, items: u64 },
-    PermissionDenied { target_id: String, path: String },
-    GlobNoMatch { target_id: String, pattern: String },
-    ServiceStopFailed { target_id: String, service: String, reason: String },
-    EnvInjectionDetected { target_id: String, path: String },
+    MaxItemsReached {
+        target_id: String,
+        items: u64,
+    },
+    PermissionDenied {
+        target_id: String,
+        path: String,
+    },
+    GlobNoMatch {
+        target_id: String,
+        pattern: String,
+    },
+    ServiceStopFailed {
+        target_id: String,
+        service: String,
+        reason: String,
+    },
+    EnvInjectionDetected {
+        target_id: String,
+        path: String,
+    },
 }
 
 /// 扫描进度事件
@@ -153,7 +179,13 @@ pub struct ScanTarget {
 }
 
 impl ScanTarget {
-    pub fn new(id: &'static str, path: &str, level: SafetyLevel, cat: Category, desc: &'static str) -> Self {
+    pub fn new(
+        id: &'static str,
+        path: &str,
+        level: SafetyLevel,
+        cat: Category,
+        desc: &'static str,
+    ) -> Self {
         Self {
             id,
             path: path.into(),
@@ -169,22 +201,50 @@ impl ScanTarget {
             browser_profiles: None,
         }
     }
-    pub fn with_min_size(mut self, v: u64) -> Self { self.min_size = v; self }
-    pub fn with_glob(mut self, inc: &'static [&'static str]) -> Self { self.glob_include = Some(inc); self }
-    pub fn with_glob_exclude(mut self, exc: &'static [&'static str]) -> Self { self.glob_exclude = Some(exc); self }
-    pub fn with_max_depth(mut self, v: usize) -> Self { self.max_depth = v; self }
-    pub fn with_service_stop(mut self, s: &'static str) -> Self { self.requires_service_stop = Some(s); self }
-    pub fn with_browser(mut self, b: BrowserProfileConfig) -> Self { self.browser_profiles = Some(b); self }
+    pub fn with_min_size(mut self, v: u64) -> Self {
+        self.min_size = v;
+        self
+    }
+    /// 快捷设置最小文件大小（MB 单位）
+    pub fn with_min_size_mb(mut self, mb: u64) -> Self {
+        self.min_size = mb * 1_048_576;
+        self
+    }
+    pub fn with_glob(mut self, inc: &'static [&'static str]) -> Self {
+        self.glob_include = Some(inc);
+        self
+    }
+    pub fn with_glob_exclude(mut self, exc: &'static [&'static str]) -> Self {
+        self.glob_exclude = Some(exc);
+        self
+    }
+    pub fn with_max_depth(mut self, v: usize) -> Self {
+        self.max_depth = v;
+        self
+    }
+    pub fn with_service_stop(mut self, s: &'static str) -> Self {
+        self.requires_service_stop = Some(s);
+        self
+    }
+    pub fn with_browser(mut self, b: BrowserProfileConfig) -> Self {
+        self.browser_profiles = Some(b);
+        self
+    }
 }
 
 /// 用户配置
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PonyConfig {
-    #[serde(default)] pub version: Option<u32>,
-    #[serde(default)] pub disabled_target_ids: Vec<String>,
-    #[serde(default)] pub disabled_targets: Vec<String>,
-    #[serde(default)] pub custom_exclude_paths: Vec<String>,
-    #[serde(default)] pub per_target_config: HashMap<String, TargetConfig>,
+    #[serde(default)]
+    pub version: Option<u32>,
+    #[serde(default)]
+    pub disabled_target_ids: Vec<String>,
+    #[serde(default)]
+    pub disabled_targets: Vec<String>,
+    #[serde(default)]
+    pub custom_exclude_paths: Vec<String>,
+    #[serde(default)]
+    pub per_target_config: HashMap<String, TargetConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -200,7 +260,8 @@ pub fn save_config(config: &PonyConfig) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
     }
-    let json = serde_json::to_string_pretty(config).map_err(|e| format!("Serialize config: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(config).map_err(|e| format!("Serialize config: {e}"))?;
     fs::write(path, json).map_err(|e| format!("Write config: {e}"))
 }
 
@@ -210,14 +271,18 @@ pub fn get_filtered_targets(config: &PonyConfig) -> Vec<ScanTarget> {
     all.into_iter()
         .filter(|t| !config.disabled_target_ids.contains(&t.id.to_string()))
         .filter(|t| {
-            config.per_target_config.get(t.id)
+            config
+                .per_target_config
+                .get(t.id)
                 .and_then(|c| c.enabled)
                 .unwrap_or(true)
         })
         .collect()
 }
 
-pub fn config_dir() -> PathBuf { data_dir() }
+pub fn config_dir() -> PathBuf {
+    data_dir()
+}
 fn data_dir() -> PathBuf {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| r"C:\Users\Default".into());
@@ -226,13 +291,18 @@ fn data_dir() -> PathBuf {
     PathBuf::from(local).join("PonyClean")
 }
 
-fn config_path() -> PathBuf { data_dir().join("config.json") }
+fn config_path() -> PathBuf {
+    data_dir().join("config.json")
+}
 
 /// 获取系统盘符
 fn system_drive() -> String {
-    std::env::var("SYSTEMDRIVE").ok()
+    std::env::var("SYSTEMDRIVE")
+        .ok()
         .or_else(|| {
-            std::env::var("SystemRoot").ok().map(|r| r.get(..2).unwrap_or("C:").to_string())
+            std::env::var("SystemRoot")
+                .ok()
+                .map(|r| r.get(..2).unwrap_or("C:").to_string())
         })
         .unwrap_or_else(|| "C:".to_string())
 }
@@ -242,11 +312,19 @@ fn expand_env(raw: &str) -> String {
     // 缓存环境变量值，避免同一变量多次查询
     let mut cache: HashMap<String, String> = HashMap::new();
     let get_env = |name: &str, c: &mut HashMap<String, String>| -> Option<String> {
-        if let Some(v) = c.get(name) { return Some(v.clone()); }
-        let val = std::env::var(name).ok()
+        if let Some(v) = c.get(name) {
+            return Some(v.clone());
+        }
+        let val = std::env::var(name)
+            .ok()
             .or_else(|| std::env::var(name.to_uppercase()).ok())
             .or_else(|| std::env::var(name.to_lowercase()).ok());
-        if let Some(v) = val { c.insert(name.to_string(), v.clone()); Some(v) } else { None }
+        if let Some(v) = val {
+            c.insert(name.to_string(), v.clone());
+            Some(v)
+        } else {
+            None
+        }
     };
 
     let mut s = String::new();
@@ -258,7 +336,11 @@ fn expand_env(raw: &str) -> String {
             let var_name = &after_pct[..end];
             match get_env(var_name, &mut cache) {
                 Some(v) => s.push_str(&v),
-                None => { s.push('%'); s.push_str(var_name); s.push('%'); }
+                None => {
+                    s.push('%');
+                    s.push_str(var_name);
+                    s.push('%');
+                }
             }
             rest = &after_pct[end + 1..];
         } else {
@@ -267,65 +349,479 @@ fn expand_env(raw: &str) -> String {
         }
     }
     s.push_str(rest);
-    if s.contains("%SYSTEMDRIVE%") { s = s.replace("%SYSTEMDRIVE%", &system_drive()); }
-    if s.starts_with('\\') { format!("{}{}", system_drive(), s) } else { s }
+    if s.contains("%SYSTEMDRIVE%") {
+        s = s.replace("%SYSTEMDRIVE%", &system_drive());
+    }
+    if s.starts_with('\\') {
+        format!("{}{}", system_drive(), s)
+    } else {
+        s
+    }
 }
 
-pub fn default_targets() -> Vec<ScanTarget> { get_clean_targets() }
+pub fn default_targets() -> Vec<ScanTarget> {
+    get_clean_targets()
+}
 
-/// 安全扫描路径列表（15 已有 + 28 新增 = 43 target）
+/// 安全扫描路径列表（43 原有 + 17 新增 = 60 target）
 pub fn get_clean_targets() -> Vec<ScanTarget> {
     let d = system_drive();
     vec![
         // === 已有 15 目标 ===
-        ScanTarget::new("user_temp", "%TEMP%", SafetyLevel::Safe, Category::Temp, "用户临时文件"),
-        ScanTarget::new("local_temp", "%LOCALAPPDATA%\\Temp", SafetyLevel::Safe, Category::Temp, "当前用户临时文件"),
-        ScanTarget::new("sys_temp", "%WINDIR%\\Temp", SafetyLevel::Confirm, Category::Temp, "系统临时文件"),
-        ScanTarget::new("prefetch", &format!("{d}\\Windows\\Prefetch"), SafetyLevel::Confirm, Category::Prefetch, "应用启动缓存"),
-        ScanTarget::new("chrome_code_cache", "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache", SafetyLevel::Safe, Category::Cache, "Chrome JS Code Cache"),
-        ScanTarget::new("chrome_cache", "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache", SafetyLevel::Safe, Category::Cache, "Chrome 磁盘缓存"),
-        ScanTarget::new("chrome_cache_storage", "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\CacheStorage", SafetyLevel::Safe, Category::Cache, "Chrome CacheStorage"),
-        ScanTarget::new("edge_code_cache", "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache", SafetyLevel::Safe, Category::Cache, "Edge JS Code Cache"),
-        ScanTarget::new("edge_cache", "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache", SafetyLevel::Safe, Category::Cache, "Edge 磁盘缓存"),
-        ScanTarget::new("edge_cache_storage", "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\CacheStorage", SafetyLevel::Safe, Category::Cache, "Edge CacheStorage"),
-        ScanTarget::new("firefox_cache", "%APPDATA%\\Mozilla\\Firefox\\Profiles", SafetyLevel::Safe, Category::Cache, "Firefox 缓存")
-            .with_browser(BrowserProfileConfig {
-                profile_patterns: &["default", ".default-release", ".default-esr", ".default-nightly", ".dev-edition-default"],
-                cache_subdirs: &["cache2/entries", "startupCache", "thumbnails", "offlineCache"],
-            }),
-        ScanTarget::new("wu_download", "%WINDIR%\\SoftwareDistribution\\Download", SafetyLevel::Confirm, Category::Cache, "Windows Update 下载缓存"),
-        ScanTarget::new("driver_store", &format!("{d}\\Windows\\System32\\DriverStore\\FileRepository"), SafetyLevel::Confirm, Category::Cache, "旧驱动备份"),
-        ScanTarget::new("inet_cache", "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache", SafetyLevel::Safe, Category::Cache, "Internet 临时文件"),
-        ScanTarget::new("recycle_bin", &format!("{d}\\$Recycle.Bin"), SafetyLevel::Safe, Category::RecycleBin, "回收站"),
+        ScanTarget::new(
+            "user_temp",
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "用户临时文件",
+        ),
+        ScanTarget::new(
+            "local_temp",
+            "%LOCALAPPDATA%\\Temp",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "当前用户临时文件",
+        ),
+        ScanTarget::new(
+            "sys_temp",
+            "%WINDIR%\\Temp",
+            SafetyLevel::Confirm,
+            Category::Temp,
+            "系统临时文件",
+        ),
+        ScanTarget::new(
+            "prefetch",
+            &format!("{d}\\Windows\\Prefetch"),
+            SafetyLevel::Confirm,
+            Category::Prefetch,
+            "应用启动缓存",
+        ),
+        ScanTarget::new(
+            "chrome_code_cache",
+            "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Chrome JS Code Cache",
+        ),
+        ScanTarget::new(
+            "chrome_cache",
+            "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Chrome 磁盘缓存",
+        ),
+        ScanTarget::new(
+            "chrome_cache_storage",
+            "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\CacheStorage",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Chrome CacheStorage",
+        ),
+        ScanTarget::new(
+            "edge_code_cache",
+            "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Edge JS Code Cache",
+        ),
+        ScanTarget::new(
+            "edge_cache",
+            "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Edge 磁盘缓存",
+        ),
+        ScanTarget::new(
+            "edge_cache_storage",
+            "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\CacheStorage",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Edge CacheStorage",
+        ),
+        ScanTarget::new(
+            "firefox_cache",
+            "%APPDATA%\\Mozilla\\Firefox\\Profiles",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Firefox 缓存",
+        )
+        .with_browser(BrowserProfileConfig {
+            profile_patterns: &[
+                "default",
+                ".default-release",
+                ".default-esr",
+                ".default-nightly",
+                ".dev-edition-default",
+            ],
+            cache_subdirs: &[
+                "cache2/entries",
+                "startupCache",
+                "thumbnails",
+                "offlineCache",
+            ],
+        }),
+        ScanTarget::new(
+            "wu_download",
+            "%WINDIR%\\SoftwareDistribution\\Download",
+            SafetyLevel::Confirm,
+            Category::Cache,
+            "Windows Update 下载缓存",
+        ),
+        ScanTarget::new(
+            "driver_store",
+            &format!("{d}\\Windows\\System32\\DriverStore\\FileRepository"),
+            SafetyLevel::Confirm,
+            Category::Cache,
+            "旧驱动备份",
+        ),
+        ScanTarget::new(
+            "inet_cache",
+            "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Internet 临时文件",
+        ),
+        ScanTarget::new(
+            "recycle_bin",
+            &format!("{d}\\$Recycle.Bin"),
+            SafetyLevel::Safe,
+            Category::RecycleBin,
+            "回收站",
+        ),
         // === 新增 28 目标 ===
-        ScanTarget::new("sys_logfiles", "%WINDIR%\\System32\\LogFiles", SafetyLevel::Confirm, Category::Logs, "系统日志文件"),
-        ScanTarget::new("sys_logs", "%WINDIR%\\Logs", SafetyLevel::Confirm, Category::Logs, "Windows 组件日志"),
-        ScanTarget::new("wer_user", "%LOCALAPPDATA%\\Microsoft\\Windows\\WER", SafetyLevel::Safe, Category::Logs, "用户错误报告"),
-        ScanTarget::new("wer_system", "%ALLUSERSPROFILE%\\Microsoft\\Windows\\WER", SafetyLevel::Safe, Category::Logs, "系统错误报告"),
-        ScanTarget::new("wer_temp_user", "%LOCALAPPDATA%\\Temp", SafetyLevel::Safe, Category::Logs, "Temp 中 WER").with_glob(&["*WER*"]),
-        ScanTarget::new("wer_temp_sys", "%WINDIR%\\Temp", SafetyLevel::Safe, Category::Logs, "系统 Temp 中 WER").with_glob(&["*WER*"]),
-        ScanTarget::new("sru", "%WINDIR%\\System32\\sru", SafetyLevel::Confirm, Category::Logs, "系统资源使用统计（仅 SRUDB.dat）").with_glob(&["SRUDB.dat"]),
-        ScanTarget::new("inet_cache_ie", "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\IE", SafetyLevel::Safe, Category::Cache, "IE/Edge 传统 Internet 缓存"),
-        ScanTarget::new("oobe_info", "%WINDIR%\\System32\\oobe\\info", SafetyLevel::Safe, Category::Temp, "OOBE 安装信息残留"),
-        ScanTarget::new("ntms_data", "%WINDIR%\\System32\\NtmsData", SafetyLevel::Safe, Category::Temp, "可移动存储管理数据"),
-        ScanTarget::new("downloaded_progs", "%WINDIR%\\Downloaded Program Files", SafetyLevel::Confirm, Category::Temp, "已下载程序文件"),
-        ScanTarget::new("flash_cache", "%WINDIR%\\System32\\Macromed\\Flash", SafetyLevel::Safe, Category::Cache, "Flash 共享对象"),
-        ScanTarget::new("wu_datastore", "%WINDIR%\\SoftwareDistribution\\DataStore", SafetyLevel::Forbidden, Category::Cache, "WU 数据库（需管理员）"),
-        ScanTarget::new("spool_servers", "%WINDIR%\\System32\\spool\\SERVERS", SafetyLevel::Safe, Category::Temp, "打印服务器临时文件"),
-        ScanTarget::new("msdtc_trace", "%WINDIR%\\System32\\MsDtc\\Trace", SafetyLevel::Safe, Category::Logs, "分布式事务协调器日志"),
-        ScanTarget::new("uwp_temp", "%LOCALAPPDATA%\\Packages", SafetyLevel::Safe, Category::Temp, "UWP 临时文件"),
-        ScanTarget::new("uwp_inet_cache", "%LOCALAPPDATA%\\Packages", SafetyLevel::Safe, Category::Cache, "UWP Internet 缓存"),
-        ScanTarget::new("uwp_local_cache", "%LOCALAPPDATA%\\Packages", SafetyLevel::Safe, Category::Cache, "UWP 本地缓存"),
-        ScanTarget::new("app_cache", "%LOCALAPPDATA%\\Microsoft\\Windows\\AppCache", SafetyLevel::Safe, Category::Cache, "Windows App 缓存"),
-        ScanTarget::new("ts_client_cache", "%LOCALAPPDATA%\\Microsoft\\TerminalServer Client\\Cache", SafetyLevel::Safe, Category::Cache, "远程桌面图标缓存"),
-        ScanTarget::new("downloads_old", "%USERPROFILE%\\Downloads", SafetyLevel::Confirm, Category::Temp, "下载文件夹过时文件").with_min_size(102_400),
-        ScanTarget::new("crashdumps", "%USERPROFILE%\\AppData\\Local\\CrashDumps", SafetyLevel::Safe, Category::Logs, "应用崩溃转储"),
-        ScanTarget::new("etl_logs", "%LOCALAPPDATA%\\Temp", SafetyLevel::Safe, Category::Logs, "事件跟踪日志").with_glob(&["*.etl"]),
-        ScanTarget::new("app_logs", "%LOCALAPPDATA%\\Temp", SafetyLevel::Safe, Category::Logs, "应用日志").with_glob(&["*.log"]),
-        ScanTarget::new("wmp_cache", "%LOCALAPPDATA%\\Microsoft\\Media Player", SafetyLevel::Safe, Category::Cache, "WMP 媒体库缓存"),
-        ScanTarget::new("explorer_cache", "%LOCALAPPDATA%\\Microsoft\\Windows\\Caches", SafetyLevel::Safe, Category::Cache, "资源管理器缓存"),
-        ScanTarget::new("sys_reset", &format!("{d}\\$SysReset"), SafetyLevel::Confirm, Category::Temp, "系统重置备份"),
-        ScanTarget::new("win_upgrade_tmp", &format!("{d}\\$Windows.~BT"), SafetyLevel::Confirm, Category::Temp, "Windows 升级临时文件"),
+        ScanTarget::new(
+            "sys_logfiles",
+            "%WINDIR%\\System32\\LogFiles",
+            SafetyLevel::Confirm,
+            Category::Logs,
+            "系统日志文件",
+        ),
+        ScanTarget::new(
+            "sys_logs",
+            "%WINDIR%\\Logs",
+            SafetyLevel::Confirm,
+            Category::Logs,
+            "Windows 组件日志",
+        ),
+        ScanTarget::new(
+            "wer_user",
+            "%LOCALAPPDATA%\\Microsoft\\Windows\\WER",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "用户错误报告",
+        ),
+        ScanTarget::new(
+            "wer_system",
+            "%ALLUSERSPROFILE%\\Microsoft\\Windows\\WER",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "系统错误报告",
+        ),
+        ScanTarget::new(
+            "wer_temp_user",
+            "%LOCALAPPDATA%\\Temp",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "Temp 中 WER",
+        )
+        .with_glob(&["*WER*"]),
+        ScanTarget::new(
+            "wer_temp_sys",
+            "%WINDIR%\\Temp",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "系统 Temp 中 WER",
+        )
+        .with_glob(&["*WER*"]),
+        ScanTarget::new(
+            "sru",
+            "%WINDIR%\\System32\\sru",
+            SafetyLevel::Confirm,
+            Category::Logs,
+            "系统资源使用统计（仅 SRUDB.dat）",
+        )
+        .with_glob(&["SRUDB.dat"]),
+        ScanTarget::new(
+            "inet_cache_ie",
+            "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\IE",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "IE/Edge 传统 Internet 缓存",
+        ),
+        ScanTarget::new(
+            "oobe_info",
+            "%WINDIR%\\System32\\oobe\\info",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "OOBE 安装信息残留",
+        ),
+        ScanTarget::new(
+            "ntms_data",
+            "%WINDIR%\\System32\\NtmsData",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "可移动存储管理数据",
+        ),
+        ScanTarget::new(
+            "downloaded_progs",
+            "%WINDIR%\\Downloaded Program Files",
+            SafetyLevel::Confirm,
+            Category::Temp,
+            "已下载程序文件",
+        ),
+        ScanTarget::new(
+            "flash_cache",
+            "%WINDIR%\\System32\\Macromed\\Flash",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Flash 共享对象",
+        ),
+        ScanTarget::new(
+            "wu_datastore",
+            "%WINDIR%\\SoftwareDistribution\\DataStore",
+            SafetyLevel::Forbidden,
+            Category::Cache,
+            "WU 数据库（需管理员）",
+        ),
+        ScanTarget::new(
+            "spool_servers",
+            "%WINDIR%\\System32\\spool\\SERVERS",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "打印服务器临时文件",
+        ),
+        ScanTarget::new(
+            "msdtc_trace",
+            "%WINDIR%\\System32\\MsDtc\\Trace",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "分布式事务协调器日志",
+        ),
+        ScanTarget::new(
+            "uwp_temp",
+            "%LOCALAPPDATA%\\Packages",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "UWP 临时文件",
+        ),
+        ScanTarget::new(
+            "uwp_inet_cache",
+            "%LOCALAPPDATA%\\Packages",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "UWP Internet 缓存",
+        ),
+        ScanTarget::new(
+            "uwp_local_cache",
+            "%LOCALAPPDATA%\\Packages",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "UWP 本地缓存",
+        ),
+        ScanTarget::new(
+            "windows_app_cache",
+            "%LOCALAPPDATA%\\Microsoft\\Windows\\AppCache",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "Windows App 缓存",
+        ),
+        ScanTarget::new(
+            "ts_client_cache",
+            "%LOCALAPPDATA%\\Microsoft\\TerminalServer Client\\Cache",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "远程桌面图标缓存",
+        ),
+        ScanTarget::new(
+            "downloads_old",
+            "%USERPROFILE%\\Downloads",
+            SafetyLevel::Confirm,
+            Category::Temp,
+            "下载文件夹过时文件",
+        )
+        .with_min_size(102_400),
+        ScanTarget::new(
+            "crashdumps",
+            "%USERPROFILE%\\AppData\\Local\\CrashDumps",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "应用崩溃转储",
+        ),
+        ScanTarget::new(
+            "etl_logs",
+            "%LOCALAPPDATA%\\Temp",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "事件跟踪日志",
+        )
+        .with_glob(&["*.etl"]),
+        ScanTarget::new(
+            "app_logs",
+            "%LOCALAPPDATA%\\Temp",
+            SafetyLevel::Safe,
+            Category::Logs,
+            "应用日志",
+        )
+        .with_glob(&["*.log"]),
+        ScanTarget::new(
+            "wmp_cache",
+            "%LOCALAPPDATA%\\Microsoft\\Media Player",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "WMP 媒体库缓存",
+        ),
+        ScanTarget::new(
+            "explorer_cache",
+            "%LOCALAPPDATA%\\Microsoft\\Windows\\Caches",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "资源管理器缓存",
+        ),
+        ScanTarget::new(
+            "sys_reset",
+            &format!("{d}\\$SysReset"),
+            SafetyLevel::Confirm,
+            Category::Temp,
+            "系统重置备份",
+        ),
+        ScanTarget::new(
+            "win_upgrade_tmp",
+            &format!("{d}\\$Windows.~BT"),
+            SafetyLevel::Confirm,
+            Category::Temp,
+            "Windows 升级临时文件",
+        ),
+        // === 大文件分类（≥50MB，仅用户目录） ===
+        ScanTarget::new(
+            "large_temp",
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::LargeFiles,
+            "临时文件夹中大文件（≥50MB）",
+        )
+        .with_min_size_mb(50),
+        ScanTarget::new(
+            "large_local_temp",
+            "%LOCALAPPDATA%\\Temp",
+            SafetyLevel::Safe,
+            Category::LargeFiles,
+            "用户 Local Temp 中大文件（≥50MB）",
+        )
+        .with_min_size_mb(50),
+        ScanTarget::new(
+            "large_downloads",
+            "%USERPROFILE%\\Downloads",
+            SafetyLevel::Confirm,
+            Category::LargeFiles,
+            "下载文件夹中大文件（≥100MB，>90天未使用）",
+        )
+        .with_min_size_mb(100)
+        .with_glob(&[
+            "*.msi", "*.exe", "*.zip", "*.rar", "*.7z", "*.iso", "*.img", "*.tar.gz", "*.pkg",
+        ]),
+        ScanTarget::new(
+            "large_installers",
+            "%USERPROFILE%\\Downloads",
+            SafetyLevel::Confirm,
+            Category::LargeFiles,
+            "下载的安装包（≥50MB MSI/EXE/MSP，>90天）",
+        )
+        .with_min_size_mb(50)
+        .with_glob(&["*.msi", "*.exe", "*.msp", "*.cab"]),
+        ScanTarget::new(
+            "large_recycle_bin",
+            &format!("{d}\\$Recycle.Bin"),
+            SafetyLevel::Confirm,
+            Category::LargeFiles,
+            "回收站中大文件（通过回收站清空操作统一删除）",
+        )
+        .with_min_size_mb(50),
+        // === 应用缓存分类 ===
+        ScanTarget::new(
+            "discord_cache",
+            "%APPDATA%\\discord\\Cache",
+            SafetyLevel::Safe,
+            Category::AppCache,
+            "Discord 缓存文件",
+        ),
+        ScanTarget::new(
+            "discord_code_cache",
+            "%APPDATA%\\discord\\Code Cache",
+            SafetyLevel::Safe,
+            Category::AppCache,
+            "Discord JS Code Cache",
+        ),
+        ScanTarget::new(
+            "steam_cache",
+            "%LOCALAPPDATA%\\Steam\\htmlcache",
+            SafetyLevel::Safe,
+            Category::AppCache,
+            "Steam 内置浏览器缓存",
+        ),
+        ScanTarget::new(
+            "wechat_cache",
+            "%LOCALAPPDATA%\\WeChat\\XPlugin\\Plugins",
+            SafetyLevel::Confirm,
+            Category::AppCache,
+            "微信插件缓存（清理后自动重建）",
+        ),
+        ScanTarget::new(
+            "wechat_files",
+            "%LOCALAPPDATA%\\WeChat\\WeChatApp\\Cache",
+            SafetyLevel::Safe,
+            Category::AppCache,
+            "微信应用缓存",
+        ),
+        ScanTarget::new(
+            "qq_cache",
+            "%LOCALAPPDATA%\\Tencent\\QQ\\Temp",
+            SafetyLevel::Safe,
+            Category::AppCache,
+            "QQ 临时缓存",
+        ),
+        ScanTarget::new(
+            "electron_cache",
+            "%APPDATA%\\electron\\Cache",
+            SafetyLevel::Safe,
+            Category::AppCache,
+            "Electron 框架缓存（Electron 基础框架缓存）",
+        ),
+        // === 开发工具缓存分类 ===
+        ScanTarget::new(
+            "npm_cache",
+            "%APPDATA%\\npm-cache",
+            SafetyLevel::Safe,
+            Category::DevCache,
+            "npm 包缓存",
+        ),
+        ScanTarget::new(
+            "pip_cache",
+            "%LOCALAPPDATA%\\pip\\cache",
+            SafetyLevel::Safe,
+            Category::DevCache,
+            "pip 包缓存",
+        ),
+        ScanTarget::new(
+            "cargo_cache",
+            "%USERPROFILE%\\.cargo\\registry",
+            SafetyLevel::Safe,
+            Category::DevCache,
+            "Cargo 注册表缓存（清理后需重新下载 crate）",
+        ),
+        ScanTarget::new(
+            "cargo_git",
+            "%USERPROFILE%\\.cargo\\git",
+            SafetyLevel::Safe,
+            Category::DevCache,
+            "Cargo git 依赖缓存",
+        ),
+        ScanTarget::new(
+            "gradle_cache",
+            "%USERPROFILE%\\.gradle\\caches",
+            SafetyLevel::Confirm,
+            Category::DevCache,
+            "Gradle 构建缓存（清理后构建速度下降）",
+        ),
     ]
 }
 
@@ -387,11 +883,15 @@ pub fn is_path_protected(path: &Path) -> bool {
         Some(s) => s,
         None => return true,
     };
-    if cleaned.is_empty() { return true; }
+    if cleaned.is_empty() {
+        return true;
+    }
     let on_c = cleaned.replacen(&d, "c:", 1);
 
     // PROTECTED_PREFIXES 匹配 + 分隔符边界
-    let prog_data_lower = std::env::var("PROGRAMDATA").unwrap_or_default().to_lowercase();
+    let prog_data_lower = std::env::var("PROGRAMDATA")
+        .unwrap_or_default()
+        .to_lowercase();
     PROTECTED_PREFIXES.iter().any(|p| {
         let expanded = p.replace("%SYSTEMDRIVE%", &d)
             .replace("%PROGRAMDATA%", &prog_data_lower);
@@ -403,8 +903,8 @@ pub fn is_path_protected(path: &Path) -> bool {
     }) || cleaned == format!("{d}\\")
         || path.parent().is_none()
         // SleepStudy: 目录本身受保护（代码级，不在 PROTECTED_PREFIXES）
-        || cleaned == format!("c:\\windows\\system32\\sleepstudy")
-        || cleaned.trim_end_matches('\\') == format!("c:\\windows\\system32\\sleepstudy")
+        || cleaned == "c:\\windows\\system32\\sleepstudy"
+        || cleaned.trim_end_matches('\\') == "c:\\windows\\system32\\sleepstudy"
 }
 
 /// 验证路径是否在允许的扫描目标内（含分隔符边界 + Win32 ns 剥离）
@@ -452,18 +952,23 @@ fn resolve_browser_profiles(base: &Path, cfg: &BrowserProfileConfig) -> Vec<Path
         Ok(e) => e,
         Err(_) => return vec![],
     };
-    let matched: Vec<PathBuf> = entries.filter_map(|e| e.ok())
+    let matched: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
         .filter(|e| {
             let fname = e.file_name();
             let name = fname.to_string_lossy();
-            cfg.profile_patterns.iter().any(|p| name.contains(p) || name.ends_with(p))
+            cfg.profile_patterns
+                .iter()
+                .any(|p| name.contains(p) || name.ends_with(p))
                 && !is_reparse_point(e)
         })
         .map(|e| e.path())
         .collect();
-    matched.iter().flat_map(|dir| {
-        cfg.cache_subdirs.iter().map(move |sub| dir.join(sub))
-    }).filter(|p| p.exists()).collect()
+    matched
+        .iter()
+        .flat_map(|dir| cfg.cache_subdirs.iter().map(move |sub| dir.join(sub)))
+        .filter(|p| p.exists())
+        .collect()
 }
 
 /// 解析 UWP 包目录（限 MAX_UWP_PACKAGES，跳过 junction）
@@ -471,13 +976,18 @@ fn is_reparse_point(entry: &std::fs::DirEntry) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        entry.metadata().map(|m| {
-            // FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-            (m.file_attributes() & 0x400) != 0
-        }).unwrap_or(false)
+        entry
+            .metadata()
+            .map(|m| {
+                // FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+                (m.file_attributes() & 0x400) != 0
+            })
+            .unwrap_or(false)
     }
     #[cfg(not(windows))]
-    { false }
+    {
+        false
+    }
 }
 
 fn resolve_uwp_packages() -> Vec<PathBuf> {
@@ -487,10 +997,7 @@ fn resolve_uwp_packages() -> Vec<PathBuf> {
         Err(_) => return vec![],
     };
     dir.filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                && !is_reparse_point(e)
-        })
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false) && !is_reparse_point(e))
         .take(MAX_UWP_PACKAGES)
         .map(|e| e.path())
         .filter(|p| !is_path_protected(p))
@@ -503,7 +1010,9 @@ pub fn resolve_targets(targets: &[ScanTarget]) -> Vec<(PathBuf, usize)> {
     let mut result = Vec::new();
 
     for (idx, t) in targets.iter().enumerate() {
-        if t.level == SafetyLevel::Forbidden { continue; }
+        if t.level == SafetyLevel::Forbidden {
+            continue;
+        }
         let expanded = expand_env(&t.path);
         let p = PathBuf::from(&expanded);
 
@@ -511,13 +1020,17 @@ pub fn resolve_targets(targets: &[ScanTarget]) -> Vec<(PathBuf, usize)> {
             Ok(p) => p,
             Err(_) => p,
         };
-        if is_path_protected(&safe_path) { continue; }
+        if is_path_protected(&safe_path) {
+            continue;
+        }
         // 验证展开路径在预期前缀内
         let path_ok = match std::fs::canonicalize(&safe_path) {
             Ok(canon) => verify_env_path_inner(&canon, &t.path),
             Err(_) => verify_env_path_inner(&safe_path, &t.path), // fallback: 用非 canonical 路径
         };
-        if !path_ok { continue; }
+        if !path_ok {
+            continue;
+        }
 
         // Firefox 浏览器 profile 展开
         if let Some(browser_cfg) = &t.browser_profiles {
@@ -561,12 +1074,22 @@ pub fn migrate_v1_to_v2(mut config: PonyConfig) -> PonyConfig {
         ("%LOCALAPPDATA%\\Temp", "local_temp"),
         ("%WINDIR%\\Temp", "sys_temp"),
         ("%WINDIR%\\Prefetch", "prefetch"),
-        ("%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache", "chrome_code_cache"),
-        ("%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache", "chrome_cache"),
+        (
+            "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache",
+            "chrome_code_cache",
+        ),
+        (
+            "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
+            "chrome_cache",
+        ),
         ("%APPDATA%\\Mozilla\\Firefox\\Profiles", "firefox_cache"),
         ("%WINDIR%\\SoftwareDistribution\\Download", "wu_download"),
-        ("%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache", "inet_cache"),
-    ].into();
+        (
+            "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
+            "inet_cache",
+        ),
+    ]
+    .into();
     for old_path in &config.disabled_targets {
         if let Some(id) = path_to_id.get(old_path.as_str()) {
             if !config.disabled_target_ids.contains(&id.to_string()) {
@@ -579,15 +1102,27 @@ pub fn migrate_v1_to_v2(mut config: PonyConfig) -> PonyConfig {
     config
 }
 
-/// 加载用户配置（自动迁移 v1→v2）
+/// 加载用户配置（自动迁移 v1→v2→v3）
 pub fn load_config() -> PonyConfig {
     let path = config_path();
     let mut config: PonyConfig = fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    if config.version.unwrap_or(1) < 2 {
+    let ver = config.version.unwrap_or(1);
+    if ver < 2 {
         config = migrate_v1_to_v2(config);
+    }
+    if ver < 3 {
+        // v3: rename `app_cache` target id → `windows_app_cache`
+        if let Some(pos) = config
+            .disabled_target_ids
+            .iter()
+            .position(|id| id == "app_cache")
+        {
+            config.disabled_target_ids[pos] = "windows_app_cache".to_string();
+        }
+        config.version = Some(3);
     }
     config
 }
@@ -623,11 +1158,16 @@ pub fn start_scan(
     tokio::task::spawn_blocking(move || {
         struct ScanGuard;
         impl Drop for ScanGuard {
-            fn drop(&mut self) { SCAN_IN_PROGRESS.store(false, Ordering::SeqCst); }
+            fn drop(&mut self) {
+                SCAN_IN_PROGRESS.store(false, Ordering::SeqCst);
+            }
         }
         let _guard = ScanGuard;
 
-        let _ = tx.send(ScanEvent::Progress { scanned: 0, current: "Starting scan...".into() });
+        let _ = tx.send(ScanEvent::Progress {
+            scanned: 0,
+            current: "Starting scan...".into(),
+        });
 
         let mut total_items = 0u64;
         let mut total_bytes = 0u64;
@@ -637,14 +1177,19 @@ pub fn start_scan(
 
         'outer: for (target_path, target_idx) in &resolved {
             let target_def = &targets[*target_idx];
-            if cancel_token_clone.is_cancelled() { flush_and_cancel(&tx, &mut batch); return; }
+            if cancel_token_clone.is_cancelled() {
+                flush_and_cancel(&tx, &mut batch);
+                return;
+            }
 
             let cat_min_size = target_def.min_size;
             let glob_inc_static: Option<&'static [&'static str]> = target_def.glob_include;
             let needs_mtime = target_def.category == Category::Logs
                 || target_def.id == "downloads_old"
                 || target_def.id == "etl_logs"
-                || target_def.id == "app_logs";
+                || target_def.id == "app_logs"
+                || target_def.id == "large_downloads"
+                || target_def.id == "large_installers";
             let mtime_cutoff = if needs_mtime {
                 Some(chrono_placeholder_now() - LOG_EXPIRY_DAYS * 86400)
             } else {
@@ -660,7 +1205,10 @@ pub fn start_scan(
                         children.retain(|e| {
                             e.as_ref().ok().is_none_or(|entry| {
                                 let name = entry.file_name.to_string_lossy();
-                                !(name == "node_modules" || name == ".git" || name == "__pycache__" || name == ".svn")
+                                !(name == "node_modules"
+                                    || name == ".git"
+                                    || name == "__pycache__"
+                                    || name == ".svn")
                             })
                         });
                     }
@@ -668,70 +1216,112 @@ pub fn start_scan(
                 });
 
             for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
-                if cancel_token_clone.is_cancelled() { flush_and_cancel(&tx, &mut batch); return; }
-                if !entry.file_type().is_file() { continue; }
+                if cancel_token_clone.is_cancelled() {
+                    flush_and_cancel(&tx, &mut batch);
+                    return;
+                }
+                if !entry.file_type().is_file() {
+                    continue;
+                }
 
-                let Ok(meta) = entry.metadata() else { continue; };
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
                 let size = meta.len();
-                if size < cat_min_size { skipped_small += 1; continue; }
+                if size < cat_min_size {
+                    skipped_small += 1;
+                    continue;
+                }
 
                 // mtime 过滤（logs 类别）
                 if let Some(cutoff) = mtime_cutoff {
                     if let Ok(mtime) = meta.modified() {
                         if let Ok(secs) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                            if secs.as_secs() as i64 > cutoff { continue; }
+                            if secs.as_secs() as i64 > cutoff {
+                                continue;
+                            }
                         }
                     }
                 }
 
-                // glob_include 过滤
+                // glob_include 过滤：支持 `*.ext`（后缀）, `*WER*`（包含）, `prefix*`（前缀）
                 if let Some(inc) = glob_inc_static {
                     let fname = entry.file_name().to_string_lossy();
                     if !inc.iter().any(|p| {
-                        let p_trimmed = p.trim_start_matches('*');
-                        fname.ends_with(p_trimmed)
-                    }) { continue; }
+                        let has_prefix_wild = p.starts_with('*');
+                        let has_suffix_wild = p.ends_with('*');
+                        let inner = p.trim_start_matches('*').trim_end_matches('*');
+                        match (has_prefix_wild, has_suffix_wild) {
+                            (true, true) => fname.contains(inner), // *WER* → contains "WER"
+                            (true, false) => fname.ends_with(inner), // *.ext → ends with ".ext"
+                            (false, true) => fname.starts_with(inner), // prefix* → starts with "prefix"
+                            (false, false) => fname == *p,             // exact literal
+                        }
+                    }) {
+                        continue;
+                    }
                 }
 
                 if target_count >= target_def.max_items_per_target {
                     let _ = tx.send(ScanEvent::Warning(ScanWarning::MaxItemsReached {
-                        target_id: target_def.id.into(), items: target_count,
+                        target_id: target_def.id.into(),
+                        items: target_count,
                     }));
                     break;
                 }
                 if total_items >= MAX_SCAN_ITEMS {
                     if !batch.is_empty() {
-                        let _ = tx.send(ScanEvent::ItemsFound { items: std::mem::take(&mut batch), batch_complete: false });
+                        let _ = tx.send(ScanEvent::ItemsFound {
+                            items: std::mem::take(&mut batch),
+                            batch_complete: false,
+                        });
                     }
                     hit_max = true;
                     break 'outer;
                 }
 
-                total_items += 1; total_bytes += size; target_count += 1;
+                total_items += 1;
+                total_bytes += size;
+                target_count += 1;
                 batch.push(CleanItem {
-                    path: entry.path(), size_bytes: size,
+                    path: entry.path(),
+                    size_bytes: size,
                     level: target_def.level.clone(),
                     category: target_def.category.to_string(),
                 });
 
                 if batch.len() >= BATCH_SIZE {
-                    let _ = tx.send(ScanEvent::ItemsFound { items: std::mem::take(&mut batch), batch_complete: false });
+                    let _ = tx.send(ScanEvent::ItemsFound {
+                        items: std::mem::take(&mut batch),
+                        batch_complete: false,
+                    });
                 }
                 if total_items % 100 == 0 {
-                    let _ = tx.send(ScanEvent::Progress { scanned: total_items, current: target_path.to_string_lossy().to_string() });
+                    let _ = tx.send(ScanEvent::Progress {
+                        scanned: total_items,
+                        current: target_path.to_string_lossy().to_string(),
+                    });
                 }
             }
         }
 
         if !batch.is_empty() {
-            let _ = tx.send(ScanEvent::ItemsFound { items: batch, batch_complete: true });
+            let _ = tx.send(ScanEvent::ItemsFound {
+                items: batch,
+                batch_complete: true,
+            });
         }
         if hit_max {
             let _ = tx.send(ScanEvent::Warning(ScanWarning::MaxItemsReached {
-                target_id: "global".into(), items: MAX_SCAN_ITEMS,
+                target_id: "global".into(),
+                items: MAX_SCAN_ITEMS,
             }));
         }
-        let _ = tx.send(ScanEvent::Done { total_items, total_bytes, skipped_small });
+        let _ = tx.send(ScanEvent::Done {
+            total_items,
+            total_bytes,
+            skipped_small,
+        });
     });
 
     let cancel_token_cmd = cancel_token.clone();
@@ -750,13 +1340,19 @@ pub fn start_scan(
 
 fn flush_and_cancel(tx: &mpsc::Sender<ScanEvent>, batch: &mut Vec<CleanItem>) {
     if !batch.is_empty() {
-        let _ = tx.send(ScanEvent::ItemsFound { items: std::mem::take(batch), batch_complete: false });
+        let _ = tx.send(ScanEvent::ItemsFound {
+            items: std::mem::take(batch),
+            batch_complete: false,
+        });
     }
     let _ = tx.send(ScanEvent::Cancelled);
 }
 
 fn chrono_placeholder_now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// 删除文件（阻塞调用，使用 spawn_blocking 执行）
@@ -956,7 +1552,9 @@ const MAX_LOG_BACKUPS: u32 = 5;
 static LOG_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn timestamp_now() -> String {
-    let dur = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = dur.as_secs();
 
     // 正确 UTC 日期计算（不含 chrono 依赖）
@@ -971,18 +1569,29 @@ pub fn timestamp_now() -> String {
     let mut remaining = days as i64;
     loop {
         let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if remaining < days_in_year { break; }
+        if remaining < days_in_year {
+            break;
+        }
         remaining -= days_in_year;
         y += 1;
     }
-    let month_days = if is_leap(y) { &LEAP_MONTH_DAYS[..] } else { &NORM_MONTH_DAYS[..] };
+    let month_days = if is_leap(y) {
+        &LEAP_MONTH_DAYS[..]
+    } else {
+        &NORM_MONTH_DAYS[..]
+    };
     let mut mo = 1u32;
     for md in month_days {
-        if remaining < *md as i64 { break; }
+        if remaining < *md as i64 {
+            break;
+        }
         remaining -= *md as i64;
         mo += 1;
     }
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z", d = remaining as u32 + 1)
+    format!(
+        "{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z",
+        d = remaining as u32 + 1
+    )
 }
 
 const NORM_MONTH_DAYS: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -1005,7 +1614,10 @@ fn append_clean_log_at(entry: &CleanLogEntry, dir: &Path) -> Result<(), String> 
     let path = dir.join(CLEAN_LOG_FILE);
     rotate_if_needed(&path);
     let json = serde_json::to_string(entry).map_err(|e| format!("serialize log: {e}"))?;
-    let mut file = fs::OpenOptions::new().create(true).append(true).open(&path)
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
         .map_err(|e| format!("open log: {e}"))?;
     use std::io::Write;
     writeln!(file, "{json}").map_err(|e| format!("write log: {e}"))?;
@@ -1014,11 +1626,15 @@ fn append_clean_log_at(entry: &CleanLogEntry, dir: &Path) -> Result<(), String> 
 
 fn rotate_if_needed(path: &Path) {
     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if size <= MAX_LOG_BYTES { return; }
+    if size <= MAX_LOG_BYTES {
+        return;
+    }
     for i in (1..MAX_LOG_BACKUPS).rev() {
         let old = path.with_extension(format!("{i}.jsonl"));
         let new = path.with_extension(format!("{}.jsonl", i + 1));
-        if old.exists() { let _ = fs::rename(&old, &new); }
+        if old.exists() {
+            let _ = fs::rename(&old, &new);
+        }
     }
     let first = path.with_extension("1.jsonl");
     let _ = fs::rename(path, &first);
@@ -1032,7 +1648,10 @@ fn get_clean_logs_at(limit: usize, dir: &Path) -> Result<CleanLogSummary, String
     let path = dir.join(CLEAN_LOG_FILE);
     let entries = if path.exists() {
         let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        content.lines().rev().take(limit)
+        content
+            .lines()
+            .rev()
+            .take(limit)
             .filter_map(|line| serde_json::from_str(line).ok())
             .collect()
     } else {
@@ -1091,8 +1710,10 @@ mod tests {
             r"C:\Windows\System32\config\SAM"
         )));
         // System32 根不再有宽保护，但关键子路径受保护
-        assert!(!is_path_protected(Path::new(r"C:\Windows\System32\LogFiles\some.log")),
-            "LogFiles 应允许扫描");
+        assert!(
+            !is_path_protected(Path::new(r"C:\Windows\System32\LogFiles\some.log")),
+            "LogFiles 应允许扫描"
+        );
     }
 
     #[test]
@@ -1109,7 +1730,9 @@ mod tests {
 
     #[test]
     fn test_is_path_protected_tasks() {
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\Tasks\SomeTask")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\Tasks\SomeTask"
+        )));
     }
 
     #[test]
@@ -1135,7 +1758,13 @@ mod tests {
 
     #[test]
     fn test_is_path_allowed_valid() {
-        let targets = vec![ScanTarget::new("t", "%TEMP%", SafetyLevel::Safe, Category::Temp, "")];
+        let targets = vec![ScanTarget::new(
+            "t",
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "",
+        )];
         let temp = std::env::var("TEMP").unwrap();
         let test_path = PathBuf::from(&temp).join("test.txt");
         assert!(is_path_allowed(&test_path, &targets));
@@ -1143,7 +1772,13 @@ mod tests {
 
     #[test]
     fn test_is_path_allowed_rejected() {
-        let targets = vec![ScanTarget::new("t", "%TEMP%", SafetyLevel::Safe, Category::Temp, "")];
+        let targets = vec![ScanTarget::new(
+            "t",
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "",
+        )];
         assert!(!is_path_allowed(
             Path::new(r"C:\Windows\System32\test.dll"),
             &targets,
@@ -1152,7 +1787,13 @@ mod tests {
 
     #[test]
     fn test_is_path_allowed_cache_category() {
-        let targets = vec![ScanTarget::new("t", "%LOCALAPPDATA%\\Google\\Chrome", SafetyLevel::Safe, Category::Cache, "")];
+        let targets = vec![ScanTarget::new(
+            "t",
+            "%LOCALAPPDATA%\\Google\\Chrome",
+            SafetyLevel::Safe,
+            Category::Cache,
+            "",
+        )];
         let local = std::env::var("LOCALAPPDATA").unwrap();
         let test_path = PathBuf::from(&local).join("Google\\Chrome\\Cache\\f_000001");
         assert!(is_path_allowed(&test_path, &targets));
@@ -1162,14 +1803,22 @@ mod tests {
     fn test_resolve_targets_excludes_forbidden() {
         let targets = vec![
             ScanTarget::new("temp", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""),
-            ScanTarget::new("sys32", "C:\\Windows\\System32", SafetyLevel::Forbidden, Category::Temp, ""),
+            ScanTarget::new(
+                "sys32",
+                "C:\\Windows\\System32",
+                SafetyLevel::Forbidden,
+                Category::Temp,
+                "",
+            ),
         ];
         let resolved = resolve_targets(&targets);
         // 应包含指向 TEMP 的路径（Safe）
         assert!(!resolved.is_empty(), "should include TEMP");
         // 应排除 System32（Forbidden）
         assert!(
-            !resolved.iter().any(|(p, _)| p.to_string_lossy().to_lowercase().contains("system32")),
+            !resolved
+                .iter()
+                .any(|(p, _)| p.to_string_lossy().to_lowercase().contains("system32")),
             "should NOT include System32"
         );
     }
@@ -1179,7 +1828,13 @@ mod tests {
         let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
         // 使用 config（在 PROTECTED_PREFIXES 中）作为受保护路径
         let protected = format!("{}\\System32\\config", sys_root);
-        let targets = vec![ScanTarget::new("p", &protected, SafetyLevel::Safe, Category::Temp, "")];
+        let targets = vec![ScanTarget::new(
+            "p",
+            &protected,
+            SafetyLevel::Safe,
+            Category::Temp,
+            "",
+        )];
         let resolved = resolve_targets(&targets);
         assert!(resolved.is_empty(), "protected path should be skipped");
     }
@@ -1246,7 +1901,11 @@ mod tests {
             skipped_small: 42,
         };
         match d {
-            ScanEvent::Done { total_items, skipped_small, .. } => {
+            ScanEvent::Done {
+                total_items,
+                skipped_small,
+                ..
+            } => {
                 assert_eq!(total_items, 1000);
                 assert_eq!(skipped_small, 42);
             }
@@ -1270,7 +1929,11 @@ mod tests {
     #[test]
     fn test_new_targets_resolve() {
         let targets = get_clean_targets();
-        assert_eq!(targets.len(), 43, "should have 43 targets");
+        assert_eq!(
+            targets.len(),
+            60,
+            "should have 60 targets (43 original + 17 new)"
+        );
         // 检查一些特定目标存在
         assert!(targets.iter().any(|t| t.id == "sys_logfiles"));
         assert!(targets.iter().any(|t| t.id == "uwp_temp"));
@@ -1280,24 +1943,59 @@ mod tests {
     #[test]
     fn test_target_ids_unique() {
         let ids: Vec<&str> = get_clean_targets().iter().map(|t| t.id).collect();
-        let mut sorted = ids.clone(); sorted.sort(); sorted.dedup();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
         assert_eq!(ids.len(), sorted.len(), "target ids must be unique");
     }
 
     #[test]
     fn test_category_serde_roundtrip() {
-        assert_eq!(serde_json::to_value(&Category::Temp).unwrap(), serde_json::json!("temp"));
-        assert_eq!(serde_json::to_value(&Category::Cache).unwrap(), serde_json::json!("cache"));
-        assert_eq!(serde_json::to_value(&Category::Logs).unwrap(), serde_json::json!("logs"));
-        assert_eq!(serde_json::to_value(&Category::Prefetch).unwrap(), serde_json::json!("prefetch"));
-        assert_eq!(serde_json::to_value(&Category::RecycleBin).unwrap(), serde_json::json!("recycle_bin"));
-        assert_eq!(serde_json::to_value(&Category::OldInstall).unwrap(), serde_json::json!("old_install"));
+        assert_eq!(
+            serde_json::to_value(&Category::Temp).unwrap(),
+            serde_json::json!("temp")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::Cache).unwrap(),
+            serde_json::json!("cache")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::Logs).unwrap(),
+            serde_json::json!("logs")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::Prefetch).unwrap(),
+            serde_json::json!("prefetch")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::RecycleBin).unwrap(),
+            serde_json::json!("recycle_bin")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::OldInstall).unwrap(),
+            serde_json::json!("old_install")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::LargeFiles).unwrap(),
+            serde_json::json!("large_files")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::AppCache).unwrap(),
+            serde_json::json!("app_cache")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::DevCache).unwrap(),
+            serde_json::json!("dev_cache")
+        );
     }
 
     #[test]
     fn test_category_display() {
         assert_eq!(Category::Temp.to_string(), "temp");
         assert_eq!(Category::OldInstall.to_string(), "old_install");
+        assert_eq!(Category::LargeFiles.to_string(), "large_files");
+        assert_eq!(Category::AppCache.to_string(), "app_cache");
+        assert_eq!(Category::DevCache.to_string(), "dev_cache");
     }
 
     #[test]
@@ -1305,48 +2003,81 @@ mod tests {
         assert_eq!(Category::Cache.default_min_size(), 512);
         assert_eq!(Category::Logs.default_min_size(), 4096);
         assert_eq!(Category::Temp.default_min_size(), 1024);
+        assert_eq!(Category::LargeFiles.default_min_size(), 52_428_800);
+        assert_eq!(Category::AppCache.default_min_size(), 1024);
+        assert_eq!(Category::DevCache.default_min_size(), 1024);
     }
 
     #[test]
     fn test_scan_warning_enum_variants() {
-        let w1 = ScanWarning::MaxItemsReached { target_id: "t".into(), items: 100 };
-        let w2 = ScanWarning::PermissionDenied { target_id: "t".into(), path: "p".into() };
-        match w1 { ScanWarning::MaxItemsReached { .. } => {} _ => panic!() }
-        match w2 { ScanWarning::PermissionDenied { .. } => {} _ => panic!() }
+        let w1 = ScanWarning::MaxItemsReached {
+            target_id: "t".into(),
+            items: 100,
+        };
+        let w2 = ScanWarning::PermissionDenied {
+            target_id: "t".into(),
+            path: "p".into(),
+        };
+        match w1 {
+            ScanWarning::MaxItemsReached { .. } => {}
+            _ => panic!(),
+        }
+        match w2 {
+            ScanWarning::PermissionDenied { .. } => {}
+            _ => panic!(),
+        }
     }
 
     #[test]
     fn test_is_path_protected_separator() {
         // 关键子路径受保护
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\config\SAM")));
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\Tasks\test")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\config\SAM"
+        )));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\Tasks\test"
+        )));
     }
 
     #[test]
     fn test_protected_winevt_logs() {
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\winevt\Logs\Security.evtx")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\winevt\Logs\Security.evtx"
+        )));
     }
 
     #[test]
     fn test_protected_sleepstudy_dir() {
         // SleepStudy 目录本身由 is_path_protected 中的特殊代码保护
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\sleepstudy")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\sleepstudy"
+        )));
     }
 
     #[test]
     fn test_sleepstudy_subfile_not_protected() {
         // 子文件不再受 System32 总前缀保护
-        assert!(!is_path_protected(Path::new(r"C:\Windows\System32\sleepstudy\sub.etl")));
+        assert!(!is_path_protected(Path::new(
+            r"C:\Windows\System32\sleepstudy\sub.etl"
+        )));
     }
 
     #[test]
-    #[test]
     fn test_is_path_allowed_trailing_slash() {
-        let targets = vec![ScanTarget::new("t", "%TEMP%\\", SafetyLevel::Safe, Category::Temp, "")];
+        let targets = vec![ScanTarget::new(
+            "t",
+            "%TEMP%\\",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "",
+        )];
         let temp = std::env::var("TEMP").unwrap_or_default();
         if !temp.is_empty() {
             let sub = PathBuf::from(temp.trim_end_matches('\\')).join("test.tmp");
-            assert!(is_path_allowed(&sub, &targets), "trailing \\ in expanded should work");
+            assert!(
+                is_path_allowed(&sub, &targets),
+                "trailing \\ in expanded should work"
+            );
         }
     }
 
@@ -1392,8 +2123,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let entry = CleanLogEntry {
             timestamp: "2026-01-01T00:00:00Z".into(),
-            total_files: 5, total_bytes: 10240,
-            success: 5, failed: 0, errors: vec![],
+            total_files: 5,
+            total_bytes: 10240,
+            success: 5,
+            failed: 0,
+            errors: vec![],
             by_category: HashMap::new(),
         };
         append_clean_log_at(&entry, dir.path()).unwrap();
@@ -1430,7 +2164,9 @@ mod tests {
 
     #[test]
     fn test_protected_trailing_space() {
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\config\SAM ")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\config\SAM "
+        )));
     }
 
     #[test]
@@ -1440,24 +2176,39 @@ mod tests {
 
     #[test]
     fn test_protected_forward_slash() {
-        assert!(is_path_protected(Path::new(r"C:/Windows/System32/config/SAM")));
+        assert!(is_path_protected(Path::new(
+            r"C:/Windows/System32/config/SAM"
+        )));
     }
 
     #[test]
     fn test_protected_win32_namespace() {
-        assert!(is_path_protected(Path::new(r"\\?\C:\Windows\System32\config\SAM")));
+        assert!(is_path_protected(Path::new(
+            r"\\?\C:\Windows\System32\config\SAM"
+        )));
     }
 
     #[test]
     fn test_protected_system_volume_information() {
-        assert!(is_path_protected(Path::new(r"C:\System Volume Information\some")));
+        assert!(is_path_protected(Path::new(
+            r"C:\System Volume Information\some"
+        )));
     }
 
     #[test]
     fn test_allowed_separator_reject_adjacent() {
         temp_env::with_var("TEMP", Some("C:\\Temp"), || {
-            let targets = vec![ScanTarget::new("t", "%TEMP%", SafetyLevel::Safe, Category::Temp, "")];
-            assert!(!is_path_allowed(Path::new(r"C:\Temp_malicious\evil.exe"), &targets));
+            let targets = vec![ScanTarget::new(
+                "t",
+                "%TEMP%",
+                SafetyLevel::Safe,
+                Category::Temp,
+                "",
+            )];
+            assert!(!is_path_allowed(
+                Path::new(r"C:\Temp_malicious\evil.exe"),
+                &targets
+            ));
         });
     }
 
@@ -1469,6 +2220,25 @@ mod tests {
     }
 
     #[test]
+    fn test_with_min_size_mb_converts_correctly() {
+        let t = ScanTarget::new("test", "%TEMP%", SafetyLevel::Safe, Category::Temp, "test")
+            .with_min_size_mb(50);
+        assert_eq!(t.min_size, 52_428_800, "50MB should be 52_428_800 bytes");
+        let t2 = ScanTarget::new(
+            "test2",
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "test2",
+        )
+        .with_min_size_mb(100);
+        assert_eq!(
+            t2.min_size, 104_857_600,
+            "100MB should be 104_857_600 bytes"
+        );
+    }
+
+    #[test]
     fn test_category_default_min_size() {
         assert_eq!(Category::Cache.default_min_size(), 512);
         assert_eq!(Category::Logs.default_min_size(), 4096);
@@ -1476,28 +2246,42 @@ mod tests {
         assert_eq!(Category::Prefetch.default_min_size(), 1024);
         assert_eq!(Category::RecycleBin.default_min_size(), 1024);
         assert_eq!(Category::OldInstall.default_min_size(), 1024);
+        assert_eq!(Category::LargeFiles.default_min_size(), 52_428_800);
+        assert_eq!(Category::AppCache.default_min_size(), 1024);
+        assert_eq!(Category::DevCache.default_min_size(), 1024);
     }
 
     #[test]
     fn test_data_dir() {
         let dir = data_dir();
-        assert!(dir.to_string_lossy().contains("PonyClean"), "data_dir should end with PonyClean");
+        assert!(
+            dir.to_string_lossy().contains("PonyClean"),
+            "data_dir should end with PonyClean"
+        );
     }
 
     #[test]
     fn test_protected_globalroot_device() {
-        assert!(is_path_protected(Path::new(r"\\.\GLOBALROOT\Device\HarddiskVolume1\Windows\System32\config\SAM")));
-        assert!(is_path_protected(Path::new(r"\\?\GLOBALROOT\Device\Harddisk0\Partition1\Windows\System32")));
+        assert!(is_path_protected(Path::new(
+            r"\\.\GLOBALROOT\Device\HarddiskVolume1\Windows\System32\config\SAM"
+        )));
+        assert!(is_path_protected(Path::new(
+            r"\\?\GLOBALROOT\Device\Harddisk0\Partition1\Windows\System32"
+        )));
     }
 
     #[test]
     fn test_protected_null_byte_after_path() {
-        assert!(is_path_protected(Path::new(r"C:\Windows\System32\config\SAM\0..\..\Temp")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows\System32\config\SAM\0..\..\Temp"
+        )));
     }
 
     #[test]
     fn test_protected_mixed_separators() {
-        assert!(is_path_protected(Path::new(r"C:\Windows/System32\config/SAM")));
+        assert!(is_path_protected(Path::new(
+            r"C:\Windows/System32\config/SAM"
+        )));
     }
 
     #[cfg_attr(not(windows), ignore)]
@@ -1506,9 +2290,15 @@ mod tests {
     fn test_env_injection_temp_is_protected() {
         temp_env::with_var("TEMP", Some(r"C:\Windows\System32\config"), || {
             let targets = get_clean_targets();
-            let filtered: Vec<_> = targets.into_iter().filter(|t| t.id == "user_temp").collect();
+            let filtered: Vec<_> = targets
+                .into_iter()
+                .filter(|t| t.id == "user_temp")
+                .collect();
             let resolved = resolve_targets(&filtered);
-            assert!(resolved.is_empty(), "TEMP pointing to protected path must be rejected");
+            assert!(
+                resolved.is_empty(),
+                "TEMP pointing to protected path must be rejected"
+            );
         });
     }
 }
