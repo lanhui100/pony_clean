@@ -11,11 +11,12 @@
     "windows": [
       {
         "label": "main",
-        "title": "PonyClean",
+        "title": "",
         "width": 315,
-        "height": 340,
+        "height": 100,
         "resizable": false,
         "decorations": false,
+        "shadow": false,
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,

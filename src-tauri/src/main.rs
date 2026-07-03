@@ -5,6 +5,7 @@ mod commands;
 use commands::cleaner::CleanerState;
 use commands::monitor::MonitorState;
 use commands::window::EdgeCursorState;
+use commands::window::install_hit_test_subclass;
 use pony_core::monitor;
 use std::sync::{Arc, RwLock};
 use tauri::Manager;
@@ -29,6 +30,11 @@ fn main() {
 
             eprintln!("[PonyClean] Setup complete, opening window...");
 
+            // Install WM_NCHITTEST subclass for click-through on transparent areas
+            if let Err(e) = install_hit_test_subclass(app.handle()) {
+                eprintln!("[PonyClean] Failed to install hit-test subclass: {}", e);
+            }
+
             // DevTools 已移除 — 自动打开 DevTools 窗口会导致右上角短暂闪烁"分辨率"信息
 
             Ok(())
@@ -45,7 +51,7 @@ fn main() {
             commands::window::get_system_idle_ms,
             commands::window::start_edge_cursor_detect,
             commands::window::stop_edge_cursor_detect,
-            commands::window::set_capsule_hit_rect,
+            commands::window::set_hit_test_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

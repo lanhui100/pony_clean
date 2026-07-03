@@ -1,5 +1,7 @@
 # PonyClean 窗口形态与胶囊 UX — 设计规约 v3.2（最终实现）
 
+> **⚠️ 废弃状态**: 本规约已被 `DynamicIsland-Spec.md v1.0` 替代。请参考新文档。
+
 **文档**: `docs/design/Window-Morph-Spec.md`  
 **版本**: 3.2  
 **状态**: ✅ 已实现（2026-06-29）  

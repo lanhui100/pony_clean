@@ -4,7 +4,7 @@ import { computed } from 'vue'
 const props = defineProps<{
   cpuPercent: number
   memPercent: number
-  isFirstDock: boolean
+  isHovered?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -45,8 +45,8 @@ const memBg = computed(() => {
 
 <template>
   <div
-    class="capsule-bar flex cursor-pointer items-center overflow-hidden rounded-full select-none h-full w-full"
-    :class="{ 'animate-breath': isFirstDock }"
+    class="capsule-bar flex cursor-pointer items-center overflow-hidden rounded-full select-none h-full w-full transition-shadow duration-300"
+    :class="{ 'capsule-hovered': isHovered }"
     @click="emit('click')"
   >
     <!-- CPU half -->
@@ -73,15 +73,11 @@ const memBg = computed(() => {
 <style scoped>
 .capsule-bar {
   background: rgba(30, 28, 26, 0.95);
-  border: 1px solid hsla(0, 0%, 100%, 0.08);
+  border: 0;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
 }
 
-@keyframes breath {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-.animate-breath {
-  animation: breath 2s ease-in-out 3;
+.capsule-hovered {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px hsla(38, 85%, 58%, 0.08);
 }
 </style>

@@ -1,10 +1,10 @@
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use serde::Serialize;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use serde::Serialize;
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 #[repr(C)]
 struct LastInputInfo {
@@ -45,19 +45,135 @@ unsafe extern "system" {
     fn MonitorFromPoint(pt: POINT, dwFlags: u32) -> isize;
     fn GetMonitorInfoW(hMonitor: isize, lpmi: *mut MONITORINFO) -> i32;
     fn GetSystemMetrics(nIndex: i32) -> i32;
+    // Hit-test functions
+    fn ScreenToClient(hWnd: isize, lpPoint: *mut POINT) -> i32;
+    fn GetClientRect(hWnd: isize, lpRect: *mut RECT) -> i32;
+    fn SetPropW(hWnd: isize, lpString: *const u16, hData: isize) -> i32;
+    fn GetPropW(hWnd: isize, lpString: *const u16) -> isize;
+    #[allow(dead_code)]
+    fn RemovePropW(hWnd: isize, lpString: *const u16) -> isize;
+    fn GetWindowLongPtrW(hWnd: isize, nIndex: i32) -> isize;
+    fn SetWindowLongPtrW(hWnd: isize, nIndex: i32, dwNewLong: isize) -> isize;
+    fn SetWindowPos(
+        hWnd: isize,
+        hWndInsertAfter: isize,
+        x: i32,
+        y: i32,
+        cx: i32,
+        cy: i32,
+        uFlags: u32,
+    ) -> i32;
+    fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
+    fn RedrawWindow(hWnd: isize, lprcUpdate: *const RECT, hrgnUpdate: isize, flags: u32) -> i32;
 }
 
-#[cfg(target_os = "windows")]
+#[link(name = "comctl32")]
+unsafe extern "system" {
+    fn SetWindowSubclass(
+        h_wnd: isize,
+        pfn_subclass: SUBCLASSPROC,
+        u_id_subclass: usize,
+        dw_ref_data: usize,
+    ) -> i32;
+    fn DefSubclassProc(h_wnd: isize, u_msg: u32, w_param: usize, l_param: isize) -> isize;
+    #[allow(dead_code)]
+    fn RemoveWindowSubclass(h_wnd: isize, pfn_subclass: SUBCLASSPROC, u_id_subclass: usize) -> i32;
+}
+
+#[link(name = "dwmapi")]
+unsafe extern "system" {
+    fn DwmSetWindowAttribute(
+        hwnd: isize,
+        dw_attribute: u32,
+        pv_attribute: *const std::ffi::c_void,
+        cb_attribute: u32,
+    ) -> i32;
+}
+
 #[link(name = "gdi32")]
 unsafe extern "system" {
     fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) -> isize;
     fn SetWindowRgn(hWnd: isize, hRgn: isize, bRedraw: i32) -> i32;
 }
 
+type SUBCLASSPROC = unsafe extern "system" fn(
+    h_wnd: isize,
+    u_msg: u32,
+    w_param: usize,
+    l_param: isize,
+    u_id_subclass: usize,
+    dw_ref_data: usize,
+) -> isize;
+
 const MONITOR_DEFAULTTONEAREST: u32 = 2;
 const SM_CXVIRTUALSCREEN: i32 = 78;
 const SM_CYVIRTUALSCREEN: i32 = 79;
 const EDGE_THRESHOLD: i32 = 20;
+
+// Logical window dimensions (CSS pixels)
+const LOGICAL_W: i32 = 315;
+const CAPSULE_W: i32 = 160;
+const CAPSULE_H: i32 = 40;
+const ISLAND_RADIUS: i32 = 16;
+
+// Window property name for hit-test mode
+const HT_MODE_PROP: &str = "PonyCleanHitMode\0";
+
+// Hit-test mode values stored in window property
+const HT_MODE_CAPSULE: isize = 0;
+const HT_MODE_FULL: isize = 1;
+
+#[cfg(target_os = "windows")]
+unsafe fn redraw_window_frame(hwnd: isize) {
+    const RDW_FRAME: u32 = 0x0400;
+    const RDW_INVALIDATE: u32 = 0x0001;
+    const RDW_UPDATENOW: u32 = 0x0100;
+    unsafe {
+        RedrawWindow(
+            hwnd,
+            std::ptr::null(),
+            0,
+            RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW,
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn apply_window_region(hwnd: isize, mode: isize) {
+    let mut cr = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if unsafe { GetClientRect(hwnd, &mut cr) } == 0 {
+        return;
+    }
+
+    let phys_w = cr.right - cr.left;
+    let phys_h = cr.bottom - cr.top;
+    if phys_w <= 0 || phys_h <= 0 {
+        return;
+    }
+
+    let dpr = phys_w as f32 / LOGICAL_W as f32;
+    let region = if mode == HT_MODE_FULL {
+        let r = (ISLAND_RADIUS as f32 * dpr).round() as i32;
+        unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, r, r) }
+    } else {
+        let c_w = (CAPSULE_W as f32 * dpr).round() as i32;
+        let c_h = (CAPSULE_H as f32 * dpr).round() as i32;
+        let c_x = (phys_w - c_w) / 2;
+        unsafe { CreateRoundRectRgn(c_x, 0, c_x + c_w, c_h, c_h, c_h) }
+    };
+
+    if region != 0 {
+        unsafe {
+            SetWindowRgn(hwnd, region, 1);
+            redraw_window_frame(hwnd);
+        }
+    }
+}
 
 #[derive(Clone, Serialize)]
 pub struct EdgeCursorPayload {
@@ -92,14 +208,253 @@ fn get_hwnd(app: &AppHandle) -> Option<isize> {
     }
 }
 
+// ─── WM_NCHITTEST subclass ───
+
+/// Window subclass procedure that handles WM_NCHITTEST.
+/// Returns HTNOWHERE for areas outside the interactive region,
+/// allowing clicks to pass through to windows beneath.
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn hit_test_subclass(
+    hwnd: isize,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+    _u_id: usize,
+    _dw_ref: usize,
+) -> isize {
+    const WM_NCHITTEST: u32 = 0x0084;
+    const WM_ERASEBKGND: u32 = 0x0014;
+    const HTCLIENT: isize = 1;
+    // HTNOWHERE silently drops the click without passing it through.
+    // Using HTTRANSPARENT would trigger Windows 11 to show a title-bar
+    // preview on always-on-top windows when they lose focus.
+    const HTNOWHERE: isize = -2;
+
+    // Prevent Windows from painting the default window background.
+    // Without this, the OS fills the window with the class background
+    // brush (typically gray/white), which shows through the transparent
+    // WebView2 corners.
+    if msg == WM_ERASEBKGND {
+        return 1;
+    }
+
+    if msg == WM_NCHITTEST {
+        // Get current hit-test mode
+        let prop_name: Vec<u16> = HT_MODE_PROP.encode_utf16().collect();
+        let mode = unsafe { GetPropW(hwnd, prop_name.as_ptr()) };
+
+        if mode == HT_MODE_FULL {
+            return HTCLIENT;
+        }
+
+        // Capsule mode: only the centered 160×40 (logical) area is interactive
+        let screen_x = (lparam & 0xFFFF) as i32;
+        let screen_y = ((lparam >> 16) & 0xFFFF) as i32;
+
+        let mut pt = POINT {
+            x: screen_x,
+            y: screen_y,
+        };
+        if unsafe { ScreenToClient(hwnd, &mut pt) } == 0 {
+            return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+        }
+
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if unsafe { GetClientRect(hwnd, &mut rect) } == 0 {
+            return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+        }
+
+        let phys_w = (rect.right - rect.left) as f32;
+        let dpr = phys_w / LOGICAL_W as f32;
+
+        // Check vertical: must be within capsule height
+        let c_h = (CAPSULE_H as f32 * dpr) as i32;
+        if pt.y < 0 || pt.y >= c_h {
+            return HTNOWHERE;
+        }
+
+        // Check horizontal: must be within centered capsule width
+        let c_w = (CAPSULE_W as f32 * dpr) as i32;
+        let c_x = (phys_w as i32 - c_w) / 2;
+        if pt.x < c_x || pt.x >= c_x + c_w {
+            return HTNOWHERE;
+        }
+
+        return HTCLIENT;
+    }
+
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// Install the WM_NCHITTEST subclass on the main window.
+/// Also removes the DWM thin border that persists even on undecorated windows.
+/// Called once during app setup.
+#[cfg(target_os = "windows")]
+pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
+    // First, use the Tauri 2 native API to set decorations=false.
+    // This operates at the Tauri/WebView level rather than raw Win32,
+    // and is the canonical way to remove the title bar.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_decorations(false);
+    }
+
+    let hwnd = get_hwnd(app).ok_or("cannot get window handle")?;
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        // ── Pre-diagnosis ──
+        let mut wr = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        let mut cr = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        GetWindowRect(hwnd, &mut wr);
+        GetClientRect(hwnd, &mut cr);
+        let style = GetWindowLongPtrW(hwnd, -16);
+        let ex_style = GetWindowLongPtrW(hwnd, -20);
+
+        eprintln!("[PonyClean] Window pre-diagnosis:");
+        eprintln!("  WindowRect: {:?}", (wr.left, wr.top, wr.right, wr.bottom));
+        eprintln!("  ClientRect: {:?}", (cr.left, cr.top, cr.right, cr.bottom));
+        eprintln!("  Style:      0x{:x}", style);
+        eprintln!("  ExStyle:    0x{:x}", ex_style);
+        eprintln!("  WS_CAPTION:  {}", (style & 0x00C00000) != 0);
+        eprintln!("  WS_SYSMENU:  {}", (style & 0x00080000) != 0);
+        eprintln!("  WS_POPUP:    {}", (style & 0x80000000) != 0);
+        eprintln!("  WS_DLGFRAME: {}", (style & 0x00400000) != 0);
+        eprintln!("  WS_BORDER:   {}", (style & 0x00800000) != 0);
+        eprintln!("  WS_THICKFRAME:{}", (style & 0x00040000) != 0);
+
+        // ── Install subclass ──
+        if SetWindowSubclass(hwnd, hit_test_subclass as SUBCLASSPROC, 0, 0) == 0 {
+            return Err("SetWindowSubclass failed".into());
+        }
+        let prop_name: Vec<u16> = HT_MODE_PROP.encode_utf16().collect();
+        SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_CAPSULE);
+
+        // ── Remove DWM styles ──
+        remove_dwm_border(hwnd);
+
+        // Strip title bar styles + SWP_FRAMECHANGED
+        const GWL_STYLE: i32 = -16;
+        const WS_CAPTION: isize = 0x00C00000;
+        const WS_THICKFRAME: isize = 0x00040000;
+        const WS_SYSMENU: isize = 0x00080000;
+        const WS_MINIMIZEBOX: isize = 0x00020000;
+        const WS_MAXIMIZEBOX: isize = 0x00010000;
+        let new_style =
+            style & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+        if new_style != style {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
+            const SWP_FRAMECHANGED: u32 = 0x0020;
+            const SWP_NOMOVE: u32 = 0x0002;
+            const SWP_NOSIZE: u32 = 0x0001;
+            const SWP_NOZORDER: u32 = 0x0004;
+            SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            );
+            eprintln!("[PonyClean] Removed caption styles");
+        }
+
+        // Add WS_EX_TOOLWINDOW extended style to prevent Windows 11 DWM from
+        // showing a "focus-lost" preview bar on always-on-top transparent windows.
+        const GWL_EXSTYLE: i32 = -20;
+        const WS_EX_TOOLWINDOW: isize = 0x00000080;
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if (ex_style & WS_EX_TOOLWINDOW) == 0 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
+            eprintln!("[PonyClean] Added WS_EX_TOOLWINDOW");
+        }
+
+        // Start in capsule mode, so Windows never has a full transparent
+        // 315×100 frame to paint behind the visible pill.
+        apply_window_region(hwnd, HT_MODE_CAPSULE);
+        eprintln!("[PonyClean] Initial region set to capsule");
+
+        // ── Post-diagnosis ──
+        GetWindowRect(hwnd, &mut wr);
+        GetClientRect(hwnd, &mut cr);
+        let post_style = GetWindowLongPtrW(hwnd, -16);
+        eprintln!("[PonyClean] Window post-diagnosis:");
+        eprintln!("  WindowRect: {:?}", (wr.left, wr.top, wr.right, wr.bottom));
+        eprintln!("  ClientRect: {:?}", (cr.left, cr.top, cr.right, cr.bottom));
+        eprintln!("  Style:      0x{:x}", post_style);
+        eprintln!("  WS_CAPTION: {}", (post_style & 0x00C00000) != 0);
+        eprintln!("  WS_POPUP:   {}", (post_style & 0x80000000) != 0);
+    }
+
+    Ok(())
+}
+
+/// Use DwmSetWindowAttribute to make the window border transparent.
+#[cfg(target_os = "windows")]
+unsafe fn remove_dwm_border(hwnd: isize) {
+    const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;
+
+    // DWMWA_BORDER_COLOR = 34 — suppress the DWM frame border.
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            &DWMWA_COLOR_NONE as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
+
+    // DWMWA_CAPTION_COLOR = 35 — keep any cached caption repaint dark.
+    const DWMWA_CAPTION_COLOR: u32 = 35;
+    let caption_color: u32 = 0x00000000;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR,
+            &caption_color as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
+
+    // DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+    const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
+    let dark_mode: i32 = 1;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &dark_mode as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn install_hit_test_subclass(_app: &AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
 #[tauri::command]
-pub fn set_capsule_hit_rect(
+pub fn set_hit_test_mode(
     app: AppHandle,
     state: tauri::State<'_, EdgeCursorState>,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
+    mode: String,
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -112,21 +467,20 @@ pub fn set_capsule_hit_rect(
         };
 
         unsafe {
-            if w == 0 && h == 0 {
-                SetWindowRgn(hwnd, 0, 1);
+            let prop_name: Vec<u16> = HT_MODE_PROP.encode_utf16().collect();
+            if mode == "full" {
+                SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_FULL);
+                apply_window_region(hwnd, HT_MODE_FULL);
             } else {
-                let region = CreateRoundRectRgn(x, y, x + w, y + h, 20, 20);
-                if region == 0 {
-                    return Err("CreateRoundRectRgn failed".into());
-                }
-                SetWindowRgn(hwnd, region, 1);
+                SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_CAPSULE);
+                apply_window_region(hwnd, HT_MODE_CAPSULE);
             }
         }
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (&app, &state, x, y, w, h);
+        let _ = (&app, &state, mode);
     }
 
     Ok(())
@@ -203,20 +557,33 @@ fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
     unsafe {
         let mut pt = POINT { x: 0, y: 0 };
         if GetCursorPos(&mut pt) == 0 {
-            return (false, EdgeCursorPayload {
-                cursor_x: 0, cursor_y: 0,
-                mon_left: 0, mon_top: 0, mon_right: 0, mon_bottom: 0,
-            });
+            return (
+                false,
+                EdgeCursorPayload {
+                    cursor_x: 0,
+                    cursor_y: 0,
+                    mon_left: 0,
+                    mon_top: 0,
+                    mon_right: 0,
+                    mon_bottom: 0,
+                },
+            );
         }
 
-        // Use virtual screen bounds for fallback (covers all monitors)
         let sw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
         let sh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
         if sw <= 0 || sh <= 0 {
-            return (false, EdgeCursorPayload {
-                cursor_x: pt.x, cursor_y: pt.y,
-                mon_left: 0, mon_top: 0, mon_right: 0, mon_bottom: 0,
-            });
+            return (
+                false,
+                EdgeCursorPayload {
+                    cursor_x: pt.x,
+                    cursor_y: pt.y,
+                    mon_left: 0,
+                    mon_top: 0,
+                    mon_right: 0,
+                    mon_bottom: 0,
+                },
+            );
         }
 
         let h_mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
@@ -226,23 +593,47 @@ fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
             let in_top = pt.y < EDGE_THRESHOLD;
             let in_bottom = pt.y > sh - EDGE_THRESHOLD;
             let at_edge = in_left || in_right || in_top || in_bottom;
-            return (at_edge, EdgeCursorPayload {
-                cursor_x: pt.x, cursor_y: pt.y,
-                mon_left: 0, mon_top: 0, mon_right: 0, mon_bottom: 0,
-            });
+            return (
+                at_edge,
+                EdgeCursorPayload {
+                    cursor_x: pt.x,
+                    cursor_y: pt.y,
+                    mon_left: 0,
+                    mon_top: 0,
+                    mon_right: 0,
+                    mon_bottom: 0,
+                },
+            );
         }
 
         let mut mi = MONITORINFO {
             cb_size: std::mem::size_of::<MONITORINFO>() as u32,
-            rc_monitor: RECT { left: 0, top: 0, right: 0, bottom: 0 },
-            rc_work: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            rc_monitor: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            rc_work: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
             dw_flags: 0,
         };
         if GetMonitorInfoW(h_mon, &mut mi) == 0 {
-            return (false, EdgeCursorPayload {
-                cursor_x: pt.x, cursor_y: pt.y,
-                mon_left: 0, mon_top: 0, mon_right: 0, mon_bottom: 0,
-            });
+            return (
+                false,
+                EdgeCursorPayload {
+                    cursor_x: pt.x,
+                    cursor_y: pt.y,
+                    mon_left: 0,
+                    mon_top: 0,
+                    mon_right: 0,
+                    mon_bottom: 0,
+                },
+            );
         }
 
         let in_top = pt.y - mi.rc_monitor.top < EDGE_THRESHOLD;
