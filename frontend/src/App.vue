@@ -6,6 +6,7 @@ import CapsuleBar from '@/components/CapsuleBar.vue'
 import IslandSummary from '@/components/IslandSummary.vue'
 import { useMonitor } from '@/composables/useMonitor'
 import { useWindowMorph } from '@/composables/useWindowMorph'
+import { WINDOW_MORPH, capsuleOffsetX } from '@/lib/windowMorphConfig'
 
 const activeTab = ref('monitor')
 const searchQuery = ref('')
@@ -22,7 +23,7 @@ const {
 
 /** Capsule exists when idle, and while entering so it can fade out under user action. */
 const capsuleMounted = computed(() =>
-  islandState.value === 'idle' || islandState.value === 'entering'
+  islandState.value === 'idle' || islandState.value === 'entering' || islandState.value === 'leaving'
 )
 
 /** Island exists when not idle */
@@ -38,11 +39,18 @@ const islandAnimate = computed(() => {
   return { y: -120, opacity: 0 }
 })
 
-/** Capsule opacity: idle=visible, entering=fade out. It stays unmounted while island leaves. */
+/** Capsule opacity: idle/leaving=visible, entering=fade out under the island. */
 const capsuleAnimate = computed(() => {
-  if (islandState.value === 'idle') return { opacity: 1, scale: 1 }
+  if (islandState.value === 'idle' || islandState.value === 'leaving') return { opacity: 1, scale: 1 }
   return { opacity: 0, scale: 0.85 }
 })
+
+const rootStyle = computed(() => ({
+  '--morph-capsule-left': `${capsuleOffsetX}px`,
+  '--morph-capsule-w': `${WINDOW_MORPH.capsuleW}px`,
+  '--morph-capsule-h': `${WINDOW_MORPH.capsuleH}px`,
+  '--morph-island-h': `${WINDOW_MORPH.fullH}px`,
+}))
 
 const islandTransition = computed(() => {
   if (islandState.value === 'leaving') {
@@ -69,7 +77,7 @@ function onIslandAnimComplete() {
 </script>
 
 <template>
-  <div class="root h-screen w-screen overflow-visible select-none">
+  <div class="root h-screen w-screen overflow-visible select-none" :style="rootStyle">
     <!-- ─── Capsule — fades out when island enters, fades in when island leaves ─── -->
     <motion.div
       v-if="capsuleMounted"
@@ -133,10 +141,10 @@ function onIslandAnimComplete() {
 .capsule-layer {
   position: absolute;
   top: 0;
-  left: calc(50% - 80px);  /* center of 315px window: (315-160)/2 = 77.5 ≈ 80px offset */
-  width: 160px;
-  height: 40px;
-  z-index: 10;
+  left: var(--morph-capsule-left);
+  width: var(--morph-capsule-w);
+  height: var(--morph-capsule-h);
+  z-index: 20;
   pointer-events: auto;
   cursor: grab;
   will-change: transform, opacity;
@@ -152,30 +160,21 @@ function onIslandAnimComplete() {
   top: 0;
   left: 0;
   width: 100%;
-  height: 100px;
+  height: var(--morph-island-h);
   z-index: 10;
   pointer-events: none;
   will-change: transform, opacity;
   transform-origin: top center;
   isolation: isolate;
-  background: hsl(30 12% 9% / 0.86);
-  border: 0;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  background: hsl(30 12% 9% / 0.62);
+  backdrop-filter: blur(32px) saturate(175%);
+  -webkit-backdrop-filter: blur(32px) saturate(175%);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 16px;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgb(255 255 255 / 0.12);
   overflow: hidden;
-}
-
-.island-panel::before {
-  content: "";
-  position: absolute;
-  inset: -18px;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 22% 18%, hsl(38 85% 58% / 0.18), transparent 30%),
-    radial-gradient(circle at 78% 80%, hsl(140 48% 55% / 0.10), transparent 34%),
-    linear-gradient(135deg, hsl(30 10% 18% / 0.34), hsl(30 12% 8% / 0.18));
-  filter: blur(18px);
-  opacity: 0.72;
 }
 
 .island-panel > * {

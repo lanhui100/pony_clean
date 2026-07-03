@@ -124,6 +124,40 @@ const HT_MODE_CAPSULE: isize = 0;
 const HT_MODE_FULL: isize = 1;
 
 #[cfg(target_os = "windows")]
+fn lparam_screen_point(lparam: isize) -> POINT {
+    let raw = lparam as i32;
+    POINT {
+        x: (raw as u16) as i16 as i32,
+        y: ((raw >> 16) as u16) as i16 as i32,
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn cursor_in_capsule_region(hwnd: isize, pt: POINT) -> bool {
+    let mut wr = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if unsafe { GetWindowRect(hwnd, &mut wr) } == 0 {
+        return false;
+    }
+
+    let phys_w = wr.right - wr.left;
+    if phys_w <= 0 {
+        return false;
+    }
+
+    let dpr = phys_w as f32 / LOGICAL_W as f32;
+    let c_w = (CAPSULE_W as f32 * dpr).round() as i32;
+    let c_h = (CAPSULE_H as f32 * dpr).round() as i32;
+    let c_x = wr.left + (phys_w - c_w) / 2;
+
+    pt.x >= c_x && pt.x < c_x + c_w && pt.y >= wr.top && pt.y < wr.top + c_h
+}
+
+#[cfg(target_os = "windows")]
 unsafe fn redraw_window_frame(hwnd: isize) {
     const RDW_FRAME: u32 = 0x0400;
     const RDW_INVALIDATE: u32 = 0x0001;
@@ -158,8 +192,9 @@ unsafe fn apply_window_region(hwnd: isize, mode: isize) {
 
     let dpr = phys_w as f32 / LOGICAL_W as f32;
     let region = if mode == HT_MODE_FULL {
-        let r = (ISLAND_RADIUS as f32 * dpr).round() as i32;
-        unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, r, r) }
+        // CreateRoundRectRgn expects the corner ellipse size, not the CSS radius.
+        let ellipse = (ISLAND_RADIUS as f32 * dpr * 2.0).round() as i32;
+        unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, ellipse, ellipse) }
     } else {
         let c_w = (CAPSULE_W as f32 * dpr).round() as i32;
         let c_h = (CAPSULE_H as f32 * dpr).round() as i32;
@@ -211,8 +246,8 @@ fn get_hwnd(app: &AppHandle) -> Option<isize> {
 // ─── WM_NCHITTEST subclass ───
 
 /// Window subclass procedure that handles WM_NCHITTEST.
-/// Returns HTNOWHERE for areas outside the interactive region,
-/// allowing clicks to pass through to windows beneath.
+/// The actual click-through behavior is provided by SetWindowRgn. Returning
+/// HTNOWHERE here is only a defensive fallback for stale or failed regions.
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn hit_test_subclass(
     hwnd: isize,
@@ -225,7 +260,8 @@ unsafe extern "system" fn hit_test_subclass(
     const WM_NCHITTEST: u32 = 0x0084;
     const WM_ERASEBKGND: u32 = 0x0014;
     const HTCLIENT: isize = 1;
-    // HTNOWHERE silently drops the click without passing it through.
+    // HTNOWHERE silently drops the click without passing it through. Do not rely
+    // on it for click-through; SetWindowRgn must match the visible surface.
     // Using HTTRANSPARENT would trigger Windows 11 to show a title-bar
     // preview on always-on-top windows when they lose focus.
     const HTNOWHERE: isize = -2;
@@ -248,13 +284,7 @@ unsafe extern "system" fn hit_test_subclass(
         }
 
         // Capsule mode: only the centered 160×40 (logical) area is interactive
-        let screen_x = (lparam & 0xFFFF) as i32;
-        let screen_y = ((lparam >> 16) & 0xFFFF) as i32;
-
-        let mut pt = POINT {
-            x: screen_x,
-            y: screen_y,
-        };
+        let mut pt = lparam_screen_point(lparam);
         if unsafe { ScreenToClient(hwnd, &mut pt) } == 0 {
             return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
         }
@@ -524,6 +554,14 @@ pub fn start_edge_cursor_detect(
 
     let running = state.running.clone();
     let app = app.clone();
+    #[cfg(target_os = "windows")]
+    let hwnd = {
+        let hwnd = get_hwnd(&app);
+        if let Some(hwnd) = hwnd {
+            *state.hwnd.lock().unwrap() = Some(hwnd);
+        }
+        hwnd
+    };
 
     std::thread::spawn(move || {
         let mut was_at_edge = false;
@@ -532,6 +570,9 @@ pub fn start_edge_cursor_detect(
                 break;
             }
 
+            #[cfg(target_os = "windows")]
+            let (at_edge, payload) = is_cursor_at_edge(hwnd);
+            #[cfg(not(target_os = "windows"))]
             let (at_edge, payload) = is_cursor_at_edge();
 
             if at_edge && !was_at_edge {
@@ -553,7 +594,8 @@ pub fn stop_edge_cursor_detect(state: tauri::State<'_, EdgeCursorState>) -> Resu
     Ok(())
 }
 
-fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
+#[cfg(target_os = "windows")]
+fn is_cursor_at_edge(hwnd: Option<isize>) -> (bool, EdgeCursorPayload) {
     unsafe {
         let mut pt = POINT { x: 0, y: 0 };
         if GetCursorPos(&mut pt) == 0 {
@@ -637,7 +679,10 @@ fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
         }
 
         let in_top = pt.y - mi.rc_monitor.top < EDGE_THRESHOLD;
-        let at_edge = in_top;
+        let in_capsule = hwnd
+            .map(|hwnd| cursor_in_capsule_region(hwnd, pt))
+            .unwrap_or(true);
+        let at_edge = in_top && in_capsule;
 
         (
             at_edge,
@@ -651,4 +696,19 @@ fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
             },
         )
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
+    (
+        false,
+        EdgeCursorPayload {
+            cursor_x: 0,
+            cursor_y: 0,
+            mon_left: 0,
+            mon_top: 0,
+            mon_right: 0,
+            mon_bottom: 0,
+        },
+    )
 }

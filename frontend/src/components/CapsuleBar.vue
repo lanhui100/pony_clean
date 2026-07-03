@@ -51,7 +51,11 @@ const memBg = computed(() => {
   >
     <!-- CPU half -->
     <div class="relative flex flex-1 items-center justify-center h-full overflow-hidden rounded-l-full" :class="cpuBg">
-      <div class="absolute left-0 top-0 h-full rounded-l-full transition-all duration-500 ease-out" :class="[cpuTint, cpuFill]" />
+      <div
+        class="progress-fill absolute left-0 top-0 h-full rounded-l-full transition-all duration-500 ease-out"
+        :class="cpuTint"
+        :style="cpuFill"
+      />
       <span class="relative z-10 text-white font-bold text-[13px] leading-none drop-shadow-sm">
         {{ cpuPercent }}<span class="text-white/60 text-[10px] ml-0.5">CPU</span>
       </span>
@@ -62,7 +66,11 @@ const memBg = computed(() => {
 
     <!-- MEM half -->
     <div class="relative flex flex-1 items-center justify-center h-full overflow-hidden rounded-r-full" :class="memBg">
-      <div class="absolute left-0 top-0 h-full rounded-r-full transition-all duration-500 ease-out" :class="[memTint, memFill]" />
+      <div
+        class="progress-fill absolute right-0 top-0 h-full rounded-r-full transition-all duration-500 ease-out"
+        :class="memTint"
+        :style="memFill"
+      />
       <span class="relative z-10 text-white font-bold text-[13px] leading-none drop-shadow-sm">
         {{ memPercent }}<span class="text-white/60 text-[10px] ml-0.5">MEM</span>
       </span>
@@ -72,12 +80,25 @@ const memBg = computed(() => {
 
 <style scoped>
 .capsule-bar {
-  background: rgba(30, 28, 26, 0.95);
-  border: 0;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+  background:
+    linear-gradient(180deg, rgba(42, 39, 35, 0.98), rgba(20, 19, 18, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 5px 12px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45);
+}
+
+.progress-fill {
+  opacity: 0.72;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
 .capsule-hovered {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px hsla(38, 85%, 58%, 0.08);
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.52),
+    0 0 20px hsla(38, 85%, 58%, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.42);
 }
 </style>

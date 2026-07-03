@@ -2,17 +2,9 @@ import { ref, onMounted, onUnmounted, type Ref } from 'vue'
 import { getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { WINDOW_MORPH } from '@/lib/windowMorphConfig'
 
 export type IslandState = 'idle' | 'entering' | 'visible' | 'leaving'
-
-const FULL_W = 315
-const FULL_H = 100            // Window height = island height
-const CAPSULE_W = 160
-const CAPSULE_H = 40
-const ISLAND_H = 100
-const EDGE_PADDING = 8
-const IDLE_TIMEOUT = 5_000
-const IDLE_POLL_INTERVAL = 1000
 
 const win = getCurrentWindow()
 
@@ -23,6 +15,14 @@ interface EdgeCursorPayload {
   mon_top: number
   mon_right: number
   mon_bottom: number
+}
+
+interface MonitorBounds {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
 }
 
 export function useWindowMorph(scanning: Ref<boolean>) {
@@ -36,14 +36,19 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let dragStartX = 0
   let dragStartWinX = 0
   let isDragging = false
+  let dragMoved = false
   let dragRafId: number | null = null
   let pendingDragX: number | null = null
+  let hoverShowTimer: ReturnType<typeof setTimeout> | null = null
   let onMoveRef: ((e: MouseEvent) => void) | null = null
   let onUpRef: (() => void) | null = null
+  let suppressNextCapsuleClick = false
+  let suppressHoverUntilLeave = false
 
   // Timers
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let idlePollTimer: ReturnType<typeof setTimeout> | null = null
+  let edgeEnterTimer: ReturnType<typeof setTimeout> | null = null
   let unlistenEdgeEnter: UnlistenFn | null = null
   let unlistenEdgeLeave: UnlistenFn | null = null
   let lastActivityMs = Date.now()
@@ -52,20 +57,38 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let pendingShowAfterLeave = false
 
   /** ─── Window positioning ─── */
-  async function getSw(): Promise<number> {
+  async function getMonitorBounds(): Promise<MonitorBounds> {
     try {
       const m = await win.currentMonitor()
-      return m?.size.width ?? Math.round(window.screen.width * (window.devicePixelRatio || 1))
+      if (m) {
+        return {
+          left: m.position.x,
+          top: m.position.y,
+          right: m.position.x + m.size.width,
+          bottom: m.position.y + m.size.height,
+          width: m.size.width,
+        }
+      }
     } catch {
-      return Math.round(window.screen.width * (window.devicePixelRatio || 1))
+      // Fall through to the browser screen fallback below.
+    }
+
+    const dpr = window.devicePixelRatio || 1
+    const width = Math.round(window.screen.width * dpr)
+    return {
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: Math.round(window.screen.height * dpr),
+      width,
     }
   }
 
   async function centerWindowX(): Promise<number> {
-    const sw = await getSw()
-    const { width: actualW } = await win.outerSize().catch(() => ({ width: FULL_W }))
-    const cx = Math.round((sw - actualW) / 2)
-    await win.setPosition(new PhysicalPosition(cx, 0)).catch(() => {})
+    const monitor = await getMonitorBounds()
+    const { width: actualW } = await win.outerSize().catch(() => ({ width: WINDOW_MORPH.fullW }))
+    const cx = monitor.left + Math.round((monitor.width - actualW) / 2)
+    await win.setPosition(new PhysicalPosition(cx, monitor.top)).catch(() => {})
     currentWindowX = cx
     return cx
   }
@@ -73,14 +96,26 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   /** Set Win32 hit-test to capsule-only area (idle state).
    *  Outside the capsule, clicks pass through to windows beneath.
    *  No DPI conversion needed — WM_NCHITTEST subclass handles it. */
-  async function setRegionCapsule() {
-    await invoke('set_hit_test_mode', { mode: 'capsule' }).catch(() => {})
+  async function setRegionCapsule(): Promise<boolean> {
+    try {
+      await invoke('set_hit_test_mode', { mode: 'capsule' })
+      return true
+    } catch (err) {
+      console.warn('[PonyClean] Failed to switch window region to capsule', err)
+      return false
+    }
   }
 
   /** Set Win32 hit-test to full window area (visible/entering/leaving state).
    *  Entire window is interactive. */
-  async function setRegionFull() {
-    await invoke('set_hit_test_mode', { mode: 'full' }).catch(() => {})
+  async function setRegionFull(): Promise<boolean> {
+    try {
+      await invoke('set_hit_test_mode', { mode: 'full' })
+      return true
+    } catch (err) {
+      console.warn('[PonyClean] Failed to switch window region to full', err)
+      return false
+    }
   }
 
   /** ─── State transitions ─── */
@@ -91,18 +126,25 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       pendingShowAfterLeave = true
       return
     }
-    // Update region FIRST so the island panel is fully visible when animation starts
-    await setRegionFull()
+    // Update region first so the island panel is fully visible when animation starts.
+    if (!await setRegionFull()) return
     islandState.value = 'entering'
   }
 
   function onCapsuleClick() {
+    if (suppressNextCapsuleClick) {
+      suppressNextCapsuleClick = false
+      return
+    }
     showIsland()
   }
 
   function hideIsland() {
     if (islandState.value === 'idle' || islandState.value === 'leaving') return
     islandState.value = 'leaving'
+    // Prefer a clipped native region while the island fades out, so the mostly
+    // transparent full window does not keep blocking apps underneath.
+    setRegionCapsule()
   }
 
   function onEnterDone() {
@@ -113,11 +155,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     }
   }
 
-  async function onLeaveDone() {
+  function onLeaveDone() {
     if (islandState.value === 'leaving') {
-      // Switch region FIRST to capsule-only before marking idle,
-      // so there's no window where region (full) > visual content (capsule)
-      await setRegionCapsule()
       islandState.value = 'idle'
       stopIdleDetection()
       // Check for re-entry request made during leaving
@@ -136,23 +175,23 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     idleTimer = setTimeout(() => {
       if (isInsideIsland.value) { resetIdleTimer(); return }
       hideIsland()
-    }, IDLE_TIMEOUT)
+    }, WINDOW_MORPH.idleTimeout)
   }
 
   async function pollIdle() {
     if (islandState.value !== 'visible') { scheduleNextPoll(); return }
     if (scanning.value || isInsideIsland.value) { resetIdleTimer(); scheduleNextPoll(); return }
     const elapsed = Date.now() - lastActivityMs
-    if (elapsed >= IDLE_TIMEOUT) {
+    if (elapsed >= WINDOW_MORPH.idleTimeout) {
       try {
-        if (await invoke<number>('get_system_idle_ms') >= IDLE_TIMEOUT) hideIsland()
+        if (await invoke<number>('get_system_idle_ms') >= WINDOW_MORPH.idleTimeout) hideIsland()
       } catch { /* fallback */ }
     }
     scheduleNextPoll()
   }
 
   function scheduleNextPoll() {
-    idlePollTimer = setTimeout(pollIdle, IDLE_POLL_INTERVAL) as unknown as ReturnType<typeof setTimeout>
+    idlePollTimer = setTimeout(pollIdle, WINDOW_MORPH.idlePollInterval) as unknown as ReturnType<typeof setTimeout>
   }
 
   function startIdleDetection() {
@@ -168,16 +207,39 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   /** ─── Mouse event handlers ─── */
+  function clearHoverShowTimer() {
+    if (hoverShowTimer) clearTimeout(hoverShowTimer)
+    hoverShowTimer = null
+  }
+
+  function clearEdgeEnterTimer() {
+    if (edgeEnterTimer) clearTimeout(edgeEnterTimer)
+    edgeEnterTimer = null
+  }
+
+  function scheduleHoverShow() {
+    clearHoverShowTimer()
+    hoverShowTimer = setTimeout(() => {
+      hoverShowTimer = null
+      if (!capsuleHovered.value || isDragging || suppressHoverUntilLeave) return
+      showIsland()
+      resetIdleTimer()
+    }, WINDOW_MORPH.hoverShowDelay)
+  }
+
   function onCapsuleEnter() {
     capsuleHovered.value = true
     isInsideIsland.value = true
-    showIsland()
+    if (!isDragging && !suppressHoverUntilLeave) scheduleHoverShow()
     resetIdleTimer()
   }
 
   function onCapsuleLeave() {
     capsuleHovered.value = false
+    suppressHoverUntilLeave = false
+    clearHoverShowTimer()
     // Island mouseenter will take over
+    if (islandState.value === 'idle' && !isDragging) isInsideIsland.value = false
   }
 
   function onIslandEnter() {
@@ -199,7 +261,14 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   function onCapsuleDragStart(e: MouseEvent) {
     if (islandState.value !== 'idle') return
     e.preventDefault()
+    e.stopPropagation()
+    clearHoverShowTimer()
+    clearEdgeEnterTimer()
     isDragging = true
+    dragMoved = false
+    suppressHoverUntilLeave = true
+    capsuleHovered.value = false
+    isInsideIsland.value = false
     dragStartX = e.screenX
     dragStartWinX = currentWindowX
     pendingDragX = null
@@ -208,14 +277,15 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       if (!isDragging) return
       const dpr = window.devicePixelRatio || 1
       const dx = ev.screenX - dragStartX          // delta in CSS logical pixels
+      if (!dragMoved && Math.abs(dx) >= WINDOW_MORPH.dragStartThreshold) dragMoved = true
       // Convert logical delta to physical pixels to match PhysicalPosition
       pendingDragX = dragStartWinX + Math.round(dx * dpr)
       if (dragRafId === null) {
-        // Capture the latest value sync, then apply async outside RAF
-        const targetX = pendingDragX
-        pendingDragX = null
         dragRafId = requestAnimationFrame(() => {
           dragRafId = null
+          const targetX = pendingDragX
+          pendingDragX = null
+          if (targetX === null) return
           applyDragPosition(targetX)
         })
       }
@@ -223,8 +293,10 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
     const onUp = () => {
       isDragging = false
+      if (dragMoved) suppressNextCapsuleClick = true
       if (dragRafId !== null) cancelAnimationFrame(dragRafId)
       dragRafId = null
+      if (pendingDragX !== null) applyDragPosition(pendingDragX)
       pendingDragX = null
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
@@ -240,17 +312,20 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   async function applyDragPosition(targetX: number) {
     const dpr = window.devicePixelRatio || 1
-    const sw = await getSw()
-    const edgePx = Math.round(EDGE_PADDING * dpr)
-    const fullWPx = Math.round(FULL_W * dpr)
-    const clampedX = Math.max(edgePx, Math.min(targetX, sw - fullWPx - edgePx))
-    await win.setPosition(new PhysicalPosition(clampedX, 0)).catch(() => {})
+    const monitor = await getMonitorBounds()
+    const edgePx = Math.round(WINDOW_MORPH.edgePadding * dpr)
+    const fullWPx = Math.round(WINDOW_MORPH.fullW * dpr)
+    const minX = monitor.left + edgePx
+    const maxX = monitor.right - fullWPx - edgePx
+    const clampedX = Math.max(minX, Math.min(targetX, maxX))
+    await win.setPosition(new PhysicalPosition(clampedX, monitor.top)).catch(() => {})
     currentWindowX = clampedX
   }
 
   function onBlur() {
     isInsideIsland.value = false
     capsuleHovered.value = false
+    clearHoverShowTimer()
     resetIdleTimer()
   }
 
@@ -266,16 +341,19 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     // Start with capsule-only region so only the capsule is visible in idle state
     await setRegionCapsule()
 
-    startIdleDetection()
     window.addEventListener('blur', onBlur)
 
     try {
       await invoke('start_edge_cursor_detect')
-      let edgeEnterTimer: ReturnType<typeof setTimeout> | null = null
       unlistenEdgeEnter = await listen<EdgeCursorPayload>('edge-cursor-enter', () => {
-        if (islandState.value === 'idle') {
-          if (edgeEnterTimer) clearTimeout(edgeEnterTimer)
-          edgeEnterTimer = setTimeout(() => { showIsland(); edgeEnterTimer = null }, 50)
+        if (islandState.value === 'idle' && !isDragging && !suppressHoverUntilLeave) {
+          clearEdgeEnterTimer()
+          edgeEnterTimer = setTimeout(() => {
+            edgeEnterTimer = null
+            if (islandState.value === 'idle' && !isDragging && !suppressHoverUntilLeave) {
+              showIsland()
+            }
+          }, 50)
         }
       })
       unlistenEdgeLeave = await listen<unknown>('edge-cursor-leave', () => {})
@@ -284,6 +362,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   onUnmounted(() => {
     stopIdleDetection()
+    clearHoverShowTimer()
+    clearEdgeEnterTimer()
     window.removeEventListener('blur', onBlur)
     invoke('stop_edge_cursor_detect').catch(() => {})
     unlistenEdgeEnter?.()
