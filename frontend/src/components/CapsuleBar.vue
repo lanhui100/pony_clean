@@ -82,11 +82,11 @@ const memBg = computed(() => {
 .capsule-bar {
   background:
     linear-gradient(180deg, rgba(42, 39, 35, 0.98), rgba(20, 19, 18, 0.96));
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow:
-    0 5px 12px rgba(0, 0, 0, 0.46),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.45);
+  border: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition:
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
 }
 
 .progress-fill {
@@ -95,10 +95,6 @@ const memBg = computed(() => {
 }
 
 .capsule-hovered {
-  box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.52),
-    0 0 20px hsla(38, 85%, 58%, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.10),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 </style>
