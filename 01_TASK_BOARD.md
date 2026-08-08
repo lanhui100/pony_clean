@@ -46,3 +46,4 @@ _(暂无)_
 | TASK-017 | 清理路径规则可配置 — 自定义清理目标 | P1 | @self |
 | TASK-018 | Phase 3 — 大文件扫描 + 磁盘分析 | P1 | @self |
 | TASK-019 | 端到端测试与修复（暗色适配 + 删除按钮） | P1 | @self |
+| TASK-020 | OptionPicker 暗色下拉 + island Acrylic 毛玻璃 | P1 | @self |
