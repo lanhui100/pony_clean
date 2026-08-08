@@ -572,6 +572,20 @@ unsafe fn remove_dwm_border(hwnd: isize) {
             std::mem::size_of::<i32>() as u32,
         );
     }
+
+    // DWMWA_NCRENDERING_POLICY = 2 — DWM 不渲染非客户区（标题栏/边框）。
+    // 这是无边框窗口隐藏标题栏的标准开关：WM_NCCALCSIZE 返回值被 Win11 DWM
+    // 忽略，必须显式禁用非客户区渲染。WS_CAPTION 样式位保留（SWCA Acrylic 依赖）。
+    const DWMWA_NCRENDERING_POLICY: u32 = 2;
+    const DWMNCRP_DISABLED: i32 = 2;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            &DWMNCRP_DISABLED as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
