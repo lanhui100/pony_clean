@@ -29,24 +29,25 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
-/// 为灵动岛窗口应用 Acrylic 毛玻璃（HWND 层级，DWM 合成）。
+/// 为灵动岛窗口应用 Acrylic 毛玻璃（HWND 层级，SWCA 原生 API）。
 ///
-/// Windows 的毛玻璃是窗口级效果：CSS `backdrop-filter` 只能模糊 WebView
-/// 内部内容，无法模糊窗口背后的桌面。必须对 HWND 调用系统 API。
-/// 使用 window-vibrancy（SetWindowCompositionAttribute ACCENT_ENABLE_ACRYLICBLURBEHIND），
-/// 比 Tauri JS setEffects 更可靠；失败时静默回退到 CSS 拟态玻璃。
+/// 层级说明：Windows 毛玻璃是窗口级效果，CSS backdrop-filter 无法模糊
+/// 窗口背后的桌面，必须对 HWND 调用系统 API。
+/// 使用自实现 SWCA（SetWindowCompositionAttribute + ACCENT_ENABLE_ACRYLICBLURBEHIND）：
+/// - Win10/11 通用
+/// - 不触发 DWM 标题栏（window-vibrancy 的 TRANSIENTWINDOW 路径会绘制系统标题栏）
+/// 失败时回退 Blur，再失败回退 CSS 拟态玻璃。
 fn apply_island_vibrancy(app: &tauri::AppHandle) {
     #[cfg(target_os = "windows")]
     {
-        use window_vibrancy::{apply_acrylic, apply_blur};
-        if let Some(island) = app.get_webview_window("island") {
+        use commands::window::{apply_acrylic_swca, apply_blur_swca, get_hwnd_for_label};
+        if let Some(hwnd) = get_hwnd_for_label(app, "island") {
             // RGBA 着色：接近主题深色 hsl(30 12% 9%)，alpha 145 兼顾模糊透出与可读性
-            // 优先 Acrylic（Win 10/11），失败回退 Blur（简单高斯模糊）
-            match apply_acrylic(&island, Some((26, 24, 21, 145))) {
+            match apply_acrylic_swca(hwnd, (26, 24, 21, 145)) {
                 Ok(()) => eprintln!("[PonyClean] Acrylic applied to island window"),
                 Err(e) => {
                     eprintln!("[PonyClean] Acrylic failed, falling back to Blur: {}", e);
-                    match apply_blur(&island, Some((26, 24, 21, 135))) {
+                    match apply_blur_swca(hwnd, (26, 24, 21, 135)) {
                         Ok(()) => eprintln!("[PonyClean] Blur applied to island window"),
                         Err(e2) => eprintln!(
                             "[PonyClean] Blur failed too (fallback to CSS glass): {}",

@@ -68,6 +68,9 @@ unsafe extern "system" {
     ) -> i32;
     fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
     fn RedrawWindow(hWnd: isize, lprcUpdate: *const RECT, hrgnUpdate: isize, flags: u32) -> i32;
+    // Acrylic (SWCA)
+    fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
+    fn GetProcAddress(hModule: isize, lpProcName: *const u8) -> *mut std::ffi::c_void;
 }
 
 #[link(name = "comctl32")]
@@ -108,6 +111,87 @@ type SUBCLASSPROC = unsafe extern "system" fn(
     u_id_subclass: usize,
     dw_ref_data: usize,
 ) -> isize;
+
+// ─── Acrylic 毛玻璃（SWCA 手写实现） ───
+// 不使用 window-vibrancy 的 apply_acrylic：其在 Win11 走
+// DWMSBT_TRANSIENTWINDOW 路径，会强制 DWM 绘制系统标题栏（最小化/关闭/最大化按钮）。
+// SWCA（SetWindowCompositionAttribute + ACCENT_ENABLE_ACRYLICBLURBEHIND）
+// 是 Win10/11 通用的 Acrylic 实现，不触发标题栏。
+
+/// ACCENT_POLICY（SetWindowCompositionAttribute 数据结构）
+#[repr(C)]
+pub struct AccentPolicy {
+    pub accent_state: u32,
+    pub accent_flags: u32,
+    pub gradient_color: u32,
+    pub animation_id: u32,
+}
+
+/// WCA_DATA（SetWindowCompositionAttribute 数据结构）
+#[repr(C)]
+pub struct WCA_DATA {
+    pub attribute: u32,
+    pub data: *mut AccentPolicy,
+    pub size_of_data: u32,
+}
+
+const WCA_ACCENT_POLICY: u32 = 19;
+const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
+const ACCENT_ENABLE_BLURBEHIND: u32 = 3;
+
+/// 对窗口应用 Acrylic 毛玻璃（SWCA 路径，不触发 DWM 标题栏）
+///
+/// `rgba` 为着色色值 (R, G, B, A)，A 越大背景越实、模糊越弱。
+#[cfg(target_os = "windows")]
+pub fn apply_acrylic_swca(hwnd: isize, rgba: (u8, u8, u8, u8)) -> Result<(), String> {
+    apply_accent(hwnd, ACCENT_ENABLE_ACRYLICBLURBEHIND, rgba)
+}
+
+/// 对窗口应用 Blur 毛玻璃（SWCA 路径，Acrylic 不可用时的回退）
+#[cfg(target_os = "windows")]
+pub fn apply_blur_swca(hwnd: isize, rgba: (u8, u8, u8, u8)) -> Result<(), String> {
+    apply_accent(hwnd, ACCENT_ENABLE_BLURBEHIND, rgba)
+}
+
+#[cfg(target_os = "windows")]
+fn apply_accent(hwnd: isize, state: u32, rgba: (u8, u8, u8, u8)) -> Result<(), String> {
+    // SetWindowCompositionAttribute 是 Win10 1809+ 的动态 API，
+    // 不在 MSVC user32.lib 导入表中，必须 GetProcAddress 动态加载。
+    type SwcaFn = unsafe extern "system" fn(isize, *mut WCA_DATA) -> i32;
+    let swca: SwcaFn = unsafe {
+        let user32 = GetModuleHandleW([0x75, 0x73, 0x65, 0x72, 0x33, 0x32, 0x2e, 0x64, 0x6c, 0x6c, 0].as_ptr());
+        if user32 == 0 {
+            return Err("GetModuleHandleW(user32) failed".into());
+        }
+        let name = b"SetWindowCompositionAttribute\0";
+        let addr = GetProcAddress(user32, name.as_ptr() as *const u8);
+        if addr.is_null() {
+            return Err("SetWindowCompositionAttribute not found".into());
+        }
+        std::mem::transmute(addr)
+    };
+
+    let (r, g, b, a) = rgba;
+    // gradient_color 格式：0xAARRGGBB
+    let gradient = ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+    let mut policy = AccentPolicy {
+        accent_state: state,
+        accent_flags: 0,
+        gradient_color: gradient,
+        animation_id: 0,
+    };
+    let mut data = WCA_DATA {
+        attribute: WCA_ACCENT_POLICY,
+        data: &mut policy,
+        size_of_data: std::mem::size_of::<AccentPolicy>() as u32,
+    };
+    let ret = unsafe { swca(hwnd, &mut data) };
+    if ret == 0 {
+        Err("SetWindowCompositionAttribute failed".into())
+    } else {
+        Ok(())
+    }
+}
 
 const MONITOR_DEFAULTTONEAREST: u32 = 2;
 const SM_CXVIRTUALSCREEN: i32 = 78;
@@ -248,7 +332,7 @@ fn get_hwnd(app: &AppHandle) -> Option<isize> {
 }
 
 #[cfg(target_os = "windows")]
-fn get_hwnd_for_label(app: &AppHandle, label: &str) -> Option<isize> {
+pub fn get_hwnd_for_label(app: &AppHandle, label: &str) -> Option<isize> {
     let window = app.get_webview_window(label)?;
     match window.window_handle().ok()?.as_raw() {
         RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),

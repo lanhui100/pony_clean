@@ -16,7 +16,6 @@ tokio-util = "0.7"
 tracing = "0.1"
 raw-window-handle = "0.6"
 winreg = "0.52"
-window-vibrancy = "0.5"
 tauri-plugin-notification = "2"
 
 [build-dependencies]
