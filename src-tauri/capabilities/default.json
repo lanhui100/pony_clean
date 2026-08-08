@@ -1,15 +1,20 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for the main window",
-  "windows": ["main"],
+  "description": "Capabilities for capsule + island floating windows",
+  "windows": ["capsule", "island"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
+    "core:window:allow-hide",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-decorations",
     "core:window:allow-set-effects",
     "core:window:allow-set-shadow",
     "core:window:allow-set-position",
     "core:window:allow-outer-position",
-    "core:window:allow-current-monitor"
+    "core:window:allow-outer-size",
+    "core:window:allow-current-monitor",
+    "core:event:allow-listen",
+    "core:event:allow-emit-to"
   ]
 }

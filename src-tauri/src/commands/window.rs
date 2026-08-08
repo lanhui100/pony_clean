@@ -112,9 +112,11 @@ const EDGE_THRESHOLD: i32 = 20;
 
 // Logical window dimensions (CSS pixels)
 const LOGICAL_W: i32 = 315;
-const CAPSULE_W: i32 = 160;
-const CAPSULE_H: i32 = 40;
+const CAPSULE_LOGICAL_W: i32 = 166; // window width (extra 6px for pill anti-aliasing)
+const CAPSULE_W: i32 = 160;         // visual pill width
+const CAPSULE_H: i32 = 40;          // visual pill height
 const ISLAND_RADIUS: i32 = 16;
+const CAPSULE_RADIUS: i32 = 20;
 
 // Window property name for hit-test mode
 const HT_MODE_PROP: &str = "PonyCleanHitMode\0";
@@ -149,8 +151,8 @@ unsafe fn cursor_in_capsule_region(hwnd: isize, pt: POINT) -> bool {
         return false;
     }
 
-    let dpr = phys_w as f32 / LOGICAL_W as f32;
-    let c_w = (CAPSULE_W as f32 * dpr).round() as i32;
+    let dpr = phys_w as f32 / CAPSULE_LOGICAL_W as f32;
+    let c_w = (CAPSULE_LOGICAL_W as f32 * dpr).round() as i32;
     let c_h = (CAPSULE_H as f32 * dpr).round() as i32;
     let c_x = wr.left + (phys_w - c_w) / 2;
 
@@ -236,10 +238,44 @@ impl EdgeCursorState {
 
 #[cfg(target_os = "windows")]
 fn get_hwnd(app: &AppHandle) -> Option<isize> {
-    let window = app.get_webview_window("main")?;
+    get_hwnd_for_label(app, "capsule")
+}
+
+#[cfg(target_os = "windows")]
+fn get_hwnd_for_label(app: &AppHandle, label: &str) -> Option<isize> {
+    let window = app.get_webview_window(label)?;
     match window.window_handle().ok()?.as_raw() {
         RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
         _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn apply_full_round_region(hwnd: isize, logical_w: i32, radius: i32) {
+    let mut cr = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if unsafe { GetClientRect(hwnd, &mut cr) } == 0 {
+        return;
+    }
+
+    let phys_w = cr.right - cr.left;
+    let phys_h = cr.bottom - cr.top;
+    if phys_w <= 0 || phys_h <= 0 {
+        return;
+    }
+
+    let dpr = phys_w as f32 / logical_w as f32;
+    let ellipse = (radius as f32 * dpr * 2.0).round() as i32;
+    let region = unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, ellipse, ellipse) };
+    if region != 0 {
+        unsafe {
+            SetWindowRgn(hwnd, region, 1);
+            redraw_window_frame(hwnd);
+        }
     }
 }
 
@@ -321,114 +357,70 @@ unsafe extern "system" fn hit_test_subclass(
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
-/// Install the WM_NCHITTEST subclass on the main window.
-/// Also removes the DWM thin border that persists even on undecorated windows.
-/// Called once during app setup.
+/// Prepare the floating windows for transparent, borderless rendering.
 #[cfg(target_os = "windows")]
 pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
-    // First, use the Tauri 2 native API to set decorations=false.
-    // This operates at the Tauri/WebView level rather than raw Win32,
-    // and is the canonical way to remove the title bar.
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_decorations(false);
-    }
+    let windows = [
+        ("capsule", CAPSULE_LOGICAL_W, CAPSULE_RADIUS),
+        ("island", LOGICAL_W, ISLAND_RADIUS),
+    ];
 
-    let hwnd = get_hwnd(app).ok_or("cannot get window handle")?;
+    for (label, logical_w, radius) in windows {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_decorations(false);
+            let _ = window.set_effects(None);
+        }
 
-    #[cfg(target_os = "windows")]
-    unsafe {
-        // ── Pre-diagnosis ──
-        let mut wr = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
+        let Some(hwnd) = get_hwnd_for_label(app, label) else {
+            continue;
         };
-        let mut cr = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        GetWindowRect(hwnd, &mut wr);
-        GetClientRect(hwnd, &mut cr);
-        let style = GetWindowLongPtrW(hwnd, -16);
-        let ex_style = GetWindowLongPtrW(hwnd, -20);
 
-        eprintln!("[PonyClean] Window pre-diagnosis:");
-        eprintln!("  WindowRect: {:?}", (wr.left, wr.top, wr.right, wr.bottom));
-        eprintln!("  ClientRect: {:?}", (cr.left, cr.top, cr.right, cr.bottom));
-        eprintln!("  Style:      0x{:x}", style);
-        eprintln!("  ExStyle:    0x{:x}", ex_style);
-        eprintln!("  WS_CAPTION:  {}", (style & 0x00C00000) != 0);
-        eprintln!("  WS_SYSMENU:  {}", (style & 0x00080000) != 0);
-        eprintln!("  WS_POPUP:    {}", (style & 0x80000000) != 0);
-        eprintln!("  WS_DLGFRAME: {}", (style & 0x00400000) != 0);
-        eprintln!("  WS_BORDER:   {}", (style & 0x00800000) != 0);
-        eprintln!("  WS_THICKFRAME:{}", (style & 0x00040000) != 0);
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, -16);
 
-        // ── Install subclass ──
-        if SetWindowSubclass(hwnd, hit_test_subclass as SUBCLASSPROC, 0, 0) == 0 {
-            return Err("SetWindowSubclass failed".into());
+            if SetWindowSubclass(hwnd, hit_test_subclass as SUBCLASSPROC, 0, 0) == 0 {
+                return Err(format!("SetWindowSubclass failed for {label}"));
+            }
+            let prop_name: Vec<u16> = HT_MODE_PROP.encode_utf16().collect();
+            SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_FULL);
+
+            remove_dwm_border(hwnd);
+
+            const GWL_STYLE: i32 = -16;
+            const WS_CAPTION: isize = 0x00C00000;
+            const WS_THICKFRAME: isize = 0x00040000;
+            const WS_SYSMENU: isize = 0x00080000;
+            const WS_MINIMIZEBOX: isize = 0x00020000;
+            const WS_MAXIMIZEBOX: isize = 0x00010000;
+            let new_style = style
+                & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+            if new_style != style {
+                SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
+                const SWP_FRAMECHANGED: u32 = 0x0020;
+                const SWP_NOMOVE: u32 = 0x0002;
+                const SWP_NOSIZE: u32 = 0x0001;
+                const SWP_NOZORDER: u32 = 0x0004;
+                SetWindowPos(
+                    hwnd,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+                );
+            }
+
+            const GWL_EXSTYLE: i32 = -20;
+            const WS_EX_TOOLWINDOW: isize = 0x00000080;
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if (ex_style & WS_EX_TOOLWINDOW) == 0 {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
+            }
+
+            apply_full_round_region(hwnd, logical_w, radius);
+            eprintln!("[PonyClean] Prepared floating window: {label}");
         }
-        let prop_name: Vec<u16> = HT_MODE_PROP.encode_utf16().collect();
-        SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_CAPSULE);
-
-        // ── Remove DWM styles ──
-        remove_dwm_border(hwnd);
-
-        // Strip title bar styles + SWP_FRAMECHANGED
-        const GWL_STYLE: i32 = -16;
-        const WS_CAPTION: isize = 0x00C00000;
-        const WS_THICKFRAME: isize = 0x00040000;
-        const WS_SYSMENU: isize = 0x00080000;
-        const WS_MINIMIZEBOX: isize = 0x00020000;
-        const WS_MAXIMIZEBOX: isize = 0x00010000;
-        let new_style =
-            style & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-        if new_style != style {
-            SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
-            const SWP_FRAMECHANGED: u32 = 0x0020;
-            const SWP_NOMOVE: u32 = 0x0002;
-            const SWP_NOSIZE: u32 = 0x0001;
-            const SWP_NOZORDER: u32 = 0x0004;
-            SetWindowPos(
-                hwnd,
-                0,
-                0,
-                0,
-                0,
-                0,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
-            );
-            eprintln!("[PonyClean] Removed caption styles");
-        }
-
-        // Add WS_EX_TOOLWINDOW extended style to prevent Windows 11 DWM from
-        // showing a "focus-lost" preview bar on always-on-top transparent windows.
-        const GWL_EXSTYLE: i32 = -20;
-        const WS_EX_TOOLWINDOW: isize = 0x00000080;
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        if (ex_style & WS_EX_TOOLWINDOW) == 0 {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
-            eprintln!("[PonyClean] Added WS_EX_TOOLWINDOW");
-        }
-
-        // Start in capsule mode, so Windows never has a full transparent
-        // 315×100 frame to paint behind the visible pill.
-        apply_window_region(hwnd, HT_MODE_CAPSULE);
-        eprintln!("[PonyClean] Initial region set to capsule");
-
-        // ── Post-diagnosis ──
-        GetWindowRect(hwnd, &mut wr);
-        GetClientRect(hwnd, &mut cr);
-        let post_style = GetWindowLongPtrW(hwnd, -16);
-        eprintln!("[PonyClean] Window post-diagnosis:");
-        eprintln!("  WindowRect: {:?}", (wr.left, wr.top, wr.right, wr.bottom));
-        eprintln!("  ClientRect: {:?}", (cr.left, cr.top, cr.right, cr.bottom));
-        eprintln!("  Style:      0x{:x}", post_style);
-        eprintln!("  WS_CAPTION: {}", (post_style & 0x00C00000) != 0);
-        eprintln!("  WS_POPUP:   {}", (post_style & 0x80000000) != 0);
     }
 
     Ok(())

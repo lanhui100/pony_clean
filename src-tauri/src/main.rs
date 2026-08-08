@@ -30,6 +30,10 @@ fn main() {
 
             eprintln!("[PonyClean] Setup complete, opening window...");
 
+            if let Some(island) = app.get_webview_window("island") {
+                let _ = island.hide();
+            }
+
             // Install WM_NCHITTEST subclass for click-through on transparent areas
             if let Err(e) = install_hit_test_subclass(app.handle()) {
                 eprintln!("[PonyClean] Failed to install hit-test subclass: {}", e);

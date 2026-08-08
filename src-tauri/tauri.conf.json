@@ -10,7 +10,21 @@
   "app": {
     "windows": [
       {
-        "label": "main",
+        "label": "capsule",
+        "title": "",
+        "width": 166,
+        "height": 44,
+        "resizable": false,
+        "decorations": false,
+        "shadow": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": false,
+        "visible": false
+      },
+      {
+        "label": "island",
         "title": "",
         "width": 315,
         "height": 100,
@@ -20,7 +34,8 @@
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "center": true
+        "center": false,
+        "visible": false
       }
     ],
     "security": {

@@ -1,21 +1,12 @@
-import { ref, onMounted, onUnmounted, type Ref } from 'vue'
-import { getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window'
+import { ref, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
+import { getCurrentWindow, PhysicalPosition, Window } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { WINDOW_MORPH } from '@/lib/windowMorphConfig'
 
 export type IslandState = 'idle' | 'entering' | 'visible' | 'leaving'
 
 const win = getCurrentWindow()
-
-interface EdgeCursorPayload {
-  cursor_x: number
-  cursor_y: number
-  mon_left: number
-  mon_top: number
-  mon_right: number
-  mon_bottom: number
-}
 
 interface MonitorBounds {
   left: number
@@ -35,22 +26,20 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let currentWindowX = 0
   let dragStartX = 0
   let dragStartWinX = 0
-  let isDragging = false
+  const isDragging = ref(false)
   let dragMoved = false
   let dragRafId: number | null = null
   let pendingDragX: number | null = null
-  let hoverShowTimer: ReturnType<typeof setTimeout> | null = null
   let onMoveRef: ((e: MouseEvent) => void) | null = null
   let onUpRef: (() => void) | null = null
   let suppressNextCapsuleClick = false
-  let suppressHoverUntilLeave = false
 
   // Timers
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let idlePollTimer: ReturnType<typeof setTimeout> | null = null
-  let edgeEnterTimer: ReturnType<typeof setTimeout> | null = null
-  let unlistenEdgeEnter: UnlistenFn | null = null
-  let unlistenEdgeLeave: UnlistenFn | null = null
+  let unlistenIslandEnter: UnlistenFn | null = null
+  let unlistenIslandLeave: UnlistenFn | null = null
+  let unlistenIslandActivity: UnlistenFn | null = null
   let lastActivityMs = Date.now()
 
   // Re-entry guard: set when showIsland() is called during leaving animation
@@ -86,36 +75,33 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   async function centerWindowX(): Promise<number> {
     const monitor = await getMonitorBounds()
-    const { width: actualW } = await win.outerSize().catch(() => ({ width: WINDOW_MORPH.fullW }))
+    const { width: actualW } = await win.outerSize().catch(() => ({ width: WINDOW_MORPH.capsuleW }))
     const cx = monitor.left + Math.round((monitor.width - actualW) / 2)
     await win.setPosition(new PhysicalPosition(cx, monitor.top)).catch(() => {})
     currentWindowX = cx
     return cx
   }
 
-  /** Set Win32 hit-test to capsule-only area (idle state).
-   *  Outside the capsule, clicks pass through to windows beneath.
-   *  No DPI conversion needed — WM_NCHITTEST subclass handles it. */
-  async function setRegionCapsule(): Promise<boolean> {
-    try {
-      await invoke('set_hit_test_mode', { mode: 'capsule' })
-      return true
-    } catch (err) {
-      console.warn('[PonyClean] Failed to switch window region to capsule', err)
-      return false
-    }
+  async function getIslandWindow(): Promise<Window | null> {
+    return Window.getByLabel('island').catch(() => null)
   }
 
-  /** Set Win32 hit-test to full window area (visible/entering/leaving state).
-   *  Entire window is interactive. */
-  async function setRegionFull(): Promise<boolean> {
-    try {
-      await invoke('set_hit_test_mode', { mode: 'full' })
-      return true
-    } catch (err) {
-      console.warn('[PonyClean] Failed to switch window region to full', err)
-      return false
-    }
+  async function positionIslandWindow(island: Window) {
+    const dpr = window.devicePixelRatio || 1
+    const monitor = await getMonitorBounds()
+    const capsulePos = await win.outerPosition()
+    const capsuleSize = await win.outerSize().catch(() => ({
+      width: Math.round(WINDOW_MORPH.capsuleW * dpr),
+      height: Math.round(WINDOW_MORPH.capsuleH * dpr),
+    }))
+    const islandW = Math.round(WINDOW_MORPH.fullW * dpr)
+    const edgePx = Math.round(WINDOW_MORPH.edgePadding * dpr)
+    const centerX = capsulePos.x + Math.round(capsuleSize.width / 2)
+    const x = Math.max(
+      monitor.left + edgePx,
+      Math.min(centerX - Math.round(islandW / 2), monitor.right - islandW - edgePx),
+    )
+    await island.setPosition(new PhysicalPosition(x, capsulePos.y)).catch(() => {})
   }
 
   /** ─── State transitions ─── */
@@ -126,8 +112,12 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       pendingShowAfterLeave = true
       return
     }
-    // Update region first so the island panel is fully visible when animation starts.
-    if (!await setRegionFull()) return
+    const island = await getIslandWindow()
+    if (!island) return
+    await positionIslandWindow(island)
+    await emitTo('island', 'island-enter').catch(() => {})
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await island.show().catch(() => {})
     islandState.value = 'entering'
   }
 
@@ -141,10 +131,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   function hideIsland() {
     if (islandState.value === 'idle' || islandState.value === 'leaving') return
+    win.show().catch(() => {})
     islandState.value = 'leaving'
-    // Prefer a clipped native region while the island fades out, so the mostly
-    // transparent full window does not keep blocking apps underneath.
-    setRegionCapsule()
+    emitTo('island', 'island-leave').catch(() => {})
   }
 
   function onEnterDone() {
@@ -152,11 +141,16 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       islandState.value = 'visible'
       // Restart idle detection: pollIdle was stopped in onLeaveDone
       startIdleDetection()
+      win.hide().catch(() => {})
     }
   }
 
-  function onLeaveDone() {
+  async function onLeaveDone() {
     if (islandState.value === 'leaving') {
+      const island = await getIslandWindow()
+      if (island) {
+        await island.hide().catch(() => {})
+      }
       islandState.value = 'idle'
       stopIdleDetection()
       // Check for re-entry request made during leaving
@@ -207,39 +201,12 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   /** ─── Mouse event handlers ─── */
-  function clearHoverShowTimer() {
-    if (hoverShowTimer) clearTimeout(hoverShowTimer)
-    hoverShowTimer = null
-  }
-
-  function clearEdgeEnterTimer() {
-    if (edgeEnterTimer) clearTimeout(edgeEnterTimer)
-    edgeEnterTimer = null
-  }
-
-  function scheduleHoverShow() {
-    clearHoverShowTimer()
-    hoverShowTimer = setTimeout(() => {
-      hoverShowTimer = null
-      if (!capsuleHovered.value || isDragging || suppressHoverUntilLeave) return
-      showIsland()
-      resetIdleTimer()
-    }, WINDOW_MORPH.hoverShowDelay)
-  }
-
   function onCapsuleEnter() {
     capsuleHovered.value = true
-    isInsideIsland.value = true
-    if (!isDragging && !suppressHoverUntilLeave) scheduleHoverShow()
-    resetIdleTimer()
   }
 
   function onCapsuleLeave() {
     capsuleHovered.value = false
-    suppressHoverUntilLeave = false
-    clearHoverShowTimer()
-    // Island mouseenter will take over
-    if (islandState.value === 'idle' && !isDragging) isInsideIsland.value = false
   }
 
   function onIslandEnter() {
@@ -259,14 +226,14 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   /** ─── Capsule horizontal drag ─── */
   function onCapsuleDragStart(e: MouseEvent) {
-    if (islandState.value !== 'idle') return
+    // If island is entering or visible, cancel it first so drag can proceed.
+    if (islandState.value === 'entering' || islandState.value === 'visible') {
+      hideIsland()
+    }
     e.preventDefault()
     e.stopPropagation()
-    clearHoverShowTimer()
-    clearEdgeEnterTimer()
-    isDragging = true
+    isDragging.value = true
     dragMoved = false
-    suppressHoverUntilLeave = true
     capsuleHovered.value = false
     isInsideIsland.value = false
     dragStartX = e.screenX
@@ -274,10 +241,11 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     pendingDragX = null
 
     const onMove = (ev: MouseEvent) => {
-      if (!isDragging) return
+      if (!isDragging.value) return
       const dpr = window.devicePixelRatio || 1
       const dx = ev.screenX - dragStartX          // delta in CSS logical pixels
       if (!dragMoved && Math.abs(dx) >= WINDOW_MORPH.dragStartThreshold) dragMoved = true
+      if (!dragMoved) return
       // Convert logical delta to physical pixels to match PhysicalPosition
       pendingDragX = dragStartWinX + Math.round(dx * dpr)
       if (dragRafId === null) {
@@ -292,7 +260,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     }
 
     const onUp = () => {
-      isDragging = false
+      isDragging.value = false
       if (dragMoved) suppressNextCapsuleClick = true
       if (dragRafId !== null) cancelAnimationFrame(dragRafId)
       dragRafId = null
@@ -314,7 +282,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     const dpr = window.devicePixelRatio || 1
     const monitor = await getMonitorBounds()
     const edgePx = Math.round(WINDOW_MORPH.edgePadding * dpr)
-    const fullWPx = Math.round(WINDOW_MORPH.fullW * dpr)
+    const fullWPx = Math.round(WINDOW_MORPH.capsuleW * dpr)
     const minX = monitor.left + edgePx
     const maxX = monitor.right - fullWPx - edgePx
     const clampedX = Math.max(minX, Math.min(targetX, maxX))
@@ -325,7 +293,6 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   function onBlur() {
     isInsideIsland.value = false
     capsuleHovered.value = false
-    clearHoverShowTimer()
     resetIdleTimer()
   }
 
@@ -335,43 +302,32 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
     // Explicitly disable decorations — some Tauri 2 versions on Windows don't
     // fully respect the `decorations: false` config key.
-    win.setDecorations(false).catch(() => {})
-    win.clearEffects().catch(() => {})
-
-    // Start with capsule-only region so only the capsule is visible in idle state
-    await setRegionCapsule()
+    await win.setDecorations(false).catch(() => {})
+    await win.setShadow(false).catch(() => {})
+    await win.clearEffects().catch(() => {})
+    await nextTick()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await win.show().catch(() => {})
 
     window.addEventListener('blur', onBlur)
 
     try {
-      await invoke('start_edge_cursor_detect')
-      unlistenEdgeEnter = await listen<EdgeCursorPayload>('edge-cursor-enter', () => {
-        if (islandState.value === 'idle' && !isDragging && !suppressHoverUntilLeave) {
-          clearEdgeEnterTimer()
-          edgeEnterTimer = setTimeout(() => {
-            edgeEnterTimer = null
-            if (islandState.value === 'idle' && !isDragging && !suppressHoverUntilLeave) {
-              showIsland()
-            }
-          }, 50)
-        }
-      })
-      unlistenEdgeLeave = await listen<unknown>('edge-cursor-leave', () => {})
+      unlistenIslandEnter = await listen('island-pointer-enter', onIslandEnter)
+      unlistenIslandLeave = await listen('island-pointer-leave', onIslandLeave)
+      unlistenIslandActivity = await listen('island-user-activity', onIslandUserActivity)
     } catch { /* best-effort */ }
   })
 
   onUnmounted(() => {
     stopIdleDetection()
-    clearHoverShowTimer()
-    clearEdgeEnterTimer()
     window.removeEventListener('blur', onBlur)
-    invoke('stop_edge_cursor_detect').catch(() => {})
-    unlistenEdgeEnter?.()
-    unlistenEdgeLeave?.()
+    unlistenIslandEnter?.()
+    unlistenIslandLeave?.()
+    unlistenIslandActivity?.()
 
     // Clean up drag listeners if component unmounts during drag
-    if (isDragging) {
-      isDragging = false
+    if (isDragging.value) {
+      isDragging.value = false
       if (dragRafId !== null) cancelAnimationFrame(dragRafId)
       dragRafId = null
       pendingDragX = null
@@ -383,7 +339,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   })
 
   return {
-    islandState, capsuleHovered, isInsideIsland,
+    islandState, capsuleHovered, isInsideIsland, isDragging,
     onCapsuleEnter, onCapsuleLeave,
     onCapsuleDragStart, onCapsuleClick,
     onIslandEnter, onIslandLeave, onIslandUserActivity,

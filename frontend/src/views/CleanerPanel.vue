@@ -61,6 +61,7 @@ const {
   state,
   scanned,
   currentFile,
+  progressRevision,
   items,
   totalBytes,
   skippedSmall,
@@ -301,9 +302,17 @@ watch(() => state.value, (val, prev) => {
       <Progress class="h-1 w-48" />
       <div class="text-center">
         <p class="text-xs text-foreground">已扫描 <span class="font-medium">{{ scanned }}</span> 个文件</p>
-        <p v-if="currentFile" class="mt-1 max-w-56 truncate text-[11px] text-muted-foreground">
-          {{ truncatePath(currentFile) }}
-        </p>
+        <div class="mt-1 h-4 w-56 overflow-hidden">
+          <Transition name="stream-chunk" mode="out-in">
+            <p
+              v-if="currentFile"
+              :key="progressRevision"
+              class="truncate text-[11px] leading-4 text-muted-foreground"
+            >
+              {{ truncatePath(currentFile) }}
+            </p>
+          </Transition>
+        </div>
       </div>
       <Button variant="ghost" size="sm" @click="handleCancel" :title="'取消'">
           <X class="h-3.5 w-3.5" />
@@ -616,6 +625,20 @@ watch(() => state.value, (val, prev) => {
 </template>
 
 <style scoped>
+.stream-chunk-enter-active {
+  transition: opacity 160ms ease-out, transform 160ms ease-out, filter 160ms ease-out;
+}
+.stream-chunk-leave-active {
+  transition: opacity 45ms ease-in;
+}
+.stream-chunk-enter-from {
+  opacity: 0;
+  filter: blur(1px);
+  transform: translateY(3px);
+}
+.stream-chunk-leave-to {
+  opacity: 0;
+}
 .toast-enter-active {
   transition: all 0.3s ease-out;
 }
