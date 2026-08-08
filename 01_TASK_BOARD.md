@@ -48,3 +48,4 @@ _(暂无)_
 | TASK-019 | 端到端测试与修复（暗色适配 + 删除按钮） | P1 | @self |
 | TASK-020 | OptionPicker 暗色下拉 + island Acrylic 毛玻璃 | P1 | @self |
 | TASK-021 | 借鉴 blur_win 重构毛玻璃（消除分层） | P1 | @self |
+| TASK-022 | 手写 SWCA Acrylic（消除原生标题栏） | P1 | @self |
