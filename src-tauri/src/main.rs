@@ -38,12 +38,22 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 fn apply_island_vibrancy(app: &tauri::AppHandle) {
     #[cfg(target_os = "windows")]
     {
-        use window_vibrancy::apply_acrylic;
+        use window_vibrancy::{apply_acrylic, apply_blur};
         if let Some(island) = app.get_webview_window("island") {
-            // RGBA 着色：接近主题深色 hsl(30 12% 9%)，alpha 120 保留桌面模糊透出
-            match apply_acrylic(&island, Some((30, 12, 9, 120))) {
+            // RGBA 着色：接近主题深色 hsl(30 12% 9%)，alpha 145 兼顾模糊透出与可读性
+            // 优先 Acrylic（Win 10/11），失败回退 Blur（简单高斯模糊）
+            match apply_acrylic(&island, Some((26, 24, 21, 145))) {
                 Ok(()) => eprintln!("[PonyClean] Acrylic applied to island window"),
-                Err(e) => eprintln!("[PonyClean] Acrylic failed (fallback to CSS glass): {}", e),
+                Err(e) => {
+                    eprintln!("[PonyClean] Acrylic failed, falling back to Blur: {}", e);
+                    match apply_blur(&island, Some((26, 24, 21, 135))) {
+                        Ok(()) => eprintln!("[PonyClean] Blur applied to island window"),
+                        Err(e2) => eprintln!(
+                            "[PonyClean] Blur failed too (fallback to CSS glass): {}",
+                            e2
+                        ),
+                    }
+                }
             }
         }
     }

@@ -92,7 +92,7 @@ onUnmounted(() => {
 <template>
   <div class="island-root h-screen w-screen overflow-hidden select-none" :style="rootStyle">
     <motion.div
-      class="island-panel panel-active"
+      class="island-shell"
       :initial="{ y: -120, opacity: 0 }"
       :animate="islandAnimate"
       :transition="islandTransition"
@@ -101,31 +101,38 @@ onUnmounted(() => {
       @mousemove="notifyCapsule('island-user-activity')"
       @mousedown="notifyCapsule('island-user-activity')"
     >
-      <div class="flex h-full w-full">
-        <TitleBar
-          v-model:activeTab="activeTab"
-          v-model:searchQuery="searchQuery"
-        />
-        <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div class="px-4 pt-3">
-            <IslandSummary
-              :cpu-percent="cpuPercent"
-              :mem-percent="memPercent"
-              :disk-pct="diskPct"
-              :process-count="summary?.process_count ?? 0"
-              :active-tab="activeTab"
-            />
+      <!-- 光晕装饰：模拟环境光折射（借鉴 blur_win 的 Glow 方案） -->
+      <div class="glow glow-1" />
+      <div class="glow glow-2" />
+
+      <!-- 内容卡片：玻璃上的深色圆角卡片 -->
+      <div class="island-card">
+        <div class="flex h-full w-full">
+          <TitleBar
+            v-model:activeTab="activeTab"
+            v-model:searchQuery="searchQuery"
+          />
+          <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div class="px-4 pt-3">
+              <IslandSummary
+                :cpu-percent="cpuPercent"
+                :mem-percent="memPercent"
+                :disk-pct="diskPct"
+                :process-count="summary?.process_count ?? 0"
+                :active-tab="activeTab"
+              />
+            </div>
+            <main class="flex-1 overflow-hidden px-4 pb-4 pt-2">
+              <MonitorPanel v-if="activeTab === 'monitor'" :search="searchQuery" />
+              <CleanerPanel
+                v-else-if="activeTab === 'cleaner'"
+                @scan-start="onScanStart"
+                @scan-end="onScanEnd"
+              />
+              <AnalysisPanel v-else-if="activeTab === 'analysis'" />
+              <SettingsPanel v-else />
+            </main>
           </div>
-          <main class="flex-1 overflow-hidden px-4 pb-4 pt-2">
-            <MonitorPanel v-if="activeTab === 'monitor'" :search="searchQuery" />
-            <CleanerPanel
-              v-else-if="activeTab === 'cleaner'"
-              @scan-start="onScanStart"
-              @scan-end="onScanEnd"
-            />
-            <AnalysisPanel v-else-if="activeTab === 'analysis'" />
-            <SettingsPanel v-else />
-          </main>
         </div>
       </div>
     </motion.div>
@@ -138,36 +145,78 @@ onUnmounted(() => {
   position: relative;
 }
 
-.island-panel {
+/* ─── 玻璃壳层：直角铺满整个窗口 ───
+   层级说明：Acrylic 由 Rust 侧 HWND 级 apply_island_vibrancy 提供（DWM 合成，
+   真实模糊窗口背后的桌面）。本层在 Acrylic 之上叠加渐变基底、光晕与内阴影，
+   形成"整块玻璃"观感 —— 与窗口直角一致，杜绝圆角/直角分层。 */
+.island-shell {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: var(--morph-island-h);
+  inset: 0;
   z-index: 10;
   pointer-events: auto;
-  will-change: transform, opacity, height;
-  transform-origin: top center;
   isolation: isolate;
-  transition: height 0.25s ease;
-  /* 背景策略（层级说明）：
-     1. 原生 Acrylic 由 Rust 侧 HWND 级 apply_island_vibrancy 提供（DWM 合成，
-        能真实模糊窗口背后的桌面）——此时本渐变透明度越低，毛玻璃越明显。
-     2. 若 Acrylic 失败（部分系统），此处半透明深色渐变兜底，保证可读性。
-     3. CSS backdrop-filter 在透明 WebView2 窗口上无法模糊桌面，仅作辅助。 */
+  will-change: transform, opacity;
+  transform-origin: top center;
+  /* ① 多层渐变基底：白色透层 + 暖色径向光晕 */
   background:
-    linear-gradient(180deg, hsl(30 12% 9% / 0.58), hsl(30 8% 7% / 0.52));
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border: 1px solid rgb(255 255 255 / 0.10);
-  border-radius: 16px;
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.07),
+      rgba(255, 255, 255, 0.02) 42%,
+      rgba(255, 255, 255, 0.05)
+    ),
+    radial-gradient(circle at 18% 12%, rgba(255, 163, 71, 0.10), transparent 32%),
+    radial-gradient(circle at 85% 18%, rgba(255, 163, 71, 0.06), transparent 26%);
+  /* ② 边框 + 内阴影（玻璃厚度感） */
+  border: 1px solid rgba(255, 255, 255, 0.10);
   box-shadow:
-    inset 0 -1px 0 rgba(0, 0, 0, 0.40),
-    inset 0 1px 0 rgb(255 255 255 / 0.10);
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 -24px 80px rgba(0, 0, 0, 0.18);
+  /* ③ 背景模糊（辅助；真实桌面模糊由 Acrylic 提供） */
+  backdrop-filter: blur(30px) saturate(1.6);
+  -webkit-backdrop-filter: blur(30px) saturate(1.6);
+}
+
+/* 光晕装饰 */
+.glow {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(40px);
+}
+.glow-1 {
+  width: 120px;
+  height: 120px;
+  left: 24px;
+  top: 12px;
+  background: rgba(255, 163, 71, 0.13);
+}
+.glow-2 {
+  width: 140px;
+  height: 140px;
+  right: 12px;
+  bottom: 24px;
+  background: rgba(255, 120, 60, 0.09);
+}
+
+/* ─── 内容卡片：玻璃上的深色圆角卡片 ─── */
+.island-card {
+  position: absolute;
+  inset: 6px;
+  z-index: 1;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, hsl(30 12% 9% / 0.60), hsl(30 8% 7% / 0.52));
+  border: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 4px 24px rgba(0, 0, 0, 0.25);
   overflow: hidden;
 }
 
-.island-panel > * {
+.island-card > * {
   position: relative;
   z-index: 1;
 }

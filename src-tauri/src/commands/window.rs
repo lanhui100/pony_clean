@@ -364,11 +364,15 @@ unsafe extern "system" fn hit_test_subclass(
 }
 
 /// Prepare the floating windows for transparent, borderless rendering.
+///
+/// 注意：island 窗口使用**直角** Region（radius=0），让 Acrylic 毛玻璃整块
+/// 直铺整个窗口——圆角 Region 与 DWM Acrylic 在 Win11 上不一致，
+/// 会出现"圆角面板 + 直角底部"的分层。圆角观感由 CSS 玻璃壳 + 内容卡片承担。
 #[cfg(target_os = "windows")]
 pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
     let windows = [
         ("capsule", CAPSULE_LOGICAL_W, CAPSULE_RADIUS),
-        ("island", LOGICAL_W, ISLAND_RADIUS),
+        ("island", LOGICAL_W, 0),
     ];
 
     for (label, logical_w, radius) in windows {
@@ -537,9 +541,10 @@ pub fn set_island_expanded(app: AppHandle, expanded: bool) -> Result<(), String>
         window
             .set_size(tauri::LogicalSize::new(LOGICAL_W, h))
             .map_err(|e| e.to_string())?;
+        // 直角 Region：与 Acrylic 直铺保持一致，避免圆角/直角分层
         if let Some(hwnd) = get_hwnd_for_label(&app, "island") {
             unsafe {
-                apply_full_round_region(hwnd, LOGICAL_W, ISLAND_RADIUS);
+                apply_full_round_region(hwnd, LOGICAL_W, 0);
             }
         }
     }
