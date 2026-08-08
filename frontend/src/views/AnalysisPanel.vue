@@ -23,6 +23,7 @@ const view = ref<'files' | 'dirs'>('files')
 const minMb = ref(100)
 const selected = ref(new Set<string>())
 const confirmPaths = ref(new Set<string>())
+const batchConfirm = ref(false)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 const deleting = ref(false)
 const deleteMsg = ref('')
@@ -112,10 +113,18 @@ async function handleDelete(files: LargeFile[]) {
   }
 }
 
+/** 底部批量删除：首次点击进入确认态（按钮变色），再次点击执行 */
 async function handleCleanSelected() {
   const files = largeFiles.value.filter((f) => selected.value.has(f.path))
   if (files.length === 0) return
-  await handleDelete(files)
+  if (batchConfirm.value) {
+    batchConfirm.value = false
+    await handleDelete(files)
+  } else {
+    batchConfirm.value = true
+    if (confirmTimer) clearTimeout(confirmTimer)
+    confirmTimer = setTimeout(() => { batchConfirm.value = false }, 3000)
+  }
 }
 
 onUnmounted(() => {
@@ -216,7 +225,7 @@ onUnmounted(() => {
               </div>
               <span class="shrink-0 text-[11px] tabular-nums text-foreground/70">{{ fmtSize(f.size_bytes) }}</span>
               <button
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-50 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive"
                 :class="confirmPaths.has(f.path) ? 'bg-destructive text-destructive-foreground opacity-100' : ''"
                 :title="confirmPaths.has(f.path) ? '再次点击确认删除' : '删除'"
                 @click.stop="handleDelete([f])"
@@ -239,9 +248,16 @@ onUnmounted(() => {
               size="sm"
               variant="destructive"
               :disabled="selected.size === 0 || deleting"
+              :class="batchConfirm ? 'ring-2 ring-destructive/50' : ''"
               @click="handleCleanSelected"
             >
-              <Trash2 class="h-3 w-3" />
+              <template v-if="batchConfirm">
+                <Check class="h-3 w-3" />
+                <span class="ml-1">确认删除？</span>
+              </template>
+              <template v-else>
+                <Trash2 class="h-3 w-3" />
+              </template>
             </Button>
           </div>
         </template>

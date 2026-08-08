@@ -331,7 +331,7 @@ onUnmounted(() => {
                 <button
                   v-if="confirmPid !== p.pid"
                   key="kill"
-                  class="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100"
+                  class="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-muted-foreground/70 opacity-50 transition-all hover:opacity-100 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive focus-visible:opacity-100"
                   :title="`终止 ${p.name}`"
                   @click="handleKill(p)"
                 >
@@ -340,7 +340,7 @@ onUnmounted(() => {
                 <button
                   v-else
                   key="confirm"
-                   class="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-destructive text-[11px] font-bold leading-none text-destructive-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/90 focus-visible:opacity-100"
+                   class="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-destructive text-[11px] font-bold leading-none text-destructive-foreground opacity-100 transition-all hover:bg-destructive/90 focus-visible:opacity-100"
                   title="再次点击确认终止"
                   @click="handleKill(p)"
                 >

@@ -7,7 +7,8 @@
     "dev": "vite",
     "dev:tauri": "npx tauri dev",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e": "node e2e/ui-interact.mjs"
   },
   "dependencies": {
     "@fontsource-variable/plus-jakarta-sans": "^5.2.8",
@@ -24,6 +25,7 @@
     "@tailwindcss/vite": "^4",
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-vue": "^6",
+    "playwright-core": "^1.62.1",
     "tailwindcss": "^4",
     "typescript": "~5.7",
     "vite": "^8.1",

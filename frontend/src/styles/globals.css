@@ -27,6 +27,7 @@
 
 @layer base {
   :root {
+    color-scheme: dark;
     --background: 30 12% 9%;
     --background-glass: 30 12% 9% / 0.55;
     --foreground: 35 8% 88%;
