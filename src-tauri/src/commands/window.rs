@@ -389,6 +389,7 @@ unsafe extern "system" fn hit_test_subclass(
     _dw_ref: usize,
 ) -> isize {
     const WM_NCHITTEST: u32 = 0x0084;
+    const WM_NCCALCSIZE: u32 = 0x0083;
     const WM_ERASEBKGND: u32 = 0x0014;
     const HTCLIENT: isize = 1;
     // HTNOWHERE silently drops the click without passing it through. Do not rely
@@ -403,6 +404,13 @@ unsafe extern "system" fn hit_test_subclass(
     // WebView2 corners.
     if msg == WM_ERASEBKGND {
         return 1;
+    }
+
+    // WM_NCCALCSIZE = 0：客户区覆盖整个窗口（含标题栏区域）。
+    // 保留 WS_CAPTION 样式位（Win11 上 SWCA Acrylic 依赖它生效），
+    // 但通过让客户区吞掉非客户区，系统标题栏在视觉上完全隐藏。
+    if msg == WM_NCCALCSIZE {
+        return 0;
     }
 
     if msg == WM_NCHITTEST {
@@ -461,7 +469,7 @@ unsafe extern "system" fn hit_test_subclass(
 pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
     let windows = [
         ("capsule", CAPSULE_LOGICAL_W, CAPSULE_RADIUS),
-        ("island", LOGICAL_W, 0),
+        ("island", LOGICAL_W, ISLAND_RADIUS),
     ];
 
     for (label, logical_w, radius) in windows {
@@ -486,13 +494,13 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
             remove_dwm_border(hwnd);
 
             const GWL_STYLE: i32 = -16;
-            const WS_CAPTION: isize = 0x00C00000;
+            // 注意：WS_CAPTION 样式位保留（Win11 上 SWCA Acrylic 依赖它生效），
+            // 标题栏视觉由 WM_NCCALCSIZE=0 隐藏（客户区吞掉非客户区）。
             const WS_THICKFRAME: isize = 0x00040000;
             const WS_SYSMENU: isize = 0x00080000;
             const WS_MINIMIZEBOX: isize = 0x00020000;
             const WS_MAXIMIZEBOX: isize = 0x00010000;
-            let new_style = style
-                & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+            let new_style = style & !(WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
             if new_style != style {
                 SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
                 const SWP_FRAMECHANGED: u32 = 0x0020;
@@ -630,10 +638,10 @@ pub fn set_island_expanded(app: AppHandle, expanded: bool) -> Result<(), String>
         window
             .set_size(tauri::LogicalSize::new(LOGICAL_W, h))
             .map_err(|e| e.to_string())?;
-        // 直角 Region：与 Acrylic 直铺保持一致，避免圆角/直角分层
+        // 圆角 Region：原生层控制窗口形状（与 Acrylic 一起被裁剪，单层视觉）
         if let Some(hwnd) = get_hwnd_for_label(&app, "island") {
             unsafe {
-                apply_full_round_region(hwnd, LOGICAL_W, 0);
+                apply_full_round_region(hwnd, LOGICAL_W, ISLAND_RADIUS);
             }
         }
     }

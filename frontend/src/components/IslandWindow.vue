@@ -201,18 +201,15 @@ onUnmounted(() => {
   background: rgba(255, 120, 60, 0.09);
 }
 
-/* ─── 内容卡片：玻璃上的深色圆角卡片 ─── */
+/* ─── 内容层：全屏填满窗口，不做圆角/边距 ───
+   圆角形状由原生层 Region 裁剪负责（window.rs apply_full_round_region），
+   Vue 层直接铺满整个窗口，避免出现"圆角面板 + 直角底部"的第二层。 */
 .island-card {
   position: absolute;
-  inset: 6px;
+  inset: 0;
   z-index: 1;
-  border-radius: 14px;
   background:
-    linear-gradient(180deg, hsl(30 12% 9% / 0.60), hsl(30 8% 7% / 0.52));
-  border: 1px solid rgb(255 255 255 / 0.08);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
-    0 4px 24px rgba(0, 0, 0, 0.25);
+    linear-gradient(180deg, hsl(30 12% 9% / 0.62), hsl(30 8% 7% / 0.55));
   overflow: hidden;
 }
 
