@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { Loader2, Plus, Save, Trash2 } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
+import OptionPicker from '../components/OptionPicker.vue'
 import { useMonitor } from '../composables/useMonitor'
 
 interface AppConfig {
@@ -237,18 +238,14 @@ function categoryLabel(value: string) {
             class="w-full rounded border border-white/10 bg-transparent px-2 py-1 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
           />
           <div class="flex gap-1.5">
-            <select
+            <OptionPicker
               v-model="newCategory"
-              class="flex-1 rounded border border-white/10 bg-transparent px-1.5 py-1 text-[11px] text-foreground focus:border-primary/50 focus:outline-none"
-            >
-              <option v-for="o in CATEGORY_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
-            <select
+              :options="CATEGORY_OPTIONS"
+            />
+            <OptionPicker
               v-model="newLevel"
-              class="flex-1 rounded border border-white/10 bg-transparent px-1.5 py-1 text-[11px] text-foreground focus:border-primary/50 focus:outline-none"
-            >
-              <option v-for="o in LEVEL_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
+              :options="LEVEL_OPTIONS"
+            />
           </div>
           <input
             v-model="newDesc"

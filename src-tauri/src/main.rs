@@ -29,6 +29,30 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// 为灵动岛窗口应用 Acrylic 毛玻璃（HWND 层级，DWM 合成）。
+///
+/// Windows 的毛玻璃是窗口级效果：CSS `backdrop-filter` 只能模糊 WebView
+/// 内部内容，无法模糊窗口背后的桌面。必须对 HWND 调用系统 API。
+/// 使用 window-vibrancy（SetWindowCompositionAttribute ACCENT_ENABLE_ACRYLICBLURBEHIND），
+/// 比 Tauri JS setEffects 更可靠；失败时静默回退到 CSS 拟态玻璃。
+fn apply_island_vibrancy(app: &tauri::AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::apply_acrylic;
+        if let Some(island) = app.get_webview_window("island") {
+            // RGBA 着色：接近主题深色 hsl(30 12% 9%)，alpha 120 保留桌面模糊透出
+            match apply_acrylic(&island, Some((30, 12, 9, 120))) {
+                Ok(()) => eprintln!("[PonyClean] Acrylic applied to island window"),
+                Err(e) => eprintln!("[PonyClean] Acrylic failed (fallback to CSS glass): {}", e),
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+    }
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show_hide = MenuItem::with_id(app, "toggle", "显示/隐藏", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -98,6 +122,9 @@ fn main() {
             if let Err(e) = install_hit_test_subclass(app.handle()) {
                 eprintln!("[PonyClean] Failed to install hit-test subclass: {}", e);
             }
+
+            // 灵动岛毛玻璃：HWND 层级 Acrylic（DWM 合成），必须在 hit-test 之后应用
+            apply_island_vibrancy(app.handle());
 
             // DevTools 已移除 — 自动打开 DevTools 窗口会导致右上角短暂闪烁"分辨率"信息
 

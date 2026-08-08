@@ -3,6 +3,7 @@ import { ref, computed, onUnmounted } from 'vue'
 import { FileSearch, FolderSearch, Loader2, RotateCcw, Trash2, X, Check, AlertCircle } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
 import { Progress } from '../components/ui/progress'
+import OptionPicker from '../components/OptionPicker.vue'
 import { useDisk, type LargeFile } from '../composables/useDisk'
 
 const {
@@ -28,6 +29,12 @@ let confirmTimer: ReturnType<typeof setTimeout> | null = null
 const deleting = ref(false)
 const deleteMsg = ref('')
 let deleteMsgTimer: ReturnType<typeof setTimeout> | null = null
+
+const MIN_OPTIONS = [
+  { value: 100, label: '≥ 100 MB' },
+  { value: 500, label: '≥ 500 MB' },
+  { value: 1000, label: '≥ 1 GB' },
+]
 
 const KIND_COLORS: Record<string, string> = {
   video: 'bg-red-400',
@@ -159,15 +166,11 @@ onUnmounted(() => {
     <template v-if="view === 'files'">
       <!-- Controls -->
       <div class="flex items-center gap-1.5">
-        <select
-          v-model.number="minMb"
-          class="flex-1 rounded border border-white/10 bg-transparent px-1.5 py-1 text-[11px] text-foreground focus:border-primary/50 focus:outline-none"
+        <OptionPicker
+          v-model="minMb"
+          :options="MIN_OPTIONS"
           :disabled="state === 'scanning'"
-        >
-          <option :value="100">≥ 100 MB</option>
-          <option :value="500">≥ 500 MB</option>
-          <option :value="1000">≥ 1 GB</option>
-        </select>
+        />
         <Button v-if="state !== 'scanning'" size="sm" @click="startLargeScan(minMb)">
           <FileSearch class="h-3 w-3" />
         </Button>

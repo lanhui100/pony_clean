@@ -65,7 +65,8 @@ function onScanEnd() {
 onMounted(async () => {
   await islandWindow.setDecorations(false).catch(() => {})
   await islandWindow.setShadow(false).catch(() => {})
-  await islandWindow.clearEffects().catch(() => {})
+  // 注意：不清除 window effects — Rust 侧已对 HWND 应用 Acrylic（apply_island_vibrancy）
+  // clearEffects 会移除原生毛玻璃，导致只能看到 CSS 渐变底
 
   unlistenEnter = await listen('island-enter', () => {
     visible.value = true
@@ -149,11 +150,15 @@ onUnmounted(() => {
   transform-origin: top center;
   isolation: isolate;
   transition: height 0.25s ease;
-  /* Native window effect (Acrylic/Blur via setEffects) provides real desktop blur.
-     CSS backdrop-filter cannot blur through transparent Tauri WebView2 windows,
-     so we use a nearly-opaque gradient matching the capsule aesthetic. */
+  /* 背景策略（层级说明）：
+     1. 原生 Acrylic 由 Rust 侧 HWND 级 apply_island_vibrancy 提供（DWM 合成，
+        能真实模糊窗口背后的桌面）——此时本渐变透明度越低，毛玻璃越明显。
+     2. 若 Acrylic 失败（部分系统），此处半透明深色渐变兜底，保证可读性。
+     3. CSS backdrop-filter 在透明 WebView2 窗口上无法模糊桌面，仅作辅助。 */
   background:
-    linear-gradient(180deg, hsl(30 12% 9% / 0.90), hsl(30 8% 7% / 0.85));
+    linear-gradient(180deg, hsl(30 12% 9% / 0.58), hsl(30 8% 7% / 0.52));
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
   border: 1px solid rgb(255 255 255 / 0.10);
   border-radius: 16px;
   box-shadow:

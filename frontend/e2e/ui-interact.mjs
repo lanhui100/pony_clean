@@ -173,14 +173,15 @@ ok(confirmDialog, '出现「确认清理」弹窗')
 console.log('\n[3] 分析面板 — 大文件删除')
 await page.click('.sidebar button[title="分析"]', { timeout: 3000 }).catch(() => {})
 await page.waitForTimeout(600)
-// 大文件视图的扫描按钮：与「≥ 100 MB」select 同行的按钮
+// 大文件视图的扫描按钮：OptionPicker 所在行内、非 picker 自身的按钮
 const startLarge2 = await page.evaluate(() => {
-  const selects = [...document.querySelectorAll('select')]
-  for (const s of selects) {
-    if (s.textContent.includes('MB')) {
-      const row = s.closest('div')
-      const btn = row?.querySelector('button')
-      if (btn) { btn.click(); return true }
+  const pickers = [...document.querySelectorAll('.option-picker')]
+  for (const p of pickers) {
+    if (p.textContent.includes('MB')) {
+      const row = p.parentElement
+      const btns = row ? [...row.querySelectorAll('button')] : []
+      const scanBtn = btns.find((b) => !b.closest('.option-picker'))
+      if (scanBtn) { scanBtn.click(); return true }
     }
   }
   return false
@@ -251,37 +252,45 @@ console.log(`  目录视图文本: ${dirText}`)
 const dirsShown = await page.evaluate(() => document.body.innerText.includes('Downloads'))
 ok(dirsShown, '目录占用榜单渲染（Downloads）')
 
-// ─── 5. 设置 tab：select 暗色适配（需先展开添加表单） ───
-console.log('\n[5] 设置面板 — select 暗色适配')
+// ─── 5. 设置 tab：OptionPicker 暗色适配（原生 select 已移除） ───
+console.log('\n[5] 设置面板 — OptionPicker 暗色适配')
 await page.click('.sidebar button[title="设置"]', { timeout: 3000 }).catch(() => {})
 await page.waitForTimeout(500)
-// 点击「+」展开添加规则表单，等待 select 出现
+// 页面不应再有任何原生 select
+const nativeSelects = await page.evaluate(() => document.querySelectorAll('select').length)
+ok(nativeSelects === 0, `原生 select 已移除（当前 ${nativeSelects} 个）`)
+// 点击「+」展开添加规则表单，等待 OptionPicker 出现
 await page.evaluate(() => {
   const btns = [...document.querySelectorAll('button')]
   const plus = btns.find((b) => b.title === '添加规则')
   if (plus) { plus.click(); return true }
   return false
 })
-// 轮询等待 select 渲染（最多 2s）
-let selectCount = 0
+// 轮询等待 OptionPicker 渲染（最多 2s）
+let pickerCount = 0
 for (let i = 0; i < 10; i++) {
-  selectCount = await page.evaluate(() => document.querySelectorAll('select').length)
-  if (selectCount > 0) break
+  pickerCount = await page.evaluate(() => document.querySelectorAll('.option-picker').length)
+  if (pickerCount > 0) break
   await page.waitForTimeout(200)
 }
-ok(selectCount >= 1, `select 控件数: ${selectCount}`)
-
-const selectAudit = await page.evaluate(() => {
+ok(pickerCount >= 1, `OptionPicker 数量: ${pickerCount}`)
+// 点击第一个 OptionPicker 展开选项列表，检查暗色
+const pickerAudit = await page.evaluate(() => {
   const rootCs = getComputedStyle(document.documentElement)
-  const selects = [...document.querySelectorAll('select')].map((s) => {
-    const cs = getComputedStyle(s)
-    return { color: cs.color, bg: cs.backgroundColor, options: s.options.length }
-  })
-  return { colorScheme: rootCs.colorScheme, selects }
+  const picker = document.querySelector('.option-picker button')
+  const cs = getComputedStyle(picker)
+  // 展开
+  picker.click()
+  return { colorScheme: rootCs.colorScheme, btnColor: cs.color }
 })
-ok(selectAudit.colorScheme === 'dark', `html color-scheme: ${selectAudit.colorScheme}`)
-const selectOk = selectAudit.selects.length > 0 && selectAudit.selects.every((s) => s.color !== 'rgb(0, 0, 0)')
-ok(selectOk, `select 文字非黑色（${JSON.stringify(selectAudit.selects.slice(0, 2))}）`)
+await page.waitForTimeout(200)
+const optionList = await page.evaluate(() => {
+  const opts = [...document.querySelectorAll('.option-picker .absolute button')]
+  return opts.map((o) => getComputedStyle(o).color)
+})
+ok(pickerAudit.colorScheme === 'dark', `html color-scheme: ${pickerAudit.colorScheme}`)
+ok(pickerAudit.btnColor !== 'rgb(0, 0, 0)', `OptionPicker 按钮文字色: ${pickerAudit.btnColor}`)
+ok(optionList.length > 0 && optionList.every((c) => c !== 'rgb(0, 0, 0)'), `选项列表文字色: ${JSON.stringify(optionList.slice(0, 3))}`)
 
 // ─── 汇总 ───
 console.log(`\n========== 汇总: ${pass} 通过 / ${fail} 失败 ==========`)
