@@ -8,6 +8,7 @@ import TitleBar from '@/components/TitleBar.vue'
 import IslandSummary from '@/components/IslandSummary.vue'
 import MonitorPanel from '@/views/MonitorPanel.vue'
 import CleanerPanel from '@/views/CleanerPanel.vue'
+import AnalysisPanel from '@/views/AnalysisPanel.vue'
 import SettingsPanel from '@/views/SettingsPanel.vue'
 import { useMonitor } from '@/composables/useMonitor'
 import { WINDOW_MORPH } from '@/lib/windowMorphConfig'
@@ -121,6 +122,7 @@ onUnmounted(() => {
               @scan-start="onScanStart"
               @scan-end="onScanEnd"
             />
+            <AnalysisPanel v-else-if="activeTab === 'analysis'" />
             <SettingsPanel v-else />
           </main>
         </div>

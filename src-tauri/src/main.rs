@@ -3,11 +3,13 @@
 mod commands;
 
 use commands::cleaner::CleanerState;
+use commands::disk::DiskState;
 use commands::monitor::MonitorState;
 use commands::window::EdgeCursorState;
 use commands::window::install_hit_test_subclass;
 use pony_core::monitor;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -76,6 +78,11 @@ fn main() {
                 is_scanning: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 cancel_token: Arc::new(std::sync::Mutex::new(None)),
             });
+            app.manage(DiskState {
+                is_scanning: Arc::new(AtomicBool::new(false)),
+                cancel_flag: Arc::new(Mutex::new(None)),
+                scan_root: Arc::new(Mutex::new(None)),
+            });
 
             if let Err(e) = setup_tray(app) {
                 eprintln!("[PonyClean] Failed to setup tray: {}", e);
@@ -107,6 +114,10 @@ fn main() {
             commands::cleaner::get_clean_logs,
             commands::cleaner::get_clean_config,
             commands::cleaner::save_clean_config,
+            commands::disk::start_large_scan,
+            commands::disk::start_dir_scan,
+            commands::disk::cancel_disk_scan,
+            commands::disk::delete_large_files,
             commands::window::quit_app,
             commands::window::set_island_expanded,
             commands::window::get_system_idle_ms,
