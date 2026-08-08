@@ -8,6 +8,7 @@ import TitleBar from '@/components/TitleBar.vue'
 import IslandSummary from '@/components/IslandSummary.vue'
 import MonitorPanel from '@/views/MonitorPanel.vue'
 import CleanerPanel from '@/views/CleanerPanel.vue'
+import SettingsPanel from '@/views/SettingsPanel.vue'
 import { useMonitor } from '@/composables/useMonitor'
 import { WINDOW_MORPH } from '@/lib/windowMorphConfig'
 
@@ -116,10 +117,11 @@ onUnmounted(() => {
           <main class="flex-1 overflow-hidden px-4 pb-4 pt-2">
             <MonitorPanel v-if="activeTab === 'monitor'" :search="searchQuery" />
             <CleanerPanel
-              v-else
+              v-else-if="activeTab === 'cleaner'"
               @scan-start="onScanStart"
               @scan-end="onScanEnd"
             />
+            <SettingsPanel v-else />
           </main>
         </div>
       </div>

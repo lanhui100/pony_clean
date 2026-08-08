@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { Activity, HardDrive, Search, X } from 'lucide-vue-next'
+import { Activity, HardDrive, Search, Settings, X } from 'lucide-vue-next'
 
 const props = defineProps<{
   activeTab: string
@@ -16,6 +16,7 @@ const emit = defineEmits<{
 const navItems = [
   { value: 'monitor', icon: Activity, label: '监控' },
   { value: 'cleaner', icon: HardDrive, label: '清理' },
+  { value: 'settings', icon: Settings, label: '设置' },
 ]
 
 const showSearch = ref(false)

@@ -95,6 +95,9 @@ const memBg = computed(() => {
 }
 
 .capsule-hovered {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 14px rgba(255, 255, 255, 0.07),
+    0 0 28px rgba(255, 255, 255, 0.04);
 }
 </style>

@@ -153,6 +153,12 @@ export function useMonitor() {
     return invoke<TrimResult>('trim_memory')
   }
 
+  /** 更新告警阈值（设置面板保存后调用） */
+  function setAlertThresholds(cpuPct: number, memPct: number) {
+    alertCpuPct = cpuPct
+    alertMemPct = memPct
+  }
+
   function start() {
     if (sharedTimer) return
     loadConfig().finally(() => {
@@ -188,6 +194,7 @@ export function useMonitor() {
     diskTotalGb,
     killProcess,
     trimMemory,
+    setAlertThresholds,
     fetch,
     setPollInterval,
     start,
