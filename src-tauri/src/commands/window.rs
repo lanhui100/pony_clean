@@ -159,12 +159,17 @@ fn apply_accent(hwnd: isize, state: u32, rgba: (u8, u8, u8, u8)) -> Result<(), S
     // 不在 MSVC user32.lib 导入表中，必须 GetProcAddress 动态加载。
     type SwcaFn = unsafe extern "system" fn(isize, *mut WCA_DATA) -> i32;
     let swca: SwcaFn = unsafe {
-        let user32 = GetModuleHandleW([0x75, 0x73, 0x65, 0x72, 0x33, 0x32, 0x2e, 0x64, 0x6c, 0x6c, 0].as_ptr());
+        let user32 = GetModuleHandleW(
+            [
+                0x75, 0x73, 0x65, 0x72, 0x33, 0x32, 0x2e, 0x64, 0x6c, 0x6c, 0,
+            ]
+            .as_ptr(),
+        );
         if user32 == 0 {
             return Err("GetModuleHandleW(user32) failed".into());
         }
         let name = b"SetWindowCompositionAttribute\0";
-        let addr = GetProcAddress(user32, name.as_ptr() as *const u8);
+        let addr = GetProcAddress(user32, name.as_ptr());
         if addr.is_null() {
             return Err("SetWindowCompositionAttribute not found".into());
         }

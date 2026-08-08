@@ -35,7 +35,8 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 /// 窗口背后的桌面，必须对 HWND 调用系统 API。
 /// 使用自实现 SWCA（SetWindowCompositionAttribute + ACCENT_ENABLE_ACRYLICBLURBEHIND）：
 /// - Win10/11 通用
-/// - 不触发 DWM 标题栏（window-vibrancy 的 TRANSIENTWINDOW 路径会绘制系统标题栏）
+/// - 不触发 DWM 标题栏（window-vibrancy 的 TRANSIENTWINDOW 路径会绘制系统标题栏）。
+///
 /// 失败时回退 Blur，再失败回退 CSS 拟态玻璃。
 fn apply_island_vibrancy(app: &tauri::AppHandle) {
     #[cfg(target_os = "windows")]
