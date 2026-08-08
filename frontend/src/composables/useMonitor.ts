@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ref, shallowRef, onMounted, onUnmounted, computed } from 'vue'
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from '@tauri-apps/plugin-notification'
 
 export interface Snapshot {
   summary: SystemSummary
@@ -21,6 +26,14 @@ export interface ProcessInfo {
   status: string
 }
 
+export interface TrimResult {
+  attempted: number
+  success: number
+  failed: number
+  skipped: number
+  freed_mb: number
+}
+
 const sharedProcesses = shallowRef<ProcessInfo[]>([])
 const sharedSummary = ref<SystemSummary | null>(null)
 const sharedLoading = ref(true)
@@ -29,6 +42,50 @@ let sharedTimer: ReturnType<typeof setInterval> | null = null
 let sharedRefCount = 0
 let hasData = false
 let currentInterval = 2000
+
+// 告警阈值（从后端配置加载，默认 80/85）
+let alertCpuPct = 80
+let alertMemPct = 85
+let alertActive = false
+let alertNotified = false
+
+async function loadConfig() {
+  try {
+    const cfg = await invoke<{ alert_cpu_pct: number; alert_mem_pct: number }>('get_config')
+    alertCpuPct = cfg.alert_cpu_pct || 80
+    alertMemPct = cfg.alert_mem_pct || 85
+  } catch {
+    // 使用默认阈值
+  }
+}
+
+async function maybeSendAlert(summary: SystemSummary) {
+  const cpuHigh = summary.cpu_total >= alertCpuPct
+  const memHigh = summary.mem_total_mb > 0
+    && (summary.mem_used_mb / summary.mem_total_mb) * 100 >= alertMemPct
+  alertActive = cpuHigh || memHigh
+  if (!alertActive) {
+    alertNotified = false
+    return
+  }
+  if (alertNotified) return
+  alertNotified = true
+
+  try {
+    let granted = await isPermissionGranted()
+    if (!granted) granted = (await requestPermission()) === 'granted'
+    if (!granted) return
+    const parts: string[] = []
+    if (cpuHigh) parts.push(`CPU ${summary.cpu_total.toFixed(0)}%`)
+    if (memHigh) parts.push(`内存 ${((summary.mem_used_mb / summary.mem_total_mb) * 100).toFixed(0)}%`)
+    sendNotification({
+      title: 'PonyClean 占用提醒',
+      body: `${parts.join(' / ')} 占用过高，建议打开面板查看或清理`,
+    })
+  } catch {
+    // 通知失败静默（dev 环境 toast 可能不可用）
+  }
+}
 
 export function useMonitor() {
   sharedRefCount++
@@ -64,6 +121,7 @@ export function useMonitor() {
       loading.value = false
       error.value = null
       hasData = true
+      maybeSendAlert(snap.summary)
     } catch (e) {
       if (hasData) {
         error.value = String(e)
@@ -91,10 +149,16 @@ export function useMonitor() {
     }
   }
 
+  async function trimMemory(): Promise<TrimResult> {
+    return invoke<TrimResult>('trim_memory')
+  }
+
   function start() {
     if (sharedTimer) return
-    fetch()
-    sharedTimer = setInterval(fetch, currentInterval)
+    loadConfig().finally(() => {
+      fetch()
+      sharedTimer = setInterval(fetch, currentInterval)
+    })
   }
 
   function stop() {
@@ -123,6 +187,7 @@ export function useMonitor() {
     diskUsedGb,
     diskTotalGb,
     killProcess,
+    trimMemory,
     fetch,
     setPollInterval,
     start,

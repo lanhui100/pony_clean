@@ -15,6 +15,7 @@
     "core:window:allow-outer-size",
     "core:window:allow-current-monitor",
     "core:event:allow-listen",
-    "core:event:allow-emit-to"
+    "core:event:allow-emit-to",
+    "notification:default"
   ]
 }

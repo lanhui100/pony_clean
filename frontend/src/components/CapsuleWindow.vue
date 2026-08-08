@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { motion } from 'motion-v'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import CapsuleBar from '@/components/CapsuleBar.vue'
 import { useMonitor } from '@/composables/useMonitor'
 import { useWindowMorph } from '@/composables/useWindowMorph'
 import { WINDOW_MORPH } from '@/lib/windowMorphConfig'
 
 const isScanning = ref(false)
+let unlistenScanState: UnlistenFn | null = null
 const { cpuPercent, memPercent, setPollInterval } = useMonitor()
 const {
   islandState,
@@ -47,6 +49,16 @@ const rootStyle = computed(() => ({
 
 watch(islandState, (state) => {
   setPollInterval(state === 'visible' ? 2000 : 3000)
+})
+
+onMounted(async () => {
+  unlistenScanState = await listen<{ scanning: boolean }>('scan-state-changed', (e) => {
+    isScanning.value = e.payload?.scanning ?? false
+  }).catch(() => null)
+})
+
+onUnmounted(() => {
+  unlistenScanState?.()
 })
 
 function onCapsuleAnimComplete() {

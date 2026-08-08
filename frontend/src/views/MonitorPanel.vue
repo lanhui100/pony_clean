@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import { X, Cpu, MemoryStick } from 'lucide-vue-next'
+import { X, Cpu, MemoryStick, Zap, Loader2 } from 'lucide-vue-next'
 import { useMonitor, type ProcessInfo } from '../composables/useMonitor'
 
-const { processes, summary, loading, error, killProcess } = useMonitor()
+const { processes, summary, loading, error, killProcess, trimMemory } = useMonitor()
 
 const props = defineProps<{
   search: string
@@ -16,6 +16,25 @@ let killTimer: ReturnType<typeof setTimeout> | null = null
 const confirmPid = ref<number | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 const killingPids = ref<Record<number, boolean>>({})
+
+const trimMsg = ref('')
+const trimming = ref(false)
+let trimTimer: ReturnType<typeof setTimeout> | null = null
+
+async function handleTrim() {
+  if (trimming.value) return
+  trimming.value = true
+  trimMsg.value = ''
+  try {
+    const r = await trimMemory()
+    trimMsg.value = `✓ 释放 ${r.freed_mb.toFixed(1)} MB · 整理 ${r.success} 个进程`
+  } catch (e) {
+    trimMsg.value = `✗ ${e}`
+  }
+  trimming.value = false
+  if (trimTimer) clearTimeout(trimTimer)
+  trimTimer = setTimeout(() => { trimMsg.value = '' }, 4000)
+}
 
 interface ProcessRow extends ProcessInfo {
   mem_pct: number
@@ -149,6 +168,7 @@ function scheduleKillClear() {
 onUnmounted(() => {
   if (killTimer) clearTimeout(killTimer)
   if (confirmTimer) clearTimeout(confirmTimer)
+  if (trimTimer) clearTimeout(trimTimer)
 })
 </script>
 
@@ -195,7 +215,29 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+
+      <!-- Trim memory -->
+      <button
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-all hover:bg-primary/15 hover:text-primary disabled:opacity-50"
+        :disabled="trimming"
+        :title="trimming ? '内存整理中...' : '释放内存'"
+        @click="handleTrim"
+      >
+        <Loader2 v-if="trimming" class="h-4 w-4 animate-spin" />
+        <Zap v-else class="h-4 w-4" />
+      </button>
     </div>
+
+    <!-- Trim feedback toast — below summary bar -->
+    <Transition name="kill-fade">
+      <div
+        v-if="trimMsg"
+        class="absolute left-1/2 top-14 z-10 -translate-x-1/2 rounded px-2.5 py-1.5 text-xs font-medium"
+        :class="trimMsg.startsWith('✓') ? 'bg-success/30 text-success' : 'bg-destructive/30 text-destructive'"
+      >
+        {{ trimMsg }}
+      </div>
+    </Transition>
 
     <!-- Kill feedback toast — bottom floating -->
     <Transition name="kill-fade">

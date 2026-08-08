@@ -48,3 +48,18 @@ pub async fn kill_process(
         .await
         .map_err(|_| "Kill response dropped".to_string())?
 }
+
+/// 整理所有非关键进程的工作集，释放物理内存
+#[tauri::command]
+pub async fn trim_memory(
+    state: State<'_, MonitorState>,
+) -> Result<pony_core::memory::TrimResult, String> {
+    let cmd_tx = state.cmd_tx.as_ref().ok_or("Monitor not initialized")?;
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    cmd_tx
+        .send(monitor::MonitorCommand::Trim { resp: resp_tx })
+        .map_err(|_| "Monitor channel disconnected".to_string())?;
+    resp_rx
+        .await
+        .map_err(|_| "Trim response dropped".to_string())?
+}

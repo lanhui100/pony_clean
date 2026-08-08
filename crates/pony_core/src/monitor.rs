@@ -44,6 +44,9 @@ pub enum MonitorCommand {
         name: String,
         resp: oneshot::Sender<Result<(), String>>,
     },
+    Trim {
+        resp: oneshot::Sender<Result<crate::memory::TrimResult, String>>,
+    },
     Shutdown,
 }
 
@@ -107,7 +110,7 @@ pub fn start(
             for _ in 0..10 {
                 match cmd_rx.recv_timeout(Duration::from_millis(500)) {
                     Ok(cmd) => {
-                        if handle_command(Some(cmd), &system) {
+                        if handle_command(Some(cmd), &mut system) {
                             return;
                         }
                     }
@@ -185,12 +188,19 @@ pub fn start(
 }
 
 /// 处理命令，返回 true 表示应当退出
-fn handle_command(cmd: Option<MonitorCommand>, system: &sysinfo::System) -> bool {
+fn handle_command(cmd: Option<MonitorCommand>, system: &mut sysinfo::System) -> bool {
     match cmd {
         Some(MonitorCommand::Kill { pid, name, resp }) => {
             let result = kill_process(system, pid, &name);
             if let Err(e) = resp.send(result) {
                 tracing::warn!("Failed to send kill result: receiver dropped ({:?})", e);
+            }
+            false
+        }
+        Some(MonitorCommand::Trim { resp }) => {
+            let result = crate::memory::trim_all(system);
+            if let Err(e) = resp.send(Ok(result)) {
+                tracing::warn!("Failed to send trim result: receiver dropped ({:?})", e);
             }
             false
         }
@@ -210,7 +220,7 @@ pub fn start_shared(
         loop {
             match cmd_rx.recv_timeout(Duration::from_millis(2000)) {
                 Ok(cmd) => {
-                    if handle_command(Some(cmd), &system) {
+                    if handle_command(Some(cmd), &mut system) {
                         return;
                     }
                 }

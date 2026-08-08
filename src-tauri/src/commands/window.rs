@@ -14,6 +14,7 @@ struct LastInputInfo {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 struct POINT {
     x: i32,
     y: i32,
@@ -21,6 +22,7 @@ struct POINT {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 struct RECT {
     left: i32,
     top: i32,
@@ -30,6 +32,7 @@ struct RECT {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 struct MONITORINFO {
     cb_size: u32,
     rc_monitor: RECT,
@@ -96,6 +99,7 @@ unsafe extern "system" {
     fn SetWindowRgn(hWnd: isize, hRgn: isize, bRedraw: i32) -> i32;
 }
 
+#[allow(clippy::upper_case_acronyms)]
 type SUBCLASSPROC = unsafe extern "system" fn(
     h_wnd: isize,
     u_msg: u32,
@@ -112,9 +116,11 @@ const EDGE_THRESHOLD: i32 = 20;
 
 // Logical window dimensions (CSS pixels)
 const LOGICAL_W: i32 = 315;
+const LOGICAL_H: i32 = 100; // island 概要态高度
+const ISLAND_EXPANDED_H: i32 = 480; // island 展开态高度（监控/清理面板）
 const CAPSULE_LOGICAL_W: i32 = 166; // window width (extra 6px for pill anti-aliasing)
-const CAPSULE_W: i32 = 160;         // visual pill width
-const CAPSULE_H: i32 = 40;          // visual pill height
+const CAPSULE_W: i32 = 160; // visual pill width
+const CAPSULE_H: i32 = 40; // visual pill height
 const ISLAND_RADIUS: i32 = 16;
 const CAPSULE_RADIUS: i32 = 20;
 
@@ -511,6 +517,39 @@ pub fn set_hit_test_mode(
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+/// 切换 island 窗口的概要态/展开态高度，并重算圆角裁剪区域。
+///
+/// 展开态用于承载监控/清理面板，概要态仅显示摘要条。
+#[tauri::command]
+pub fn set_island_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let window = app
+            .get_webview_window("island")
+            .ok_or("island window not found")?;
+        let h = if expanded {
+            ISLAND_EXPANDED_H
+        } else {
+            LOGICAL_H
+        };
+        window
+            .set_size(tauri::LogicalSize::new(LOGICAL_W, h))
+            .map_err(|e| e.to_string())?;
+        if let Some(hwnd) = get_hwnd_for_label(&app, "island") {
+            unsafe {
+                apply_full_round_region(hwnd, LOGICAL_W, ISLAND_RADIUS);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (&app, expanded);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

@@ -2,20 +2,28 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import { motion } from 'motion-v'
 import TitleBar from '@/components/TitleBar.vue'
 import IslandSummary from '@/components/IslandSummary.vue'
+import MonitorPanel from '@/views/MonitorPanel.vue'
+import CleanerPanel from '@/views/CleanerPanel.vue'
 import { useMonitor } from '@/composables/useMonitor'
 import { WINDOW_MORPH } from '@/lib/windowMorphConfig'
 
 const activeTab = ref('monitor')
 const searchQuery = ref('')
 const visible = ref(false)
+const expanded = ref(false)
 const islandWindow = getCurrentWindow()
 let unlistenEnter: UnlistenFn | null = null
 let unlistenLeave: UnlistenFn | null = null
 
 const { cpuPercent, memPercent, diskPct, summary } = useMonitor()
+
+const islandHeight = computed(() =>
+  expanded.value ? WINDOW_MORPH.expandedH : WINDOW_MORPH.fullH,
+)
 
 const islandAnimate = computed(() => (
   visible.value ? { y: 0, opacity: 1 } : { y: -120, opacity: 0 }
@@ -29,11 +37,27 @@ const islandTransition = computed(() => ({
 }))
 
 const rootStyle = computed(() => ({
-  '--morph-island-h': `${WINDOW_MORPH.fullH}px`,
+  '--morph-island-h': `${islandHeight.value}px`,
 }))
 
 function notifyCapsule(event: string) {
   emitTo('capsule', event).catch(() => {})
+}
+
+async function syncWindowSize() {
+  try {
+    await invoke('set_island_expanded', { expanded: expanded.value })
+  } catch (e) {
+    console.warn('set_island_expanded failed:', e)
+  }
+}
+
+function onScanStart() {
+  emitTo('capsule', 'scan-state-changed', { scanning: true }).catch(() => {})
+}
+
+function onScanEnd() {
+  emitTo('capsule', 'scan-state-changed', { scanning: false }).catch(() => {})
 }
 
 onMounted(async () => {
@@ -43,9 +67,13 @@ onMounted(async () => {
 
   unlistenEnter = await listen('island-enter', () => {
     visible.value = true
+    expanded.value = true
+    syncWindowSize()
   })
   unlistenLeave = await listen('island-leave', () => {
     visible.value = false
+    expanded.value = false
+    syncWindowSize()
   })
 
   await nextTick()
@@ -75,15 +103,25 @@ onUnmounted(() => {
           v-model:activeTab="activeTab"
           v-model:searchQuery="searchQuery"
         />
-        <main class="flex-1 overflow-hidden">
-          <IslandSummary
-            :cpu-percent="cpuPercent"
-            :mem-percent="memPercent"
-            :disk-pct="diskPct"
-            :process-count="summary?.process_count ?? 0"
-            :active-tab="activeTab"
-          />
-        </main>
+        <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div class="px-4 pt-3">
+            <IslandSummary
+              :cpu-percent="cpuPercent"
+              :mem-percent="memPercent"
+              :disk-pct="diskPct"
+              :process-count="summary?.process_count ?? 0"
+              :active-tab="activeTab"
+            />
+          </div>
+          <main class="flex-1 overflow-hidden px-4 pb-4 pt-2">
+            <MonitorPanel v-if="activeTab === 'monitor'" :search="searchQuery" />
+            <CleanerPanel
+              v-else
+              @scan-start="onScanStart"
+              @scan-end="onScanEnd"
+            />
+          </main>
+        </div>
       </div>
     </motion.div>
   </div>
@@ -103,9 +141,10 @@ onUnmounted(() => {
   height: var(--morph-island-h);
   z-index: 10;
   pointer-events: auto;
-  will-change: transform, opacity;
+  will-change: transform, opacity, height;
   transform-origin: top center;
   isolation: isolate;
+  transition: height 0.25s ease;
   /* Native window effect (Acrylic/Blur via setEffects) provides real desktop blur.
      CSS backdrop-filter cannot blur through transparent Tauri WebView2 windows,
      so we use a nearly-opaque gradient matching the capsule aesthetic. */
