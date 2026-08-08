@@ -44,3 +44,4 @@ _(暂无)_
 | TASK-014 | 内存整理（EmptyWorkingSet） | P1 | @self |
 | TASK-016 | 设置面板 — 告警阈值 + 开机自启 | P1 | @self |
 | TASK-017 | 清理路径规则可配置 — 自定义清理目标 | P1 | @self |
+| TASK-018 | Phase 3 — 大文件扫描 + 磁盘分析 | P1 | @self |
