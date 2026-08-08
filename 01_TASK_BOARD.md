@@ -43,3 +43,4 @@ _(暂无)_
 | TASK-012 | 双窗口灵动岛毛玻璃实现 | P1 | @self |
 | TASK-014 | 内存整理（EmptyWorkingSet） | P1 | @self |
 | TASK-016 | 设置面板 — 告警阈值 + 开机自启 | P1 | @self |
+| TASK-017 | 清理路径规则可配置 — 自定义清理目标 | P1 | @self |
