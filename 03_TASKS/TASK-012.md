@@ -1,7 +1,7 @@
 # TASK-012: 双窗口灵动岛毛玻璃实现
 
 ## Basic Info
-- Status: Validation
+- Status: Done
 - Priority: P1
 - Owner: @self
 - Created: 2026-07-03
@@ -34,9 +34,10 @@
 - `cargo check -p pony_clean` — Pass
 - `cargo build -p pony_clean` — Pass
 - `tauri build --debug --no-bundle` — 未完成，10 分钟超时后停止残留构建进程
+- 2026-08-08: 代码已提交（commit 11174dd），手动 QA 移交 TASK-013 一并执行
 
 ## Next Action
-启动真实 Tauri 窗口做手动 QA：hover 不展开、click 显示、拖拽不触发展开、idle 隐藏、胶囊隐藏后不拦截 island 点击、副屏定位、native effect 是否仍出现黑框。
+已关闭。手动 QA 合并至 TASK-013 执行。
 
 ## Resume Hint
 重点从 `frontend/src/composables/useWindowMorph.ts` 的 `showIsland()` / `hideIsland()` / `onEnterDone()` 开始排查跨窗口时序。
