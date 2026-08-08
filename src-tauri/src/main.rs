@@ -105,6 +105,8 @@ fn main() {
             commands::cleaner::execute_clean,
             commands::cleaner::empty_recycle_bin,
             commands::cleaner::get_clean_logs,
+            commands::cleaner::get_clean_config,
+            commands::cleaner::save_clean_config,
             commands::window::quit_app,
             commands::window::set_island_expanded,
             commands::window::get_system_idle_ms,

@@ -10,13 +10,19 @@ fn test_resolve_targets_basic() {
     env.apply_env();
 
     let targets = vec![
-        ScanTarget::new("t1", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""),
         ScanTarget::new(
-            "t2",
+            "t1".into(),
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "".into(),
+        ),
+        ScanTarget::new(
+            "t2".into(),
             "%WINDIR%\\Temp",
             SafetyLevel::Confirm,
             Category::Temp,
-            "",
+            "".into(),
         ),
     ];
     let resolved = cleaner::resolve_targets(&targets);
@@ -32,13 +38,19 @@ fn test_resolve_targets_basic() {
 #[test]
 fn test_resolve_targets_excludes_forbidden() {
     let targets = vec![
-        ScanTarget::new("t1", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""),
         ScanTarget::new(
-            "t2",
+            "t1".into(),
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "".into(),
+        ),
+        ScanTarget::new(
+            "t2".into(),
             "%WINDIR%\\System32",
             SafetyLevel::Forbidden,
             Category::Temp,
-            "",
+            "".into(),
         ),
     ];
     let resolved = cleaner::resolve_targets(&targets);
@@ -65,7 +77,7 @@ fn test_get_clean_targets_count() {
 #[test]
 fn test_target_ids_unique() {
     let targets = cleaner::get_clean_targets();
-    let ids: Vec<&str> = targets.iter().map(|t| t.id).collect();
+    let ids: Vec<&str> = targets.iter().map(|t| t.id.as_str()).collect();
     let mut sorted = ids.clone();
     sorted.sort();
     sorted.dedup();

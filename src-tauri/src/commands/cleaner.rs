@@ -221,3 +221,15 @@ pub async fn empty_recycle_bin() -> Result<(), String> {
 pub async fn get_clean_logs(limit: Option<usize>) -> Result<cleaner::CleanLogSummary, String> {
     cleaner::get_clean_logs(limit.unwrap_or(50))
 }
+
+/// 读取清理配置（含自定义清理目标）
+#[tauri::command]
+pub fn get_clean_config() -> Result<cleaner::PonyConfig, String> {
+    Ok(cleaner::load_config())
+}
+
+/// 保存清理配置（含自定义清理目标）
+#[tauri::command]
+pub fn save_clean_config(config: cleaner::PonyConfig) -> Result<(), String> {
+    cleaner::save_config(&config)
+}

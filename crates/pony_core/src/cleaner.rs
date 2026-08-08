@@ -22,7 +22,8 @@ const LOG_EXPIRY_DAYS: i64 = 90;
 const DEFAULT_MAX_DEPTH: usize = 10;
 
 /// 安全级别
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SafetyLevel {
     Safe,
     Confirm,
@@ -79,8 +80,8 @@ impl fmt::Display for Category {
 /// 浏览器 profile 匹配配置
 #[derive(Clone, Debug)]
 pub struct BrowserProfileConfig {
-    pub profile_patterns: &'static [&'static str],
-    pub cache_subdirs: &'static [&'static str],
+    pub profile_patterns: Vec<String>,
+    pub cache_subdirs: Vec<String>,
 }
 
 /// 可清理项
@@ -164,28 +165,22 @@ pub struct DeleteResult {
 /// 扫描目标
 #[derive(Clone, Debug)]
 pub struct ScanTarget {
-    pub id: &'static str,
+    pub id: String,
     pub path: String,
     pub level: SafetyLevel,
     pub category: Category,
-    pub description: &'static str,
+    pub description: String,
     pub min_size: u64,
     pub max_items_per_target: u64,
     pub max_depth: usize,
-    pub glob_include: Option<&'static [&'static str]>,
-    pub glob_exclude: Option<&'static [&'static str]>,
-    pub requires_service_stop: Option<&'static str>,
+    pub glob_include: Option<Vec<String>>,
+    pub glob_exclude: Option<Vec<String>>,
+    pub requires_service_stop: Option<String>,
     pub browser_profiles: Option<BrowserProfileConfig>,
 }
 
 impl ScanTarget {
-    pub fn new(
-        id: &'static str,
-        path: &str,
-        level: SafetyLevel,
-        cat: Category,
-        desc: &'static str,
-    ) -> Self {
+    pub fn new(id: String, path: &str, level: SafetyLevel, cat: Category, desc: String) -> Self {
         Self {
             id,
             path: path.into(),
@@ -210,11 +205,11 @@ impl ScanTarget {
         self.min_size = mb * 1_048_576;
         self
     }
-    pub fn with_glob(mut self, inc: &'static [&'static str]) -> Self {
+    pub fn with_glob(mut self, inc: Vec<String>) -> Self {
         self.glob_include = Some(inc);
         self
     }
-    pub fn with_glob_exclude(mut self, exc: &'static [&'static str]) -> Self {
+    pub fn with_glob_exclude(mut self, exc: Vec<String>) -> Self {
         self.glob_exclude = Some(exc);
         self
     }
@@ -222,7 +217,7 @@ impl ScanTarget {
         self.max_depth = v;
         self
     }
-    pub fn with_service_stop(mut self, s: &'static str) -> Self {
+    pub fn with_service_stop(mut self, s: String) -> Self {
         self.requires_service_stop = Some(s);
         self
     }
@@ -230,6 +225,21 @@ impl ScanTarget {
         self.browser_profiles = Some(b);
         self
     }
+}
+
+/// 用户自定义清理目标
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CustomTarget {
+    /// 唯一标识（与内置目标 id 冲突时忽略）
+    pub id: String,
+    /// 目录路径，支持 %ENV% 展开
+    pub path: String,
+    /// 安全级别（Forbidden 级别不会被扫描）
+    pub level: SafetyLevel,
+    /// 分类（决定默认勾选与最小文件大小）
+    pub category: Category,
+    pub description: String,
+    pub enabled: bool,
 }
 
 /// 用户配置
@@ -245,6 +255,8 @@ pub struct PonyConfig {
     pub custom_exclude_paths: Vec<String>,
     #[serde(default)]
     pub per_target_config: HashMap<String, TargetConfig>,
+    #[serde(default)]
+    pub custom_targets: Vec<CustomTarget>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -265,19 +277,44 @@ pub fn save_config(config: &PonyConfig) -> Result<(), String> {
     fs::write(path, json).map_err(|e| format!("Write config: {e}"))
 }
 
-/// 获取过滤后的扫描目标
+/// 获取过滤后的扫描目标（内置目标 + 用户自定义目标）
 pub fn get_filtered_targets(config: &PonyConfig) -> Vec<ScanTarget> {
-    let all = get_clean_targets();
-    all.into_iter()
-        .filter(|t| !config.disabled_target_ids.contains(&t.id.to_string()))
+    let mut targets: Vec<ScanTarget> = get_clean_targets()
+        .into_iter()
+        .filter(|t| !config.disabled_target_ids.contains(&t.id))
         .filter(|t| {
             config
                 .per_target_config
-                .get(t.id)
+                .get(t.id.as_str())
                 .and_then(|c| c.enabled)
                 .unwrap_or(true)
         })
-        .collect()
+        .collect();
+
+    // 合并用户自定义目标（跳过禁用、id 冲突、Forbidden 级别）
+    for ct in &config.custom_targets {
+        if !ct.enabled || ct.level == SafetyLevel::Forbidden {
+            continue;
+        }
+        if targets.iter().any(|t| t.id == ct.id) {
+            continue;
+        }
+        targets.push(ScanTarget {
+            id: ct.id.clone(),
+            path: ct.path.clone(),
+            level: ct.level.clone(),
+            category: ct.category.clone(),
+            description: ct.description.clone(),
+            min_size: ct.category.default_min_size(),
+            max_items_per_target: MAX_ITEMS_PER_TARGET,
+            max_depth: DEFAULT_MAX_DEPTH,
+            glob_include: None,
+            glob_exclude: None,
+            requires_service_stop: None,
+            browser_profiles: None,
+        });
+    }
+    targets
 }
 
 pub fn config_dir() -> PathBuf {
@@ -369,458 +406,471 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
     vec![
         // === 已有 15 目标 ===
         ScanTarget::new(
-            "user_temp",
+            "user_temp".into(),
             "%TEMP%",
             SafetyLevel::Safe,
             Category::Temp,
-            "用户临时文件",
+            "用户临时文件".into(),
         ),
         ScanTarget::new(
-            "local_temp",
+            "local_temp".into(),
             "%LOCALAPPDATA%\\Temp",
             SafetyLevel::Safe,
             Category::Temp,
-            "当前用户临时文件",
+            "当前用户临时文件".into(),
         ),
         ScanTarget::new(
-            "sys_temp",
+            "sys_temp".into(),
             "%WINDIR%\\Temp",
             SafetyLevel::Confirm,
             Category::Temp,
-            "系统临时文件",
+            "系统临时文件".into(),
         ),
         ScanTarget::new(
-            "prefetch",
+            "prefetch".into(),
             &format!("{d}\\Windows\\Prefetch"),
             SafetyLevel::Confirm,
             Category::Prefetch,
-            "应用启动缓存",
+            "应用启动缓存".into(),
         ),
         ScanTarget::new(
-            "chrome_code_cache",
+            "chrome_code_cache".into(),
             "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache",
             SafetyLevel::Safe,
             Category::Cache,
-            "Chrome JS Code Cache",
+            "Chrome JS Code Cache".into(),
         ),
         ScanTarget::new(
-            "chrome_cache",
+            "chrome_cache".into(),
             "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
             SafetyLevel::Safe,
             Category::Cache,
-            "Chrome 磁盘缓存",
+            "Chrome 磁盘缓存".into(),
         ),
         ScanTarget::new(
-            "chrome_cache_storage",
+            "chrome_cache_storage".into(),
             "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\CacheStorage",
             SafetyLevel::Safe,
             Category::Cache,
-            "Chrome CacheStorage",
+            "Chrome CacheStorage".into(),
         ),
         ScanTarget::new(
-            "edge_code_cache",
+            "edge_code_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache",
             SafetyLevel::Safe,
             Category::Cache,
-            "Edge JS Code Cache",
+            "Edge JS Code Cache".into(),
         ),
         ScanTarget::new(
-            "edge_cache",
+            "edge_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache",
             SafetyLevel::Safe,
             Category::Cache,
-            "Edge 磁盘缓存",
+            "Edge 磁盘缓存".into(),
         ),
         ScanTarget::new(
-            "edge_cache_storage",
+            "edge_cache_storage".into(),
             "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\CacheStorage",
             SafetyLevel::Safe,
             Category::Cache,
-            "Edge CacheStorage",
+            "Edge CacheStorage".into(),
         ),
         ScanTarget::new(
-            "firefox_cache",
+            "firefox_cache".into(),
             "%APPDATA%\\Mozilla\\Firefox\\Profiles",
             SafetyLevel::Safe,
             Category::Cache,
-            "Firefox 缓存",
+            "Firefox 缓存".into(),
         )
         .with_browser(BrowserProfileConfig {
-            profile_patterns: &[
-                "default",
-                ".default-release",
-                ".default-esr",
-                ".default-nightly",
-                ".dev-edition-default",
+            profile_patterns: vec![
+                "default".into(),
+                ".default-release".into(),
+                ".default-esr".into(),
+                ".default-nightly".into(),
+                ".dev-edition-default".into(),
             ],
-            cache_subdirs: &[
-                "cache2/entries",
-                "startupCache",
-                "thumbnails",
-                "offlineCache",
+            cache_subdirs: vec![
+                "cache2/entries".into(),
+                "startupCache".into(),
+                "thumbnails".into(),
+                "offlineCache".into(),
             ],
         }),
         ScanTarget::new(
-            "wu_download",
+            "wu_download".into(),
             "%WINDIR%\\SoftwareDistribution\\Download",
             SafetyLevel::Confirm,
             Category::Cache,
-            "Windows Update 下载缓存",
+            "Windows Update 下载缓存".into(),
         ),
         ScanTarget::new(
-            "driver_store",
+            "driver_store".into(),
             &format!("{d}\\Windows\\System32\\DriverStore\\FileRepository"),
             SafetyLevel::Confirm,
             Category::Cache,
-            "旧驱动备份",
+            "旧驱动备份".into(),
         ),
         ScanTarget::new(
-            "inet_cache",
+            "inet_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
             SafetyLevel::Safe,
             Category::Cache,
-            "Internet 临时文件",
+            "Internet 临时文件".into(),
         ),
         ScanTarget::new(
-            "recycle_bin",
+            "recycle_bin".into(),
             &format!("{d}\\$Recycle.Bin"),
             SafetyLevel::Safe,
             Category::RecycleBin,
-            "回收站",
+            "回收站".into(),
         ),
         // === 新增 28 目标 ===
         ScanTarget::new(
-            "sys_logfiles",
+            "sys_logfiles".into(),
             "%WINDIR%\\System32\\LogFiles",
             SafetyLevel::Confirm,
             Category::Logs,
-            "系统日志文件",
+            "系统日志文件".into(),
         ),
         ScanTarget::new(
-            "sys_logs",
+            "sys_logs".into(),
             "%WINDIR%\\Logs",
             SafetyLevel::Confirm,
             Category::Logs,
-            "Windows 组件日志",
+            "Windows 组件日志".into(),
         ),
         ScanTarget::new(
-            "wer_user",
+            "wer_user".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\WER",
             SafetyLevel::Safe,
             Category::Logs,
-            "用户错误报告",
+            "用户错误报告".into(),
         ),
         ScanTarget::new(
-            "wer_system",
+            "wer_system".into(),
             "%ALLUSERSPROFILE%\\Microsoft\\Windows\\WER",
             SafetyLevel::Safe,
             Category::Logs,
-            "系统错误报告",
+            "系统错误报告".into(),
         ),
         ScanTarget::new(
-            "wer_temp_user",
+            "wer_temp_user".into(),
             "%LOCALAPPDATA%\\Temp",
             SafetyLevel::Safe,
             Category::Logs,
-            "Temp 中 WER",
+            "Temp 中 WER".into(),
         )
-        .with_glob(&["*WER*"]),
+        .with_glob(vec!["*WER*".into()]),
         ScanTarget::new(
-            "wer_temp_sys",
+            "wer_temp_sys".into(),
             "%WINDIR%\\Temp",
             SafetyLevel::Safe,
             Category::Logs,
-            "系统 Temp 中 WER",
+            "系统 Temp 中 WER".into(),
         )
-        .with_glob(&["*WER*"]),
+        .with_glob(vec!["*WER*".into()]),
         ScanTarget::new(
-            "sru",
+            "sru".into(),
             "%WINDIR%\\System32\\sru",
             SafetyLevel::Confirm,
             Category::Logs,
-            "系统资源使用统计（仅 SRUDB.dat）",
+            "系统资源使用统计（仅 SRUDB.dat）".into(),
         )
-        .with_glob(&["SRUDB.dat"]),
+        .with_glob(vec!["SRUDB.dat".into()]),
         ScanTarget::new(
-            "inet_cache_ie",
+            "inet_cache_ie".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\IE",
             SafetyLevel::Safe,
             Category::Cache,
-            "IE/Edge 传统 Internet 缓存",
+            "IE/Edge 传统 Internet 缓存".into(),
         ),
         ScanTarget::new(
-            "oobe_info",
+            "oobe_info".into(),
             "%WINDIR%\\System32\\oobe\\info",
             SafetyLevel::Safe,
             Category::Temp,
-            "OOBE 安装信息残留",
+            "OOBE 安装信息残留".into(),
         ),
         ScanTarget::new(
-            "ntms_data",
+            "ntms_data".into(),
             "%WINDIR%\\System32\\NtmsData",
             SafetyLevel::Safe,
             Category::Temp,
-            "可移动存储管理数据",
+            "可移动存储管理数据".into(),
         ),
         ScanTarget::new(
-            "downloaded_progs",
+            "downloaded_progs".into(),
             "%WINDIR%\\Downloaded Program Files",
             SafetyLevel::Confirm,
             Category::Temp,
-            "已下载程序文件",
+            "已下载程序文件".into(),
         ),
         ScanTarget::new(
-            "flash_cache",
+            "flash_cache".into(),
             "%WINDIR%\\System32\\Macromed\\Flash",
             SafetyLevel::Safe,
             Category::Cache,
-            "Flash 共享对象",
+            "Flash 共享对象".into(),
         ),
         ScanTarget::new(
-            "wu_datastore",
+            "wu_datastore".into(),
             "%WINDIR%\\SoftwareDistribution\\DataStore",
             SafetyLevel::Forbidden,
             Category::Cache,
-            "WU 数据库（需管理员）",
+            "WU 数据库（需管理员）".into(),
         ),
         ScanTarget::new(
-            "spool_servers",
+            "spool_servers".into(),
             "%WINDIR%\\System32\\spool\\SERVERS",
             SafetyLevel::Safe,
             Category::Temp,
-            "打印服务器临时文件",
+            "打印服务器临时文件".into(),
         ),
         ScanTarget::new(
-            "msdtc_trace",
+            "msdtc_trace".into(),
             "%WINDIR%\\System32\\MsDtc\\Trace",
             SafetyLevel::Safe,
             Category::Logs,
-            "分布式事务协调器日志",
+            "分布式事务协调器日志".into(),
         ),
         ScanTarget::new(
-            "uwp_temp",
+            "uwp_temp".into(),
             "%LOCALAPPDATA%\\Packages",
             SafetyLevel::Safe,
             Category::Temp,
-            "UWP 临时文件",
+            "UWP 临时文件".into(),
         ),
         ScanTarget::new(
-            "uwp_inet_cache",
+            "uwp_inet_cache".into(),
             "%LOCALAPPDATA%\\Packages",
             SafetyLevel::Safe,
             Category::Cache,
-            "UWP Internet 缓存",
+            "UWP Internet 缓存".into(),
         ),
         ScanTarget::new(
-            "uwp_local_cache",
+            "uwp_local_cache".into(),
             "%LOCALAPPDATA%\\Packages",
             SafetyLevel::Safe,
             Category::Cache,
-            "UWP 本地缓存",
+            "UWP 本地缓存".into(),
         ),
         ScanTarget::new(
-            "windows_app_cache",
+            "windows_app_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\AppCache",
             SafetyLevel::Safe,
             Category::Cache,
-            "Windows App 缓存",
+            "Windows App 缓存".into(),
         ),
         ScanTarget::new(
-            "ts_client_cache",
+            "ts_client_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\TerminalServer Client\\Cache",
             SafetyLevel::Safe,
             Category::Cache,
-            "远程桌面图标缓存",
+            "远程桌面图标缓存".into(),
         ),
         ScanTarget::new(
-            "downloads_old",
+            "downloads_old".into(),
             "%USERPROFILE%\\Downloads",
             SafetyLevel::Confirm,
             Category::Temp,
-            "下载文件夹过时文件",
+            "下载文件夹过时文件".into(),
         )
         .with_min_size(102_400),
         ScanTarget::new(
-            "crashdumps",
+            "crashdumps".into(),
             "%USERPROFILE%\\AppData\\Local\\CrashDumps",
             SafetyLevel::Safe,
             Category::Logs,
-            "应用崩溃转储",
+            "应用崩溃转储".into(),
         ),
         ScanTarget::new(
-            "etl_logs",
+            "etl_logs".into(),
             "%LOCALAPPDATA%\\Temp",
             SafetyLevel::Safe,
             Category::Logs,
-            "事件跟踪日志",
+            "事件跟踪日志".into(),
         )
-        .with_glob(&["*.etl"]),
+        .with_glob(vec!["*.etl".into()]),
         ScanTarget::new(
-            "app_logs",
+            "app_logs".into(),
             "%LOCALAPPDATA%\\Temp",
             SafetyLevel::Safe,
             Category::Logs,
-            "应用日志",
+            "应用日志".into(),
         )
-        .with_glob(&["*.log"]),
+        .with_glob(vec!["*.log".into()]),
         ScanTarget::new(
-            "wmp_cache",
+            "wmp_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Media Player",
             SafetyLevel::Safe,
             Category::Cache,
-            "WMP 媒体库缓存",
+            "WMP 媒体库缓存".into(),
         ),
         ScanTarget::new(
-            "explorer_cache",
+            "explorer_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\Caches",
             SafetyLevel::Safe,
             Category::Cache,
-            "资源管理器缓存",
+            "资源管理器缓存".into(),
         ),
         ScanTarget::new(
-            "sys_reset",
+            "sys_reset".into(),
             &format!("{d}\\$SysReset"),
             SafetyLevel::Confirm,
             Category::Temp,
-            "系统重置备份",
+            "系统重置备份".into(),
         ),
         ScanTarget::new(
-            "win_upgrade_tmp",
+            "win_upgrade_tmp".into(),
             &format!("{d}\\$Windows.~BT"),
             SafetyLevel::Confirm,
             Category::Temp,
-            "Windows 升级临时文件",
+            "Windows 升级临时文件".into(),
         ),
         // === 大文件分类（≥50MB，仅用户目录） ===
         ScanTarget::new(
-            "large_temp",
+            "large_temp".into(),
             "%TEMP%",
             SafetyLevel::Safe,
             Category::LargeFiles,
-            "临时文件夹中大文件（≥50MB）",
+            "临时文件夹中大文件（≥50MB）".into(),
         )
         .with_min_size_mb(50),
         ScanTarget::new(
-            "large_local_temp",
+            "large_local_temp".into(),
             "%LOCALAPPDATA%\\Temp",
             SafetyLevel::Safe,
             Category::LargeFiles,
-            "用户 Local Temp 中大文件（≥50MB）",
+            "用户 Local Temp 中大文件（≥50MB）".into(),
         )
         .with_min_size_mb(50),
         ScanTarget::new(
-            "large_downloads",
+            "large_downloads".into(),
             "%USERPROFILE%\\Downloads",
             SafetyLevel::Confirm,
             Category::LargeFiles,
-            "下载文件夹中大文件（≥100MB，>90天未使用）",
+            "下载文件夹中大文件（≥100MB，>90天未使用）".into(),
         )
         .with_min_size_mb(100)
-        .with_glob(&[
-            "*.msi", "*.exe", "*.zip", "*.rar", "*.7z", "*.iso", "*.img", "*.tar.gz", "*.pkg",
+        .with_glob(vec![
+            "*.msi".into(),
+            "*.exe".into(),
+            "*.zip".into(),
+            "*.rar".into(),
+            "*.7z".into(),
+            "*.iso".into(),
+            "*.img".into(),
+            "*.tar.gz".into(),
+            "*.pkg".into(),
         ]),
         ScanTarget::new(
-            "large_installers",
+            "large_installers".into(),
             "%USERPROFILE%\\Downloads",
             SafetyLevel::Confirm,
             Category::LargeFiles,
-            "下载的安装包（≥50MB MSI/EXE/MSP，>90天）",
+            "下载的安装包（≥50MB MSI/EXE/MSP，>90天）".into(),
         )
         .with_min_size_mb(50)
-        .with_glob(&["*.msi", "*.exe", "*.msp", "*.cab"]),
+        .with_glob(vec![
+            "*.msi".into(),
+            "*.exe".into(),
+            "*.msp".into(),
+            "*.cab".into(),
+        ]),
         ScanTarget::new(
-            "large_recycle_bin",
+            "large_recycle_bin".into(),
             &format!("{d}\\$Recycle.Bin"),
             SafetyLevel::Confirm,
             Category::LargeFiles,
-            "回收站中大文件（通过回收站清空操作统一删除）",
+            "回收站中大文件（通过回收站清空操作统一删除）".into(),
         )
         .with_min_size_mb(50),
         // === 应用缓存分类 ===
         ScanTarget::new(
-            "discord_cache",
+            "discord_cache".into(),
             "%APPDATA%\\discord\\Cache",
             SafetyLevel::Safe,
             Category::AppCache,
-            "Discord 缓存文件",
+            "Discord 缓存文件".into(),
         ),
         ScanTarget::new(
-            "discord_code_cache",
+            "discord_code_cache".into(),
             "%APPDATA%\\discord\\Code Cache",
             SafetyLevel::Safe,
             Category::AppCache,
-            "Discord JS Code Cache",
+            "Discord JS Code Cache".into(),
         ),
         ScanTarget::new(
-            "steam_cache",
+            "steam_cache".into(),
             "%LOCALAPPDATA%\\Steam\\htmlcache",
             SafetyLevel::Safe,
             Category::AppCache,
-            "Steam 内置浏览器缓存",
+            "Steam 内置浏览器缓存".into(),
         ),
         ScanTarget::new(
-            "wechat_cache",
+            "wechat_cache".into(),
             "%LOCALAPPDATA%\\WeChat\\XPlugin\\Plugins",
             SafetyLevel::Confirm,
             Category::AppCache,
-            "微信插件缓存（清理后自动重建）",
+            "微信插件缓存（清理后自动重建）".into(),
         ),
         ScanTarget::new(
-            "wechat_files",
+            "wechat_files".into(),
             "%LOCALAPPDATA%\\WeChat\\WeChatApp\\Cache",
             SafetyLevel::Safe,
             Category::AppCache,
-            "微信应用缓存",
+            "微信应用缓存".into(),
         ),
         ScanTarget::new(
-            "qq_cache",
+            "qq_cache".into(),
             "%LOCALAPPDATA%\\Tencent\\QQ\\Temp",
             SafetyLevel::Safe,
             Category::AppCache,
-            "QQ 临时缓存",
+            "QQ 临时缓存".into(),
         ),
         ScanTarget::new(
-            "electron_cache",
+            "electron_cache".into(),
             "%APPDATA%\\electron\\Cache",
             SafetyLevel::Safe,
             Category::AppCache,
-            "Electron 框架缓存（Electron 基础框架缓存）",
+            "Electron 框架缓存（Electron 基础框架缓存）".into(),
         ),
         // === 开发工具缓存分类 ===
         ScanTarget::new(
-            "npm_cache",
+            "npm_cache".into(),
             "%APPDATA%\\npm-cache",
             SafetyLevel::Safe,
             Category::DevCache,
-            "npm 包缓存",
+            "npm 包缓存".into(),
         ),
         ScanTarget::new(
-            "pip_cache",
+            "pip_cache".into(),
             "%LOCALAPPDATA%\\pip\\cache",
             SafetyLevel::Safe,
             Category::DevCache,
-            "pip 包缓存",
+            "pip 包缓存".into(),
         ),
         ScanTarget::new(
-            "cargo_cache",
+            "cargo_cache".into(),
             "%USERPROFILE%\\.cargo\\registry",
             SafetyLevel::Safe,
             Category::DevCache,
-            "Cargo 注册表缓存（清理后需重新下载 crate）",
+            "Cargo 注册表缓存（清理后需重新下载 crate）".into(),
         ),
         ScanTarget::new(
-            "cargo_git",
+            "cargo_git".into(),
             "%USERPROFILE%\\.cargo\\git",
             SafetyLevel::Safe,
             Category::DevCache,
-            "Cargo git 依赖缓存",
+            "Cargo git 依赖缓存".into(),
         ),
         ScanTarget::new(
-            "gradle_cache",
+            "gradle_cache".into(),
             "%USERPROFILE%\\.gradle\\caches",
             SafetyLevel::Confirm,
             Category::DevCache,
-            "Gradle 构建缓存（清理后构建速度下降）",
+            "Gradle 构建缓存（清理后构建速度下降）".into(),
         ),
     ]
 }
@@ -959,7 +1009,7 @@ fn resolve_browser_profiles(base: &Path, cfg: &BrowserProfileConfig) -> Vec<Path
             let name = fname.to_string_lossy();
             cfg.profile_patterns
                 .iter()
-                .any(|p| name.contains(p) || name.ends_with(p))
+                .any(|p| name.contains(p.as_str()) || name.ends_with(p.as_str()))
                 && !is_reparse_point(e)
         })
         .map(|e| e.path())
@@ -1045,7 +1095,7 @@ pub fn resolve_targets(targets: &[ScanTarget]) -> Vec<(PathBuf, usize)> {
         // UWP 通配路径
         if t.id.starts_with("uwp_") {
             for uwp_path in resolve_uwp_packages() {
-                let sub = match t.id {
+                let sub = match t.id.as_str() {
                     "uwp_temp" => "AC\\Temp",
                     "uwp_inet_cache" => "AC\\INetCache",
                     "uwp_local_cache" => "LocalCache",
@@ -1183,7 +1233,7 @@ pub fn start_scan(
             }
 
             let cat_min_size = target_def.min_size;
-            let glob_inc_static: Option<&'static [&'static str]> = target_def.glob_include;
+            let glob_inc = target_def.glob_include.as_deref();
             let needs_mtime = target_def.category == Category::Logs
                 || target_def.id == "downloads_old"
                 || target_def.id == "etl_logs"
@@ -1245,9 +1295,10 @@ pub fn start_scan(
                 }
 
                 // glob_include 过滤：支持 `*.ext`（后缀）, `*WER*`（包含）, `prefix*`（前缀）
-                if let Some(inc) = glob_inc_static {
+                if let Some(inc) = glob_inc {
                     let fname = entry.file_name().to_string_lossy();
                     if !inc.iter().any(|p| {
+                        let p = p.as_str();
                         let has_prefix_wild = p.starts_with('*');
                         let has_suffix_wild = p.ends_with('*');
                         let inner = p.trim_start_matches('*').trim_end_matches('*');
@@ -1264,7 +1315,7 @@ pub fn start_scan(
 
                 if target_count >= target_def.max_items_per_target {
                     let _ = tx.send(ScanEvent::Warning(ScanWarning::MaxItemsReached {
-                        target_id: target_def.id.into(),
+                        target_id: target_def.id.clone(),
                         items: target_count,
                     }));
                     break;
@@ -1759,11 +1810,11 @@ mod tests {
     #[test]
     fn test_is_path_allowed_valid() {
         let targets = vec![ScanTarget::new(
-            "t",
+            "t".into(),
             "%TEMP%",
             SafetyLevel::Safe,
             Category::Temp,
-            "",
+            "".into(),
         )];
         let temp = std::env::var("TEMP").unwrap();
         let test_path = PathBuf::from(&temp).join("test.txt");
@@ -1773,14 +1824,14 @@ mod tests {
     #[test]
     fn test_is_path_allowed_rejected() {
         let targets = vec![ScanTarget::new(
-            "t",
+            "t".into(),
             "%TEMP%",
             SafetyLevel::Safe,
             Category::Temp,
-            "",
+            "".into(),
         )];
         assert!(!is_path_allowed(
-            Path::new(r"C:\Windows\System32\test.dll"),
+            Path::new(r"C:\Windows\System32\test.dll".into()),
             &targets,
         ));
     }
@@ -1788,11 +1839,11 @@ mod tests {
     #[test]
     fn test_is_path_allowed_cache_category() {
         let targets = vec![ScanTarget::new(
-            "t",
+            "t".into(),
             "%LOCALAPPDATA%\\Google\\Chrome",
             SafetyLevel::Safe,
             Category::Cache,
-            "",
+            "".into(),
         )];
         let local = std::env::var("LOCALAPPDATA").unwrap();
         let test_path = PathBuf::from(&local).join("Google\\Chrome\\Cache\\f_000001");
@@ -1802,13 +1853,19 @@ mod tests {
     #[test]
     fn test_resolve_targets_excludes_forbidden() {
         let targets = vec![
-            ScanTarget::new("temp", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""),
             ScanTarget::new(
-                "sys32",
+                "temp".into(),
+                "%TEMP%",
+                SafetyLevel::Safe,
+                Category::Temp,
+                "".into(),
+            ),
+            ScanTarget::new(
+                "sys32".into(),
                 "C:\\Windows\\System32",
                 SafetyLevel::Forbidden,
                 Category::Temp,
-                "",
+                "".into(),
             ),
         ];
         let resolved = resolve_targets(&targets);
@@ -1829,11 +1886,11 @@ mod tests {
         // 使用 config（在 PROTECTED_PREFIXES 中）作为受保护路径
         let protected = format!("{}\\System32\\config", sys_root);
         let targets = vec![ScanTarget::new(
-            "p",
+            "p".into(),
             &protected,
             SafetyLevel::Safe,
             Category::Temp,
-            "",
+            "".into(),
         )];
         let resolved = resolve_targets(&targets);
         assert!(resolved.is_empty(), "protected path should be skipped");
@@ -1942,7 +1999,7 @@ mod tests {
 
     #[test]
     fn test_target_ids_unique() {
-        let ids: Vec<&str> = get_clean_targets().iter().map(|t| t.id).collect();
+        let ids: Vec<String> = get_clean_targets().iter().map(|t| t.id.clone()).collect();
         let mut sorted = ids.clone();
         sorted.sort();
         sorted.dedup();
@@ -2065,11 +2122,11 @@ mod tests {
     #[test]
     fn test_is_path_allowed_trailing_slash() {
         let targets = vec![ScanTarget::new(
-            "t",
+            "t".into(),
             "%TEMP%\\",
             SafetyLevel::Safe,
             Category::Temp,
-            "",
+            "".into(),
         )];
         let temp = std::env::var("TEMP").unwrap_or_default();
         if !temp.is_empty() {
@@ -2093,6 +2150,85 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_targets_merged() {
+        let mut config = PonyConfig::default();
+        config.custom_targets.push(CustomTarget {
+            id: "my_app_cache".into(),
+            path: "%LOCALAPPDATA%\\MyApp\\Cache".into(),
+            level: SafetyLevel::Safe,
+            category: Category::AppCache,
+            description: "我的应用缓存".into(),
+            enabled: true,
+        });
+        let filtered = get_filtered_targets(&config);
+        let custom = filtered.iter().find(|t| t.id == "my_app_cache");
+        assert!(custom.is_some(), "custom target should be merged");
+        assert_eq!(custom.unwrap().category, Category::AppCache);
+        assert_eq!(custom.unwrap().level, SafetyLevel::Safe);
+    }
+
+    #[test]
+    fn test_custom_targets_disabled_or_forbidden_skipped() {
+        let mut config = PonyConfig::default();
+        config.custom_targets.push(CustomTarget {
+            id: "disabled_one".into(),
+            path: "%TEMP%\\X".into(),
+            level: SafetyLevel::Safe,
+            category: Category::Temp,
+            description: "".into(),
+            enabled: false,
+        });
+        config.custom_targets.push(CustomTarget {
+            id: "forbidden_one".into(),
+            path: "%WINDIR%\\System32".into(),
+            level: SafetyLevel::Forbidden,
+            category: Category::Temp,
+            description: "".into(),
+            enabled: true,
+        });
+        let filtered = get_filtered_targets(&config);
+        assert!(!filtered.iter().any(|t| t.id == "disabled_one"));
+        assert!(!filtered.iter().any(|t| t.id == "forbidden_one"));
+    }
+
+    #[test]
+    fn test_custom_targets_id_conflict_skipped() {
+        let mut config = PonyConfig::default();
+        config.custom_targets.push(CustomTarget {
+            id: "user_temp".into(), // 与内置目标冲突
+            path: "%TEMP%\\Custom".into(),
+            level: SafetyLevel::Safe,
+            category: Category::Temp,
+            description: "".into(),
+            enabled: true,
+        });
+        let filtered = get_filtered_targets(&config);
+        let user_temp = filtered.iter().find(|t| t.id == "user_temp").unwrap();
+        assert_eq!(
+            user_temp.path, "%TEMP%",
+            "builtin target wins on id conflict"
+        );
+    }
+
+    #[test]
+    fn test_custom_target_serde_roundtrip() {
+        let ct = CustomTarget {
+            id: "roundtrip".into(),
+            path: "%TEMP%\\R".into(),
+            level: SafetyLevel::Confirm,
+            category: Category::Logs,
+            description: "往返测试".into(),
+            enabled: true,
+        };
+        let json = serde_json::to_string(&ct).unwrap();
+        let back: CustomTarget = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "roundtrip");
+        assert_eq!(back.level, SafetyLevel::Confirm);
+        assert_eq!(back.category, Category::Logs);
+        assert!(back.enabled);
+    }
+
+    #[test]
     fn test_config_migration_v1_to_v2() {
         let v1 = PonyConfig {
             disabled_targets: vec!["%TEMP%".into(), "%WINDIR%\\Temp".into()],
@@ -2110,8 +2246,20 @@ mod tests {
     #[test]
     fn test_resolve_targets_dedup_same_path() {
         let targets = vec![
-            ScanTarget::new("a", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""),
-            ScanTarget::new("b", "%TEMP%", SafetyLevel::Safe, Category::Temp, ""), // 同路径
+            ScanTarget::new(
+                "a".into(),
+                "%TEMP%",
+                SafetyLevel::Safe,
+                Category::Temp,
+                "".into(),
+            ),
+            ScanTarget::new(
+                "b".into(),
+                "%TEMP%",
+                SafetyLevel::Safe,
+                Category::Temp,
+                "".into(),
+            ), // 同路径
         ];
         let resolved = resolve_targets(&targets);
         let paths: std::collections::HashSet<_> = resolved.iter().map(|(p, _)| p).collect();
@@ -2199,14 +2347,14 @@ mod tests {
     fn test_allowed_separator_reject_adjacent() {
         temp_env::with_var("TEMP", Some("C:\\Temp"), || {
             let targets = vec![ScanTarget::new(
-                "t",
+                "t".into(),
                 "%TEMP%",
                 SafetyLevel::Safe,
                 Category::Temp,
-                "",
+                "".into(),
             )];
             assert!(!is_path_allowed(
-                Path::new(r"C:\Temp_malicious\evil.exe"),
+                Path::new(r"C:\Temp_malicious\evil.exe".into()),
                 &targets
             ));
         });
@@ -2221,15 +2369,21 @@ mod tests {
 
     #[test]
     fn test_with_min_size_mb_converts_correctly() {
-        let t = ScanTarget::new("test", "%TEMP%", SafetyLevel::Safe, Category::Temp, "test")
-            .with_min_size_mb(50);
-        assert_eq!(t.min_size, 52_428_800, "50MB should be 52_428_800 bytes");
-        let t2 = ScanTarget::new(
-            "test2",
+        let t = ScanTarget::new(
+            "test".into(),
             "%TEMP%",
             SafetyLevel::Safe,
             Category::Temp,
-            "test2",
+            "test".into(),
+        )
+        .with_min_size_mb(50);
+        assert_eq!(t.min_size, 52_428_800, "50MB should be 52_428_800 bytes");
+        let t2 = ScanTarget::new(
+            "test2".into(),
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "test2".into(),
         )
         .with_min_size_mb(100);
         assert_eq!(
