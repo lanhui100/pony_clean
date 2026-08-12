@@ -102,11 +102,15 @@ onMounted(async () => {
   }).catch(() => null)
 
   // 渲染自检：挂载后检查胶囊层是否真的可见，结果转发到 Rust 终端
+  // motion.div 组件不保证转发 ref 到 DOM（ref 可能为组件实例），用 data 属性定位 + 类型守卫
   setTimeout(() => {
     window.__ponyLog?.('info', `render-check: form=${form.value}`)
-    const el = pillLayerRef.value
+    const refEl = pillLayerRef.value
+    const el = (refEl && (refEl as unknown as Element).nodeType === 1
+      ? (refEl as unknown as Element)
+      : document.querySelector<HTMLElement>('[data-pill-layer]'))
     if (!el) {
-      window.__ponyLog?.('error', 'render-check: pill layer ref is null (template render failed?)')
+      window.__ponyLog?.('error', 'render-check: pill layer element not found (template render failed?)')
       return
     }
     const cs = window.getComputedStyle(el)
@@ -143,6 +147,7 @@ function onCapsuleAnimComplete() {
       <motion.div
         ref="pillLayerRef"
         class="content-layer"
+        data-pill-layer
         :style="pillLayerStyle"
         :animate="pillAnim"
         :transition="morphTransition"
