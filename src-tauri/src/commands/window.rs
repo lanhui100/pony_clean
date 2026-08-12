@@ -207,11 +207,12 @@ const EDGE_THRESHOLD: i32 = 20;
 const LOGICAL_W: i32 = 315;
 const LOGICAL_H: i32 = 100; // island 概要态高度
 const ISLAND_EXPANDED_H: i32 = 480; // island 展开态高度（监控/清理面板）
-const CAPSULE_LOGICAL_W: i32 = 166; // window width (extra 6px for pill anti-aliasing)
-const CAPSULE_W: i32 = 160; // visual pill width
-const CAPSULE_H: i32 = 40; // visual pill height
+const CAPSULE_W_LOGICAL: i32 = 166; // 横边窗口宽度（逻辑 px，含 6px 抗锯齿余量）
+const CAPSULE_H_LOGICAL: i32 = 44; // 横边窗口高度（逻辑 px，含 4px 余量）
+const PILL_W: i32 = 160; // 胶囊视觉宽度
+const PILL_H: i32 = 40; // 胶囊视觉高度
+const STRIP_THICK: i32 = 10; // 贴边进度条厚度
 const ISLAND_RADIUS: i32 = 16;
-const CAPSULE_RADIUS: i32 = 20;
 
 // Window property name for hit-test mode
 const HT_MODE_PROP: &str = "PonyCleanHitMode\0";
@@ -219,6 +220,41 @@ const HT_MODE_PROP: &str = "PonyCleanHitMode\0";
 // Hit-test mode values stored in window property
 const HT_MODE_CAPSULE: isize = 0;
 const HT_MODE_FULL: isize = 1;
+
+// 胶囊窗口几何属性（形态 + 贴边方向），供 subclass 命中区域与原生命中区域计算
+const GEO_FORM_PROP: &str = "PonyCleanGeoForm\0";
+const GEO_EDGE_PROP: &str = "PonyCleanGeoEdge\0";
+const FORM_PILL: isize = 0;
+const FORM_BAR: isize = 1;
+const EDGE_TOP: isize = 0;
+const EDGE_BOTTOM: isize = 1;
+const EDGE_LEFT: isize = 2;
+const EDGE_RIGHT: isize = 3;
+
+/// 胶囊窗口显示形态：胶囊（药丸）或贴边进度条
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CapsuleForm {
+    #[default]
+    Pill,
+    Bar,
+}
+
+/// 屏幕边缘
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ScreenEdge {
+    #[default]
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+/// 胶囊窗口当前的形态 + 贴边方向
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct CapsuleGeometry {
+    pub form: CapsuleForm,
+    pub edge: ScreenEdge,
+}
 
 #[cfg(target_os = "windows")]
 fn lparam_screen_point(lparam: isize) -> POINT {
@@ -229,29 +265,121 @@ fn lparam_screen_point(lparam: isize) -> POINT {
     }
 }
 
+/// 读取胶囊窗口当前的形态/贴边方向（窗口属性）
 #[cfg(target_os = "windows")]
-unsafe fn cursor_in_capsule_region(hwnd: isize, pt: POINT) -> bool {
-    let mut wr = RECT {
+unsafe fn read_capsule_geometry(hwnd: isize) -> CapsuleGeometry {
+    let form_prop: Vec<u16> = GEO_FORM_PROP.encode_utf16().collect();
+    let edge_prop: Vec<u16> = GEO_EDGE_PROP.encode_utf16().collect();
+    let form = match unsafe { GetPropW(hwnd, form_prop.as_ptr()) } {
+        FORM_BAR => CapsuleForm::Bar,
+        _ => CapsuleForm::Pill,
+    };
+    let edge = match unsafe { GetPropW(hwnd, edge_prop.as_ptr()) } {
+        EDGE_BOTTOM => ScreenEdge::Bottom,
+        EDGE_LEFT => ScreenEdge::Left,
+        EDGE_RIGHT => ScreenEdge::Right,
+        _ => ScreenEdge::Top,
+    };
+    CapsuleGeometry { form, edge }
+}
+
+/// 窗口逻辑尺寸：竖边（左/右）旋转为 44×166，横边为 166×44
+#[cfg(target_os = "windows")]
+fn capsule_logical_size(edge: ScreenEdge) -> (i32, i32) {
+    match edge {
+        ScreenEdge::Left | ScreenEdge::Right => (CAPSULE_H_LOGICAL, CAPSULE_W_LOGICAL),
+        _ => (CAPSULE_W_LOGICAL, CAPSULE_H_LOGICAL),
+    }
+}
+
+/// 内容矩形（逻辑 px，相对窗口左上角）：胶囊居中，进度条贴边细条
+#[cfg(target_os = "windows")]
+fn capsule_content_logical(geo: CapsuleGeometry) -> (i32, i32, i32, i32) {
+    let (lw, lh) = capsule_logical_size(geo.edge);
+    match geo.form {
+        CapsuleForm::Pill => {
+            // 竖边（左/右）时胶囊旋转：宽高互换（40 宽 × 160 高）
+            let (pw, ph) = match geo.edge {
+                ScreenEdge::Left | ScreenEdge::Right => (PILL_H, PILL_W),
+                _ => (PILL_W, PILL_H),
+            };
+            let x = (lw - pw) / 2;
+            let y = (lh - ph) / 2;
+            (x, y, pw, ph)
+        }
+        CapsuleForm::Bar => match geo.edge {
+            ScreenEdge::Top => (0, 0, lw, STRIP_THICK),
+            ScreenEdge::Bottom => (0, lh - STRIP_THICK, lw, STRIP_THICK),
+            ScreenEdge::Left => (0, 0, STRIP_THICK, lh),
+            ScreenEdge::Right => (lw - STRIP_THICK, 0, STRIP_THICK, lh),
+        },
+    }
+}
+
+/// 计算胶囊窗口内容矩形（物理像素，相对窗口客户区），按实际客户区与逻辑尺寸换算 DPR
+#[cfg(target_os = "windows")]
+unsafe fn capsule_content_phys(hwnd: isize, geo: CapsuleGeometry) -> Option<(i32, i32, i32, i32)> {
+    let mut cr = RECT {
         left: 0,
         top: 0,
         right: 0,
         bottom: 0,
     };
-    if unsafe { GetWindowRect(hwnd, &mut wr) } == 0 {
+    if unsafe { GetClientRect(hwnd, &mut cr) } == 0 {
+        return None;
+    }
+    let phys_w = cr.right - cr.left;
+    let phys_h = cr.bottom - cr.top;
+    if phys_w <= 0 || phys_h <= 0 {
+        return None;
+    }
+    let (lw, lh) = capsule_logical_size(geo.edge);
+    let dpr_x = phys_w as f32 / lw as f32;
+    let dpr_y = phys_h as f32 / lh as f32;
+    let (lx, ly, cw, ch) = capsule_content_logical(geo);
+    let x = (lx as f32 * dpr_x).round() as i32;
+    let y = (ly as f32 * dpr_y).round() as i32;
+    let w = (cw as f32 * dpr_x).round() as i32;
+    let h = (ch as f32 * dpr_y).round() as i32;
+    let x = x.max(0).min(phys_w);
+    let y = y.max(0).min(phys_h);
+    let w = w.min(phys_w - x);
+    let h = h.min(phys_h - y);
+    Some((x, y, w, h))
+}
+
+/// 为胶囊窗口应用与当前形态/贴边方向匹配的圆角区域（点击穿透 + 形状裁剪）
+#[cfg(target_os = "windows")]
+unsafe fn apply_capsule_region(hwnd: isize) {
+    let geo = unsafe { read_capsule_geometry(hwnd) };
+    let Some((x, y, w, h)) = (unsafe { capsule_content_phys(hwnd, geo) }) else {
+        return;
+    };
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    // 两端半圆（胶囊/进度条）：角椭圆直径取短边，横竖排均正确
+    let radius = w.min(h);
+    let region = unsafe { CreateRoundRectRgn(x, y, x + w, y + h, radius, radius) };
+    if region != 0 {
+        unsafe {
+            SetWindowRgn(hwnd, region, 1);
+            redraw_window_frame(hwnd);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn cursor_in_capsule_region(hwnd: isize, pt: POINT) -> bool {
+    let geo = unsafe { read_capsule_geometry(hwnd) };
+    let Some((x, y, w, h)) = (unsafe { capsule_content_phys(hwnd, geo) }) else {
+        return false;
+    };
+    let mut cpt = pt;
+    if unsafe { ScreenToClient(hwnd, &mut cpt) } == 0 {
         return false;
     }
-
-    let phys_w = wr.right - wr.left;
-    if phys_w <= 0 {
-        return false;
-    }
-
-    let dpr = phys_w as f32 / CAPSULE_LOGICAL_W as f32;
-    let c_w = (CAPSULE_LOGICAL_W as f32 * dpr).round() as i32;
-    let c_h = (CAPSULE_H as f32 * dpr).round() as i32;
-    let c_x = wr.left + (phys_w - c_w) / 2;
-
-    pt.x >= c_x && pt.x < c_x + c_w && pt.y >= wr.top && pt.y < wr.top + c_h
+    cpt.x >= x && cpt.x < x + w && cpt.y >= y && cpt.y < y + h
 }
 
 #[cfg(target_os = "windows")]
@@ -271,39 +399,36 @@ unsafe fn redraw_window_frame(hwnd: isize) {
 
 #[cfg(target_os = "windows")]
 unsafe fn apply_window_region(hwnd: isize, mode: isize) {
-    let mut cr = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    if unsafe { GetClientRect(hwnd, &mut cr) } == 0 {
-        return;
-    }
+    if mode == HT_MODE_FULL {
+        let mut cr = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if unsafe { GetClientRect(hwnd, &mut cr) } == 0 {
+            return;
+        }
 
-    let phys_w = cr.right - cr.left;
-    let phys_h = cr.bottom - cr.top;
-    if phys_w <= 0 || phys_h <= 0 {
-        return;
-    }
+        let phys_w = cr.right - cr.left;
+        let phys_h = cr.bottom - cr.top;
+        if phys_w <= 0 || phys_h <= 0 {
+            return;
+        }
 
-    let dpr = phys_w as f32 / LOGICAL_W as f32;
-    let region = if mode == HT_MODE_FULL {
+        let dpr = phys_w as f32 / LOGICAL_W as f32;
         // CreateRoundRectRgn expects the corner ellipse size, not the CSS radius.
         let ellipse = (ISLAND_RADIUS as f32 * dpr * 2.0).round() as i32;
-        unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, ellipse, ellipse) }
-    } else {
-        let c_w = (CAPSULE_W as f32 * dpr).round() as i32;
-        let c_h = (CAPSULE_H as f32 * dpr).round() as i32;
-        let c_x = (phys_w - c_w) / 2;
-        unsafe { CreateRoundRectRgn(c_x, 0, c_x + c_w, c_h, c_h, c_h) }
-    };
-
-    if region != 0 {
-        unsafe {
-            SetWindowRgn(hwnd, region, 1);
-            redraw_window_frame(hwnd);
+        let region = unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, ellipse, ellipse) };
+        if region != 0 {
+            unsafe {
+                SetWindowRgn(hwnd, region, 1);
+                redraw_window_frame(hwnd);
+            }
         }
+    } else {
+        // 胶囊模式：按当前形态/贴边方向动态计算区域
+        unsafe { apply_capsule_region(hwnd) };
     }
 }
 
@@ -320,6 +445,7 @@ pub struct EdgeCursorPayload {
 pub struct EdgeCursorState {
     pub running: Arc<AtomicBool>,
     pub hwnd: Mutex<Option<isize>>,
+    pub geo: Mutex<CapsuleGeometry>,
 }
 
 impl EdgeCursorState {
@@ -327,6 +453,7 @@ impl EdgeCursorState {
         Self {
             running: Arc::new(AtomicBool::new(false)),
             hwnd: Mutex::new(None),
+            geo: Mutex::new(CapsuleGeometry::default()),
         }
     }
 }
@@ -390,6 +517,8 @@ unsafe extern "system" fn hit_test_subclass(
 ) -> isize {
     const WM_NCHITTEST: u32 = 0x0084;
     const WM_NCCALCSIZE: u32 = 0x0083;
+    const WM_NCACTIVATE: u32 = 0x0086;
+    const WM_NCPAINT: u32 = 0x0085;
     const WM_ERASEBKGND: u32 = 0x0014;
     const HTCLIENT: isize = 1;
     // HTNOWHERE silently drops the click without passing it through. Do not rely
@@ -404,6 +533,16 @@ unsafe extern "system" fn hit_test_subclass(
     // WebView2 corners.
     if msg == WM_ERASEBKGND {
         return 1;
+    }
+
+    // WM_NCACTIVATE：阻止激活/失焦时 DWM 绘制标题栏激活态
+    if msg == WM_NCACTIVATE {
+        return 1;
+    }
+
+    // WM_NCPAINT：阻止非客户区（标题栏/边框）绘制
+    if msg == WM_NCPAINT {
+        return 0;
     }
 
     // WM_NCCALCSIZE = 0：客户区覆盖整个窗口（含标题栏区域）。
@@ -422,39 +561,20 @@ unsafe extern "system" fn hit_test_subclass(
             return HTCLIENT;
         }
 
-        // Capsule mode: only the centered 160×40 (logical) area is interactive
+        // Capsule mode: only the content rect (pill / edge strip) is interactive.
+        // The rest of the window is click-through thanks to SetWindowRgn.
+        let geo = unsafe { read_capsule_geometry(hwnd) };
+        let Some((x, y, w, h)) = (unsafe { capsule_content_phys(hwnd, geo) }) else {
+            return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+        };
         let mut pt = lparam_screen_point(lparam);
         if unsafe { ScreenToClient(hwnd, &mut pt) } == 0 {
             return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
         }
-
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        if unsafe { GetClientRect(hwnd, &mut rect) } == 0 {
-            return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+        if pt.x >= x && pt.x < x + w && pt.y >= y && pt.y < y + h {
+            return HTCLIENT;
         }
-
-        let phys_w = (rect.right - rect.left) as f32;
-        let dpr = phys_w / LOGICAL_W as f32;
-
-        // Check vertical: must be within capsule height
-        let c_h = (CAPSULE_H as f32 * dpr) as i32;
-        if pt.y < 0 || pt.y >= c_h {
-            return HTNOWHERE;
-        }
-
-        // Check horizontal: must be within centered capsule width
-        let c_w = (CAPSULE_W as f32 * dpr) as i32;
-        let c_x = (phys_w as i32 - c_w) / 2;
-        if pt.x < c_x || pt.x >= c_x + c_w {
-            return HTNOWHERE;
-        }
-
-        return HTCLIENT;
+        return HTNOWHERE;
     }
 
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
@@ -467,11 +587,41 @@ unsafe extern "system" fn hit_test_subclass(
 /// 会出现"圆角面板 + 直角底部"的分层。圆角观感由 CSS 玻璃壳 + 内容卡片承担。
 #[cfg(target_os = "windows")]
 pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
-    let windows = [
-        ("capsule", CAPSULE_LOGICAL_W, CAPSULE_RADIUS),
-        ("island", LOGICAL_W, ISLAND_RADIUS),
-    ];
+    // 胶囊窗口：命中/裁剪区域由 set_capsule_geometry 按形态+贴边动态维护，
+    // 这里只安装 subclass 并设置默认几何（胶囊/顶边）。
+    if let Some(window) = app.get_webview_window("capsule") {
+        let _ = window.set_decorations(false);
+        let _ = window.set_effects(None);
+    }
+    if let Some(hwnd) = get_hwnd_for_label(app, "capsule") {
+        unsafe {
+            if SetWindowSubclass(hwnd, hit_test_subclass as SUBCLASSPROC, 0, 0) == 0 {
+                return Err("SetWindowSubclass failed for capsule".into());
+            }
+            let prop_name: Vec<u16> = HT_MODE_PROP.encode_utf16().collect();
+            SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_CAPSULE);
+            let form_prop: Vec<u16> = GEO_FORM_PROP.encode_utf16().collect();
+            SetPropW(hwnd, form_prop.as_ptr(), FORM_PILL);
+            let edge_prop: Vec<u16> = GEO_EDGE_PROP.encode_utf16().collect();
+            SetPropW(hwnd, edge_prop.as_ptr(), EDGE_TOP);
 
+            remove_dwm_border(hwnd);
+            strip_title_bar(hwnd);
+
+            const GWL_EXSTYLE: i32 = -20;
+            const WS_EX_TOOLWINDOW: isize = 0x00000080;
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if (ex_style & WS_EX_TOOLWINDOW) == 0 {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
+            }
+
+            apply_capsule_region(hwnd);
+            eprintln!("[PonyClean] Prepared floating window: capsule");
+        }
+    }
+
+    // island 窗口：直角圆角区域（Acrylic 整块直铺），命中区域为全窗口
+    let windows = [("island", LOGICAL_W, ISLAND_RADIUS)];
     for (label, logical_w, radius) in windows {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.set_decorations(false);
@@ -483,8 +633,6 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
         };
 
         unsafe {
-            let style = GetWindowLongPtrW(hwnd, -16);
-
             if SetWindowSubclass(hwnd, hit_test_subclass as SUBCLASSPROC, 0, 0) == 0 {
                 return Err(format!("SetWindowSubclass failed for {label}"));
             }
@@ -492,31 +640,7 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
             SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_FULL);
 
             remove_dwm_border(hwnd);
-
-            const GWL_STYLE: i32 = -16;
-            // 注意：WS_CAPTION 样式位保留（Win11 上 SWCA Acrylic 依赖它生效），
-            // 标题栏视觉由 WM_NCCALCSIZE=0 隐藏（客户区吞掉非客户区）。
-            const WS_THICKFRAME: isize = 0x00040000;
-            const WS_SYSMENU: isize = 0x00080000;
-            const WS_MINIMIZEBOX: isize = 0x00020000;
-            const WS_MAXIMIZEBOX: isize = 0x00010000;
-            let new_style = style & !(WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-            if new_style != style {
-                SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
-                const SWP_FRAMECHANGED: u32 = 0x0020;
-                const SWP_NOMOVE: u32 = 0x0002;
-                const SWP_NOSIZE: u32 = 0x0001;
-                const SWP_NOZORDER: u32 = 0x0004;
-                SetWindowPos(
-                    hwnd,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
-                );
-            }
+            strip_title_bar(hwnd);
 
             const GWL_EXSTYLE: i32 = -20;
             const WS_EX_TOOLWINDOW: isize = 0x00000080;
@@ -531,6 +655,45 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// 彻底移除窗口标题栏（样式位 + DWM 渲染策略）。
+///
+/// 组合拳（社区验证的完整方案）：
+/// 1. 移除 WS_CAPTION 样式位（标题栏的样式基础）
+/// 2. DWMWA_NCRENDERING_POLICY = DISABLED（DWM 不渲染非客户区）
+/// 3. SWP_FRAMECHANGED 触发框架重算
+///
+/// 视觉拦截由 subclass 的 WM_NCACTIVATE / WM_NCPAINT / WM_NCCALCSIZE 负责。
+#[cfg(target_os = "windows")]
+pub unsafe fn strip_title_bar(hwnd: isize) {
+    const GWL_STYLE: i32 = -16;
+    const WS_CAPTION: isize = 0x00C00000;
+    const WS_THICKFRAME: isize = 0x00040000;
+    const WS_SYSMENU: isize = 0x00080000;
+    const WS_MINIMIZEBOX: isize = 0x00020000;
+    const WS_MAXIMIZEBOX: isize = 0x00010000;
+    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+    let new_style =
+        style & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+    if new_style != style {
+        unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, new_style) };
+        const SWP_FRAMECHANGED: u32 = 0x0020;
+        const SWP_NOMOVE: u32 = 0x0002;
+        const SWP_NOSIZE: u32 = 0x0001;
+        const SWP_NOZORDER: u32 = 0x0004;
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            );
+        }
+    }
 }
 
 /// Use DwmSetWindowAttribute to make the window border transparent.
@@ -629,9 +792,163 @@ pub fn set_hit_test_mode(
     Ok(())
 }
 
+/// 更新胶囊窗口的形态（胶囊/进度条）与贴边方向，并同步原生圆角区域与命中区域。
+///
+/// 当前产品仅支持**顶部贴边**（前端恒传 edge="top"）；枚举保留 left/right/bottom
+/// 仅为未来扩展预留。窗口 resize 后客户端矩形可能尚未稳定，延迟 40ms 再重算一次区域兜底。
+#[tauri::command]
+pub fn set_capsule_geometry(
+    app: AppHandle,
+    state: tauri::State<'_, EdgeCursorState>,
+    form: String,
+    edge: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        eprintln!("[PonyClean] set_capsule_geometry: form={form} edge={edge}");
+        let geo = CapsuleGeometry {
+            form: match form.as_str() {
+                "bar" => CapsuleForm::Bar,
+                "pill" => CapsuleForm::Pill,
+                _ => return Err(format!("unknown capsule form: {form}")),
+            },
+            edge: match edge.as_str() {
+                "bottom" => ScreenEdge::Bottom,
+                "left" => ScreenEdge::Left,
+                "right" => ScreenEdge::Right,
+                "top" => ScreenEdge::Top,
+                _ => return Err(format!("unknown screen edge: {edge}")),
+            },
+        };
+        *state.geo.lock().unwrap() = geo;
+
+        let hwnd = get_hwnd(&app).ok_or("capsule window not found")?;
+        unsafe {
+            let form_prop: Vec<u16> = GEO_FORM_PROP.encode_utf16().collect();
+            let edge_prop: Vec<u16> = GEO_EDGE_PROP.encode_utf16().collect();
+            SetPropW(
+                hwnd,
+                form_prop.as_ptr(),
+                match geo.form {
+                    CapsuleForm::Bar => FORM_BAR,
+                    CapsuleForm::Pill => FORM_PILL,
+                },
+            );
+            SetPropW(
+                hwnd,
+                edge_prop.as_ptr(),
+                match geo.edge {
+                    ScreenEdge::Bottom => EDGE_BOTTOM,
+                    ScreenEdge::Left => EDGE_LEFT,
+                    ScreenEdge::Right => EDGE_RIGHT,
+                    ScreenEdge::Top => EDGE_TOP,
+                },
+            );
+            apply_capsule_region(hwnd);
+        }
+
+        // 窗口尺寸变更后客户端矩形可能尚未稳定，延迟重算一次区域
+        let app2 = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            if let Some(hwnd) = get_hwnd_for_label(&app2, "capsule") {
+                unsafe {
+                    apply_capsule_region(hwnd);
+                }
+            }
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (&app, &state, form, edge);
+    }
+
+    Ok(())
+}
+
+/// 胶囊窗口所在显示器的工作区（物理像素，排除任务栏等系统区域）
+#[derive(Clone, Serialize)]
+pub struct WorkArea {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+/// 返回胶囊窗口所在显示器的工作区（物理像素）。
+///
+/// 贴边定位使用工作区而非完整显示器，避免胶囊/面板被任务栏遮挡。
+#[tauri::command]
+pub fn get_monitor_work_area(app: AppHandle) -> Result<WorkArea, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(hwnd) = get_hwnd_for_label(&app, "capsule") else {
+            return Err("capsule window not found".into());
+        };
+        let mut wr = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if unsafe { GetWindowRect(hwnd, &mut wr) } == 0 {
+            return Err("GetWindowRect failed".into());
+        }
+        let center = POINT {
+            x: (wr.left + wr.right) / 2,
+            y: (wr.top + wr.bottom) / 2,
+        };
+        let h_mon = unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST) };
+        if h_mon == 0 {
+            return Err("MonitorFromPoint failed".into());
+        }
+        let mut mi = MONITORINFO {
+            cb_size: std::mem::size_of::<MONITORINFO>() as u32,
+            rc_monitor: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            rc_work: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            dw_flags: 0,
+        };
+        if unsafe { GetMonitorInfoW(h_mon, &mut mi) } == 0 {
+            return Err("GetMonitorInfoW failed".into());
+        }
+        eprintln!(
+            "[PonyClean] work area: l={} t={} r={} b={}",
+            mi.rc_work.left, mi.rc_work.top, mi.rc_work.right, mi.rc_work.bottom
+        );
+        Ok(WorkArea {
+            left: mi.rc_work.left,
+            top: mi.rc_work.top,
+            right: mi.rc_work.right,
+            bottom: mi.rc_work.bottom,
+        })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("get_monitor_work_area is only supported on Windows".into())
+    }
+}
+
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+/// 前端日志转发（dev 排查用）：把 WebView 的 console 输出到 Rust 终端，
+/// 因为 WebView console 默认不显示在 dev:tauri 的终端里。
+#[tauri::command]
+pub fn log_frontend(level: String, message: String) {
+    eprintln!("[PonyClean][frontend:{level}] {message}");
 }
 
 /// 切换 island 窗口的概要态/展开态高度，并重算圆角裁剪区域。

@@ -52,7 +52,7 @@ const memBg = computed(() => {
     <!-- CPU half -->
     <div class="relative flex flex-1 items-center justify-center h-full overflow-hidden rounded-l-full" :class="cpuBg">
       <div
-        class="progress-fill absolute left-0 top-0 h-full rounded-l-full transition-all duration-500 ease-out"
+        class="progress-fill absolute left-0 top-0 h-full rounded-l-full"
         :class="cpuTint"
         :style="cpuFill"
       />
@@ -67,7 +67,7 @@ const memBg = computed(() => {
     <!-- MEM half -->
     <div class="relative flex flex-1 items-center justify-center h-full overflow-hidden rounded-r-full" :class="memBg">
       <div
-        class="progress-fill absolute right-0 top-0 h-full rounded-r-full transition-all duration-500 ease-out"
+        class="progress-fill absolute right-0 top-0 h-full rounded-r-full"
         :class="memTint"
         :style="memFill"
       />

@@ -34,3 +34,6 @@ Desktop.ini
 *.exp
 *.lib
 *.obj
+
+# Pi agent local config
+.pi/

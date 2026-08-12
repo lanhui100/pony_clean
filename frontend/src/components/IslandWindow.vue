@@ -27,9 +27,12 @@ const islandHeight = computed(() =>
   expanded.value ? WINDOW_MORPH.expandedH : WINDOW_MORPH.fullH,
 )
 
-const islandAnimate = computed(() => (
-  visible.value ? { y: 0, opacity: 1 } : { y: -120, opacity: 0 }
-))
+// 胶囊仅贴顶边：island 始终从上方滑入
+const islandInitial = computed(() => ({ x: 0, y: -120, opacity: 0 }))
+
+const islandAnimate = computed(() =>
+  visible.value ? { x: 0, y: 0, opacity: 1 } : { x: 0, y: -120, opacity: 0 },
+)
 
 const islandTransition = computed(() => ({
   type: 'spring' as const,
@@ -93,7 +96,7 @@ onUnmounted(() => {
   <div class="island-root h-screen w-screen overflow-hidden select-none" :style="rootStyle">
     <motion.div
       class="island-shell"
-      :initial="{ y: -120, opacity: 0 }"
+      :initial="islandInitial"
       :animate="islandAnimate"
       :transition="islandTransition"
       @mouseenter="notifyCapsule('island-pointer-enter')"

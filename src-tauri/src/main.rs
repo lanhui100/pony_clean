@@ -10,6 +10,7 @@ use commands::window::install_hit_test_subclass;
 use pony_core::monitor;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
+use tauri::Emitter;
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -66,9 +67,10 @@ fn apply_island_vibrancy(app: &tauri::AppHandle) {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let reset_pos = MenuItem::with_id(app, "reset_pos", "重置胶囊位置", true, None::<&str>)?;
     let show_hide = MenuItem::with_id(app, "toggle", "显示/隐藏", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_hide, &quit])?;
+    let menu = Menu::with_items(app, &[&reset_pos, &show_hide, &quit])?;
 
     let tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
@@ -76,6 +78,13 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle" => toggle_main_window(app),
+            "reset_pos" => {
+                // 通知前端把胶囊重置到主屏顶部居中（找回跑丢的胶囊）
+                if let Some(capsule) = app.get_webview_window("capsule") {
+                    let _ = capsule.emit("reset-capsule-position", ());
+                    let _ = capsule.show();
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -138,6 +147,29 @@ fn main() {
             // 灵动岛毛玻璃：HWND 层级 Acrylic（DWM 合成），必须在 hit-test 之后应用
             apply_island_vibrancy(app.handle());
 
+            // 延迟二次清理标题栏：Tauri/WebView2 可能在窗口显示后重置窗口样式
+            // （decorations 处理、WebView 初始化等），500ms 后强制再清理一次。
+            {
+                let app = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    #[cfg(target_os = "windows")]
+                    {
+                        use commands::window::{get_hwnd_for_label, strip_title_bar};
+                        for label in ["capsule", "island"] {
+                            if let Some(hwnd) = get_hwnd_for_label(&app, label) {
+                                unsafe { strip_title_bar(hwnd) };
+                            }
+                        }
+                        eprintln!("[PonyClean] Title bar stripped (delayed pass)");
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        let _ = &app;
+                    }
+                });
+            }
+
             // DevTools 已移除 — 自动打开 DevTools 窗口会导致右上角短暂闪烁"分辨率"信息
 
             Ok(())
@@ -163,6 +195,9 @@ fn main() {
             commands::window::start_edge_cursor_detect,
             commands::window::stop_edge_cursor_detect,
             commands::window::set_hit_test_mode,
+            commands::window::set_capsule_geometry,
+            commands::window::get_monitor_work_area,
+            commands::window::log_frontend,
             commands::config::get_config,
             commands::config::set_config,
         ])

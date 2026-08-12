@@ -1,12 +1,13 @@
 import { ref, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
-import { getCurrentWindow, PhysicalPosition, Window } from '@tauri-apps/api/window'
+import { getCurrentWindow, LogicalSize, PhysicalPosition, Window } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { WINDOW_MORPH } from '@/lib/windowMorphConfig'
+import { WINDOW_MORPH, type CapsuleForm } from '@/lib/windowMorphConfig'
 
 export type IslandState = 'idle' | 'entering' | 'visible' | 'leaving'
 
 const win = getCurrentWindow()
+const DOCK_KEY = 'ponyclean.dock'
 
 interface MonitorBounds {
   left: number
@@ -16,14 +17,23 @@ interface MonitorBounds {
   width: number
 }
 
+function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(v, max))
+}
+
 export function useWindowMorph(scanning: Ref<boolean>) {
-  // ─── All state lives inside function scope ───
+  // ─── 状态 ───
   const islandState = ref<IslandState>('idle')
   const capsuleHovered = ref(false)
   const isInsideIsland = ref(false)
+  const form = ref<CapsuleForm>('pill')
 
-  // Horizontal drag state
-  let currentWindowX = 0
+  // 胶囊沿顶边的水平位置（物理像素，距工作区 left 的 X 偏移）
+  const dockX = ref(0)
+
+  // ─── 拖动状态（仅沿顶边水平拖动） ───
+  let currentWinX = 0
+  let currentWinY = 0
   let dragStartX = 0
   let dragStartWinX = 0
   const isDragging = ref(false)
@@ -34,19 +44,37 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let onUpRef: (() => void) | null = null
   let suppressNextCapsuleClick = false
 
-  // Timers
+  // ─── 定时器 ───
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let idlePollTimer: ReturnType<typeof setTimeout> | null = null
+  let barTimer: ReturnType<typeof setTimeout> | null = null
+  let barHoverTimer: ReturnType<typeof setTimeout> | null = null
+  let lastActivityMs = Date.now()
   let unlistenIslandEnter: UnlistenFn | null = null
   let unlistenIslandLeave: UnlistenFn | null = null
   let unlistenIslandActivity: UnlistenFn | null = null
-  let lastActivityMs = Date.now()
 
-  // Re-entry guard: set when showIsland() is called during leaving animation
+  // island 收起动画期间再次请求展开时，等待动画完成后重试
   let pendingShowAfterLeave = false
 
-  /** ─── Window positioning ─── */
+  /** ─── 显示器工作区（排除任务栏等系统区域，物理像素） ─── */
   async function getMonitorBounds(): Promise<MonitorBounds> {
+    try {
+      const wa = await invoke<{ left: number; top: number; right: number; bottom: number }>(
+        'get_monitor_work_area',
+      )
+      if (wa) {
+        return {
+          left: wa.left,
+          top: wa.top,
+          right: wa.right,
+          bottom: wa.bottom,
+          width: wa.right - wa.left,
+        }
+      }
+    } catch {
+      // 回退到 currentMonitor
+    }
     try {
       const m = await win.currentMonitor()
       if (m) {
@@ -59,9 +87,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
         }
       }
     } catch {
-      // Fall through to the browser screen fallback below.
+      // 回退到浏览器屏幕
     }
-
     const dpr = window.devicePixelRatio || 1
     const width = Math.round(window.screen.width * dpr)
     return {
@@ -73,23 +100,116 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     }
   }
 
-  async function centerWindowX(): Promise<number> {
-    const monitor = await getMonitorBounds()
-    const { width: actualW } = await win.outerSize().catch(() => ({ width: WINDOW_MORPH.capsuleW }))
-    const cx = monitor.left + Math.round((monitor.width - actualW) / 2)
-    await win.setPosition(new PhysicalPosition(cx, monitor.top)).catch(() => {})
-    currentWindowX = cx
-    return cx
-  }
-
   async function getIslandWindow(): Promise<Window | null> {
     return Window.getByLabel('island').catch(() => null)
   }
 
+  /** ─── 水平位置持久化 ─── */
+  function persistDock() {
+    try {
+      localStorage.setItem(DOCK_KEY, JSON.stringify({ x: dockX.value }))
+    } catch {
+      // 忽略
+    }
+  }
+
+  function loadDock(): { x: number } | null {
+    try {
+      const raw = localStorage.getItem(DOCK_KEY)
+      if (!raw) return null
+      const obj = JSON.parse(raw)
+      if (typeof obj.x === 'number' && Number.isFinite(obj.x)) return { x: obj.x }
+    } catch {
+      // 解析失败使用默认
+    }
+    return null
+  }
+
+  /** ─── 原生层同步：胶囊窗口恒为顶部贴边 ─── */
+  async function syncGeometryToBackend() {
+    try {
+      await invoke('set_capsule_geometry', { form: form.value, edge: 'top' })
+    } catch (e) {
+      console.warn('set_capsule_geometry failed:', e)
+    }
+  }
+
+  /** 应用窗口位置：顶边贴边（x = 工作区 left + dockX），并同步原生命中区域 */
+  async function applyWindowGeometry() {
+    const dpr = window.devicePixelRatio || 1
+    const monitor = await getMonitorBounds()
+    const winW = Math.round(WINDOW_MORPH.capsuleW * dpr)
+    let x = monitor.left + dockX.value
+    const maxX = Math.max(monitor.left, monitor.right - winW)
+    x = clamp(x, monitor.left, maxX)
+    dockX.value = x - monitor.left
+    await win.setPosition(new PhysicalPosition(x, monitor.top)).catch(() => {})
+    currentWinX = x
+    currentWinY = monitor.top
+    await syncGeometryToBackend()
+    persistDock()
+  }
+
+  /** 重置胶囊到顶边居中（托盘菜单“重置胶囊位置”触发） */
+  async function resetToDefault() {
+    try {
+      localStorage.removeItem(DOCK_KEY)
+    } catch {
+      // 忽略
+    }
+    const dpr = window.devicePixelRatio || 1
+    const monitor = await getMonitorBounds()
+    dockX.value = Math.round((monitor.width - Math.round(WINDOW_MORPH.capsuleW * dpr)) / 2)
+    form.value = 'pill'
+    await applyWindowGeometry()
+    await win.show().catch(() => {})
+    console.log('[PonyClean] capsule reset to default top-center')
+  }
+
+  /** ─── 形态切换（胶囊 ⇄ 进度条） ─── */
+  async function expandToPill() {
+    if (form.value === 'pill') {
+      resetBarTimer()
+      return
+    }
+    form.value = 'pill'
+    await syncGeometryToBackend()
+    resetBarTimer()
+  }
+
+  async function collapseToBar() {
+    if (form.value === 'bar' || islandState.value !== 'idle') return
+    if (isDragging.value || scanning.value || capsuleHovered.value) return
+    form.value = 'bar'
+    await syncGeometryToBackend()
+  }
+
+  /** 胶囊无操作收起计时：island 收起后 10s 缩成贴边进度条 */
+  function resetBarTimer() {
+    if (barTimer) clearTimeout(barTimer)
+    barTimer = null
+    if (form.value !== 'pill' || islandState.value !== 'idle' || scanning.value) return
+    barTimer = setTimeout(() => {
+      barTimer = null
+      if (isInsideIsland.value || scanning.value || isDragging.value || capsuleHovered.value) {
+        resetBarTimer()
+        return
+      }
+      collapseToBar()
+    }, WINDOW_MORPH.barTimeout)
+  }
+
+  /** 用户活动刷新：同时刷新 island 收起计时与胶囊收起计时 */
+  function notifyActivity() {
+    resetIdleTimer()
+    resetBarTimer()
+  }
+
+  /** ─── island 展开/收起（从胶囊正下方展开） ─── */
   async function positionIslandWindow(island: Window) {
     const dpr = window.devicePixelRatio || 1
     const monitor = await getMonitorBounds()
-    const capsulePos = await win.outerPosition()
+    const capsulePos = await win.outerPosition().catch(() => ({ x: currentWinX, y: currentWinY }))
     const capsuleSize = await win.outerSize().catch(() => ({
       width: Math.round(WINDOW_MORPH.capsuleW * dpr),
       height: Math.round(WINDOW_MORPH.capsuleH * dpr),
@@ -97,23 +217,29 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     const islandW = Math.round(WINDOW_MORPH.fullW * dpr)
     const edgePx = Math.round(WINDOW_MORPH.edgePadding * dpr)
     const centerX = capsulePos.x + Math.round(capsuleSize.width / 2)
-    const x = Math.max(
+    const x = clamp(
+      centerX - Math.round(islandW / 2),
       monitor.left + edgePx,
-      Math.min(centerX - Math.round(islandW / 2), monitor.right - islandW - edgePx),
+      monitor.right - islandW - edgePx,
     )
     await island.setPosition(new PhysicalPosition(x, capsulePos.y)).catch(() => {})
   }
 
-  /** ─── State transitions ─── */
   async function showIsland() {
     if (islandState.value === 'visible' || islandState.value === 'entering') return
-    // During leaving animation: mark for retry after leave completes
     if (islandState.value === 'leaving') {
       pendingShowAfterLeave = true
       return
     }
     const island = await getIslandWindow()
     if (!island) return
+    if (form.value === 'bar') await expandToPill()
+    // 先切到展开尺寸，再定位，避免展开后底部跑偏
+    try {
+      await invoke('set_island_expanded', { expanded: true })
+    } catch {
+      // 忽略
+    }
     await positionIslandWindow(island)
     await emitTo('island', 'island-enter').catch(() => {})
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -139,7 +265,6 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   function onEnterDone() {
     if (islandState.value === 'entering') {
       islandState.value = 'visible'
-      // Restart idle detection: pollIdle was stopped in onLeaveDone
       startIdleDetection()
       win.hide().catch(() => {})
     }
@@ -153,7 +278,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       }
       islandState.value = 'idle'
       stopIdleDetection()
-      // Check for re-entry request made during leaving
+      resetBarTimer()
       if (pendingShowAfterLeave) {
         pendingShowAfterLeave = false
         showIsland()
@@ -161,31 +286,46 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     }
   }
 
-  /** ─── Idle detection ─── */
+  /** ─── island 无操作检测 ─── */
   function resetIdleTimer() {
     lastActivityMs = Date.now()
     if (idleTimer) clearTimeout(idleTimer)
     if (scanning.value || islandState.value !== 'visible') return
     idleTimer = setTimeout(() => {
-      if (isInsideIsland.value) { resetIdleTimer(); return }
+      if (isInsideIsland.value) {
+        resetIdleTimer()
+        return
+      }
       hideIsland()
     }, WINDOW_MORPH.idleTimeout)
   }
 
   async function pollIdle() {
-    if (islandState.value !== 'visible') { scheduleNextPoll(); return }
-    if (scanning.value || isInsideIsland.value) { resetIdleTimer(); scheduleNextPoll(); return }
+    if (islandState.value !== 'visible') {
+      scheduleNextPoll()
+      return
+    }
+    if (scanning.value || isInsideIsland.value) {
+      resetIdleTimer()
+      scheduleNextPoll()
+      return
+    }
     const elapsed = Date.now() - lastActivityMs
     if (elapsed >= WINDOW_MORPH.idleTimeout) {
       try {
-        if (await invoke<number>('get_system_idle_ms') >= WINDOW_MORPH.idleTimeout) hideIsland()
-      } catch { /* fallback */ }
+        if ((await invoke<number>('get_system_idle_ms')) >= WINDOW_MORPH.idleTimeout) hideIsland()
+      } catch {
+        // 查询失败走本地计时
+      }
     }
     scheduleNextPoll()
   }
 
   function scheduleNextPoll() {
-    idlePollTimer = setTimeout(pollIdle, WINDOW_MORPH.idlePollInterval) as unknown as ReturnType<typeof setTimeout>
+    idlePollTimer = setTimeout(
+      pollIdle,
+      WINDOW_MORPH.idlePollInterval,
+    ) as unknown as ReturnType<typeof setTimeout>
   }
 
   function startIdleDetection() {
@@ -200,13 +340,34 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     idlePollTimer = null
   }
 
-  /** ─── Mouse event handlers ─── */
+  /** ─── 鼠标事件 ─── */
   function onCapsuleEnter() {
     capsuleHovered.value = true
+    resetBarTimer()
   }
 
   function onCapsuleLeave() {
     capsuleHovered.value = false
+    resetBarTimer()
+  }
+
+  /** 进度条 hover：延迟展开为胶囊 */
+  function onBarEnter() {
+    capsuleHovered.value = true
+    if (barHoverTimer) clearTimeout(barHoverTimer)
+    barHoverTimer = setTimeout(() => {
+      barHoverTimer = null
+      if (form.value === 'pill' || islandState.value !== 'idle') return
+      if (isDragging.value) return
+      expandToPill()
+    }, WINDOW_MORPH.barHoverDelay)
+  }
+
+  function onBarLeave() {
+    capsuleHovered.value = false
+    if (barHoverTimer) clearTimeout(barHoverTimer)
+    barHoverTimer = null
+    resetBarTimer()
   }
 
   function onIslandEnter() {
@@ -224,29 +385,34 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     resetIdleTimer()
   }
 
-  /** ─── Capsule horizontal drag ─── */
+  /** ─── 沿顶边水平拖动 ─── */
   function onCapsuleDragStart(e: MouseEvent) {
-    // If island is entering or visible, cancel it first so drag can proceed.
-    if (islandState.value === 'entering' || islandState.value === 'visible') {
-      hideIsland()
-    }
+    if (islandState.value === 'entering' || islandState.value === 'visible') hideIsland()
+    if (form.value === 'bar') expandToPill()
     e.preventDefault()
     e.stopPropagation()
     isDragging.value = true
     dragMoved = false
     capsuleHovered.value = false
     isInsideIsland.value = false
+    if (barTimer) {
+      clearTimeout(barTimer)
+      barTimer = null
+    }
+    if (barHoverTimer) {
+      clearTimeout(barHoverTimer)
+      barHoverTimer = null
+    }
     dragStartX = e.screenX
-    dragStartWinX = currentWindowX
+    dragStartWinX = currentWinX
     pendingDragX = null
 
     const onMove = (ev: MouseEvent) => {
       if (!isDragging.value) return
-      const dpr = window.devicePixelRatio || 1
-      const dx = ev.screenX - dragStartX          // delta in CSS logical pixels
+      const dx = ev.screenX - dragStartX
       if (!dragMoved && Math.abs(dx) >= WINDOW_MORPH.dragStartThreshold) dragMoved = true
       if (!dragMoved) return
-      // Convert logical delta to physical pixels to match PhysicalPosition
+      const dpr = window.devicePixelRatio || 1
       pendingDragX = dragStartWinX + Math.round(dx * dpr)
       if (dragRafId === null) {
         dragRafId = requestAnimationFrame(() => {
@@ -270,6 +436,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       document.removeEventListener('mouseup', onUp)
       onMoveRef = null
       onUpRef = null
+      if (dragMoved) snapToTopEdge()
+      else resetBarTimer()
     }
 
     onMoveRef = onMove
@@ -278,6 +446,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     document.addEventListener('mouseup', onUp)
   }
 
+  /** 拖动中窗口沿顶边跟随光标（水平移动，Y 恒为工作区顶边） */
   async function applyDragPosition(targetX: number) {
     const dpr = window.devicePixelRatio || 1
     const monitor = await getMonitorBounds()
@@ -285,29 +454,59 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     const fullWPx = Math.round(WINDOW_MORPH.capsuleW * dpr)
     const minX = monitor.left + edgePx
     const maxX = monitor.right - fullWPx - edgePx
-    const clampedX = Math.max(minX, Math.min(targetX, maxX))
+    const clampedX = clamp(targetX, minX, maxX)
     await win.setPosition(new PhysicalPosition(clampedX, monitor.top)).catch(() => {})
-    currentWindowX = clampedX
+    currentWinX = clampedX
+    currentWinY = monitor.top
+  }
+
+  /** 松手：吸附回顶边并保存水平位置 */
+  async function snapToTopEdge() {
+    const dpr = window.devicePixelRatio || 1
+    const monitor = await getMonitorBounds()
+    dockX.value = currentWinX - monitor.left
+    await applyWindowGeometry()
+    resetBarTimer()
   }
 
   function onBlur() {
     isInsideIsland.value = false
     capsuleHovered.value = false
-    resetIdleTimer()
+    resetBarTimer()
   }
 
-  /** ─── Lifecycle ─── */
+  /** ─── 生命周期 ─── */
   onMounted(async () => {
-    await centerWindowX()
+    console.log('[PonyClean] capsule window mounted, loading dock state...')
+    const saved = loadDock()
 
-    // Explicitly disable decorations — some Tauri 2 versions on Windows don't
-    // fully respect the `decorations: false` config key.
+    // 显式关闭装饰/阴影——部分 Tauri 2 版本在 Windows 上不完全遵循配置
     await win.setDecorations(false).catch(() => {})
     await win.setShadow(false).catch(() => {})
     await win.clearEffects().catch(() => {})
+
+    try {
+      if (saved) {
+        dockX.value = saved.x
+        console.log('[PonyClean] restoring dock x:', saved.x)
+        await applyWindowGeometry()
+      } else {
+        const dpr = window.devicePixelRatio || 1
+        const monitor = await getMonitorBounds()
+        dockX.value = Math.round((monitor.width - Math.round(WINDOW_MORPH.capsuleW * dpr)) / 2)
+        console.log('[PonyClean] initial dock x:', dockX.value)
+        await applyWindowGeometry()
+      }
+    } catch (e) {
+      // 定位失败不能阻止窗口显示：兜底用默认位置
+      console.error('[PonyClean] capsule init positioning failed:', e)
+    }
+
     await nextTick()
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    await win.show().catch(() => {})
+    // 兜底：无论定位是否成功都确保窗口显示
+    await win.show().catch((e) => console.error('[PonyClean] win.show failed:', e))
+    console.log('[PonyClean] capsule window shown')
 
     window.addEventListener('blur', onBlur)
 
@@ -315,17 +514,22 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       unlistenIslandEnter = await listen('island-pointer-enter', onIslandEnter)
       unlistenIslandLeave = await listen('island-pointer-leave', onIslandLeave)
       unlistenIslandActivity = await listen('island-user-activity', onIslandUserActivity)
-    } catch { /* best-effort */ }
+    } catch {
+      // best-effort
+    }
+
+    resetBarTimer()
   })
 
   onUnmounted(() => {
     stopIdleDetection()
+    if (barTimer) clearTimeout(barTimer)
+    if (barHoverTimer) clearTimeout(barHoverTimer)
     window.removeEventListener('blur', onBlur)
     unlistenIslandEnter?.()
     unlistenIslandLeave?.()
     unlistenIslandActivity?.()
 
-    // Clean up drag listeners if component unmounts during drag
     if (isDragging.value) {
       isDragging.value = false
       if (dragRafId !== null) cancelAnimationFrame(dragRafId)
@@ -339,11 +543,22 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   })
 
   return {
-    islandState, capsuleHovered, isInsideIsland, isDragging,
-    onCapsuleEnter, onCapsuleLeave,
-    onCapsuleDragStart, onCapsuleClick,
-    onIslandEnter, onIslandLeave, onIslandUserActivity,
-    onEnterDone, onLeaveDone,
-    showIsland, hideIsland,
+    islandState,
+    capsuleHovered,
+    isInsideIsland,
+    isDragging,
+    form,
+    onCapsuleEnter,
+    onCapsuleLeave,
+    onBarEnter,
+    onBarLeave,
+    onCapsuleDragStart,
+    onCapsuleClick,
+    onEnterDone,
+    onLeaveDone,
+    notifyActivity,
+    resetToDefault,
+    showIsland,
+    hideIsland,
   }
 }
