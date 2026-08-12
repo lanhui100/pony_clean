@@ -15,9 +15,9 @@
 
 ## 待开发 (Ready)
 
-| ID | 标题 | 优先级 | 负责人 | 预估工时 |
-|---|---|---|---|---|
-| TASK-005 | Tauri v2 + shadcn-vue 脚手架 | P0 | @self | 4h |
+| ID | 标题 | 优先级 | 负责人 | 预估工时 | Spec |
+|---|---|---|---|---|---|
+| TASK-005 | Tauri v2 + shadcn-vue 脚手架 | P0 | @self | 4h | |
 
 ## 待办 (Backlog)
 
@@ -49,3 +49,8 @@ _(暂无)_
 | TASK-020 | OptionPicker 暗色下拉 + island Acrylic 毛玻璃 | P1 | @self |
 | TASK-021 | 借鉴 blur_win 重构毛玻璃（消除分层） | P1 | @self |
 | TASK-022 | 手写 SWCA Acrylic（消除原生标题栏） | P1 | @self |
+| TASK-023 | 删除前进程占用检查 + 占用处理 | P0 | @self |
+| TASK-024 | 一键清理 Safe 级 + 释放量反馈 | P0 | @self |
+| TASK-025 | Windows Update 缓存 + DataStore 清理 | P0 | @self |
+| TASK-026 | disk 大文件 + 目录占用合并单遍历 | P1 | @self |
+| TASK-027 | cleaner target 并行扫描提速 | P1 | @self |

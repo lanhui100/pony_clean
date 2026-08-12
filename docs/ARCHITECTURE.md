@@ -89,13 +89,15 @@ crates/pony_core/          (业务核心库，纯 Rust，无 Tauri 依赖)
 |---|---|
 | `frontend/src/App.vue` | Vue 根组件，Tab 切换 |
 | `frontend/src/views/MonitorPanel.vue` | 进程列表、搜索、排序、Kill 弹窗 |
-| `frontend/src/views/CleanerPanel.vue` | C盘扫描、分组展示、选择清理 |
+| `frontend/src/views/SpacePanel.vue` | 清理页（方案 B）：一次扫描同时产出垃圾/大文件/目录占用，区块内直接勾选清理/删除 |
 | `frontend/src/composables/useMonitor.ts` | Tauri invoke/listen 封装（进程） |
-| `frontend/src/composables/useCleaner.ts` | Tauri invoke/listen 封装（清理） |
+| `frontend/src/composables/useCleaner.ts` | Tauri invoke/listen 封装（垃圾清理，scan-* 事件） |
+| `frontend/src/composables/useDisk.ts` | Tauri invoke/listen 封装（大文件/目录合并扫描，disk-user-* 进度 + disk-large-files / disk-dir-usage 数据） |
 | `frontend/src/components/` | shadcn-vue UI 组件 |
 | `src-tauri/src/main.rs` | Tauri 入口，setup + 命令注册 |
 | `src-tauri/src/commands/monitor.rs` | Tauri 命令：进程 get/kill |
 | `src-tauri/src/commands/cleaner.rs` | Tauri 命令：扫描/清理/回收站 |
+| `src-tauri/src/commands/disk.rs` | Tauri 命令：用户目录合并扫描（start_user_scan，大文件+目录单遍历）+ 大文件删除 |
 | `crates/pony_core/src/lib.rs` | 核心库入口 |
 | `crates/pony_core/src/monitor.rs` | 进程监控（sysinfo） |
 | `crates/pony_core/src/cleaner.rs` | C盘扫描清理（jwalk） |

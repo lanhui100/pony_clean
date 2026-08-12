@@ -189,3 +189,61 @@
 2. 命中区域精确对应可见内容，胶囊周围透明区可点击穿透，不干扰桌面操作
 3. 工作区定位保证顶边可用（含任务栏遮挡场景）
 4. 持久化水平位置符合“小组件”使用预期；托盘重置提供找回入口
+
+---
+
+## ADR-010: 清理与分析合并为单一"清理"tab（流程化，方案 B）
+
+**状态**: 已采纳
+
+**上下文**: 展开态原有 4 个 tab（监控/清理/分析/设置）。"清理"与"分析"存在产品定位割裂：
+- 清理 tab 本身已是"分析后清理"（扫描 → 分类展示 → 勾选 → 删除），与分析 tab 是流水线的前后两步，却被拆成并列入口；
+- "大文件"功能重复：cleaner 的 `large_files` 分类（%TEMP%/Downloads/回收站中的 ≥50MB 文件）与 disk 模块的 `scan_large_files`（全用户目录）是同一需求的两种实现，同一批文件两个入口都能删。
+
+**决策**:
+1. **去重（Rust）**：`pony_core::cleaner` 移除 `Category::LargeFiles` 变体及 5 个对应 ScanTarget（large_temp/large_local_temp/large_downloads/large_installers/large_recycle_bin），目标数 60 → 55。大文件统一由 `pony_core::disk` 负责（全用户目录覆盖更全面，删除走受保护路径检查 + 审计日志）。
+2. **合并（前端）**：删除 `CleanerPanel.vue` 与 `AnalysisPanel.vue`，新建 `SpacePanel.vue` 作为唯一"清理"tab，按方案 B 流程化组织：
+   - 一次"开始扫描"并行产出三份结果：可清理垃圾（8 类）/ 大文件（阈值可选）/ 目录占用 Top；
+   - 任一区块扫描完成即可直接勾选清理/删除，无需等待全部完成；
+   - 顶部显示磁盘概况 + 三区块扫描状态标记 + 取消按钮。
+3. **后端并行支撑**：`commands/disk.rs` 将大文件与目录扫描拆分为独立锁 + 独立事件通道（`disk-large-*` / `disk-dir-*`），两个扫描可并行运行，互不阻塞。
+
+**理由**:
+1. 符合"清理 = 分析后清理"的用户心智：发现问题与处理问题同页完成，工作流不割裂
+2. 消除重复实现，避免同一批大文件双入口可删的歧义
+3. tab 数 4 → 3，更符合"极简小组件"定位
+4. 工程成本低：`cleaner.rs` / `disk.rs` 仍为独立纯业务模块，仅命令层事件通道拆分 + UI 层聚合
+
+**影响**:
+- `crates/pony_core/src/cleaner.rs`：Category 枚举 / 目标列表 / 相关测试
+- `src-tauri/src/commands/disk.rs` + `src-tauri/src/main.rs`：DiskState 字段与初始化
+- `frontend/src/composables/useDisk.ts`：状态拆分为 large* / dir* 两组
+- `frontend/src/views/SpacePanel.vue`（新增）、`TitleBar.vue`、`IslandWindow.vue`
+
+---
+
+## ADR-011: 清理体验优化五项（占用检查 / 一键清理 / WU 缓存 / 扫描合并 / 并行提速）
+
+**状态**: 已采纳并实现（TASK-023 ~ TASK-027）
+
+**上下文**: 基于清理策略清单 P0/P1 项，经任务系统拆分 + spec 对抗审查（降级独立 pass）后落地。
+
+**决策**:
+1. **删除前进程占用检查（TASK-023）**：`is_file_busy` 用 CreateFileW 请求 DELETE 权限探测（share=0），共享/锁冲突判定占用；cleaner 路径占用文件走延迟删除并标注原因，disk 路径报"被占用"跳过。TOCTOU 竞态为已知残余风险。
+2. **一键清理 Safe 级 + 释放量反馈（TASK-024）**：确认弹窗数据源改为独立 `pendingClean` 集合（不污染用户勾选态）；一键清理仅覆盖 Safe 级；toast 展示"释放约 X"（清理前快照近似值）。
+3. **Windows Update 缓存 + DataStore（TASK-025）**：`wu_download` Confirm→Safe；`wu_datastore` Forbidden→Confirm + `with_service_stop("wuauserv")` + glob 仅清文件；实现 SCM API 服务控制（新增 `Win32_System_Services` + `Win32_Security` feature），停止失败则跳过对应路径，删除后恢复服务（Drop guard 语义）。
+4. **disk 大文件 + 目录占用合并单遍历（TASK-026）**：`scan_user_dir` 一趟 walk 双产出；命令层合并 `start_user_scan`（单锁 + `disk-user-*` 事件）；等价性测试保证与旧双函数一致。
+5. **cleaner 并行扫描提速（TASK-027）**：target 按 `SCAN_PARALLELISM=4` 分组线程并行，`scan_target_block` 提取原逻辑，全局 AtomicU64 计数 + join/panic 处理，事件顺序对前端无依赖。
+
+**理由**:
+1. 防误删（占用）、降低操作成本（一键）、覆盖高收益目标（WU）、消除重复遍历（合并）、缩短等待（并行）
+2. 保持安全底线：一键清理仍走确认弹窗；DataStore 服务控制失败即跳过
+3. 前后端改动均通过全量测试/类型/构建门禁（82+6 测试、clippy 0、fmt、vue-tsc、build）
+
+**影响**:
+- `crates/pony_core/src/cleaner.rs`（is_file_busy / 服务控制 / wu target / 并行扫描）
+- `crates/pony_core/src/disk.rs`（scan_user_dir / 占用检查集成）
+- `src-tauri/src/commands/disk.rs` + `main.rs`（start_user_scan 合并）
+- `frontend/src/composables/useDisk.ts`、`frontend/src/views/SpacePanel.vue`
+
+**留待手动 QA**: 真实服务停止/恢复、运行中进程文件占用提示、并行扫描性能观感。

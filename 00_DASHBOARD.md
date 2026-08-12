@@ -5,7 +5,7 @@
 - 描述: Windows 极简桌面小组件 — 进程监控报警 + C盘安全分析清理 + 内存整理
 - 技术栈: Rust (Tauri v2) + Vue 3 + shadcn-vue + Tailwind + sysinfo + jwalk
 - 负责人: @self
-- 当前阶段: Wave 3 — 托盘图标、系统通知、配置持久化（代码完成，待手动 QA）
+- 当前阶段: Wave 4 — 清理体验优化（5 任务全部完成：占用检查/一键清理/WU缓存/扫描合并/并行提速，待手动 QA）
 - 更新日期: 2026-08-08
 
 ## 整体目标
@@ -35,6 +35,11 @@
 | TASK-016 | 设置面板 — 告警阈值 + 开机自启 | Done | P1 | @self | ✅ 已完成 |
 | **TASK-013** | **灵动岛面板接入 + 动态高度** | **Validation** | **P0** | **@self** | **手动 QA** |
 | **TASK-015** | **Wave 3 托盘/通知/自启/配置** | **Validation** | **P1** | **@self** | **手动 QA** |
+| TASK-023 | 删除前进程占用检查 | Done | P0 | @self | ✅ 82+6 测试通过 |
+| TASK-024 | 一键清理 Safe + 释放量反馈 | Done | P0 | @self | ✅ 前端构建通过 |
+| TASK-025 | Windows Update 缓存 + DataStore | Done | P0 | @self | ✅ SCM 服务控制 |
+| TASK-026 | disk 大文件+目录占用合并 | Done | P1 | @self | ✅ 单遍历双产出 |
+| TASK-027 | cleaner target 并行扫描 | Done | P1 | @self | ✅ 4 线程并行 |
 | TASK-011 | UI 设计规范制定与对抗式审核 | In Progress | P1 | @self | 补产物（SPEC-011 缺失） |
 
 ## 里程碑
