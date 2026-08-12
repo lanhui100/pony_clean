@@ -62,14 +62,14 @@ fn test_resolve_targets_excludes_forbidden() {
     );
 }
 
-/// 测试 get_clean_targets 返回 60 个目标
+/// 测试 get_clean_targets 返回 55 个目标（移除大文件分类后）
 #[test]
 fn test_get_clean_targets_count() {
     let targets = cleaner::get_clean_targets();
     assert_eq!(
         targets.len(),
-        60,
-        "should have 60 targets (43 original + 17 new)"
+        55,
+        "should have 55 targets (43 original + 12 new, 大文件分类已移交磁盘分析)"
     );
 }
 

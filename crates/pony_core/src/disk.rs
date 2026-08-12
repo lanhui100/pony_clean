@@ -41,6 +41,30 @@ impl LargeFileKind {
     }
 }
 
+/// 大文件删除风险级别
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LargeFileLevel {
+    /// 低风险：用户数据（文档/视频/压缩包等），默认勾选
+    Safe,
+    /// 高风险：安装包/程序本体、应用数据（AppData），默认不勾选，删除需二次确认
+    Confirm,
+}
+
+/// 判断大文件的删除风险级别：
+/// - Confirm：安装包/程序本体（exe/msi 等，可能是运行中程序，无法可靠区分）或应用数据目录（AppData，删除可能损坏应用）
+/// - Safe：其余用户数据
+fn risk_level(path: &str, kind: &LargeFileKind) -> LargeFileLevel {
+    if *kind == LargeFileKind::Installer {
+        return LargeFileLevel::Confirm;
+    }
+    let lower = path.to_lowercase();
+    if lower.contains("\\appdata\\") {
+        return LargeFileLevel::Confirm;
+    }
+    LargeFileLevel::Safe
+}
+
 /// 大文件信息
 #[derive(Clone, Debug, Serialize)]
 pub struct LargeFile {
@@ -48,6 +72,8 @@ pub struct LargeFile {
     pub size_bytes: u64,
     pub modified_secs: i64,
     pub kind: LargeFileKind,
+    /// 删除风险级别（前端据此控制默认勾选与二次确认）
+    pub level: LargeFileLevel,
 }
 
 /// 目录空间占用
@@ -87,6 +113,18 @@ const SKIP_DIRS: &[&str] = &[
     "$RECYCLE.BIN",
 ];
 
+/// 用户目录内由 cleaner 负责的垃圾临时区（AppData\Local\Temp），大文件扫描跳过避免重复列出
+const SKIP_TEMP_DIRS: &[&str] = &["temp"];
+
+/// 用户目录内不应列出/删除的系统文件（注册表 hive 等，误删损坏用户配置）
+const SKIP_SYSTEM_FILES: &[&str] = &[
+    "ntuser.dat",
+    "ntuser.dat.log1",
+    "ntuser.dat.log2",
+    "usrclass.dat",
+    "ntuser.ini",
+];
+
 /// 推送进度事件（节流：每 200 文件一次）
 fn send_progress(tx: &Sender<DiskEvent>, scanned: u64, current: &str, last_sent: &mut u64) {
     if scanned - *last_sent >= 200 || scanned == 0 {
@@ -116,10 +154,22 @@ pub fn scan_large_files(
     let walker = jwalk::WalkDir::new(root)
         .follow_links(false)
         .process_read_dir(|_depth, _path, _state, children| {
+            let is_local_temp = _path
+                .to_string_lossy()
+                .to_lowercase()
+                .ends_with("appdata\\local");
             children.retain(|e| {
                 e.as_ref().ok().is_none_or(|entry| {
                     let name = entry.file_name.to_string_lossy();
-                    !SKIP_DIRS.contains(&name.as_ref())
+                    if SKIP_DIRS.contains(&name.as_ref()) {
+                        return false;
+                    }
+                    // AppData\Local\Temp 由 cleaner 负责，大文件扫描跳过
+                    if is_local_temp && SKIP_TEMP_DIRS.iter().any(|t| name.eq_ignore_ascii_case(t))
+                    {
+                        return false;
+                    }
+                    true
                 })
             });
             children.retain(|e| e.is_ok());
@@ -148,17 +198,27 @@ pub fn scan_large_files(
             continue;
         }
         let name = entry.file_name.to_string_lossy().to_string();
+        // 跳过系统 hive 文件（误删损坏用户配置）
+        if SKIP_SYSTEM_FILES
+            .iter()
+            .any(|s| name.eq_ignore_ascii_case(s))
+        {
+            continue;
+        }
         let modified = meta
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
+        let path_str = entry.path().to_string_lossy().to_string();
+        let kind = LargeFileKind::from_name(&name);
         files.push(LargeFile {
-            path: entry.path().to_string_lossy().to_string(),
+            path: path_str.clone(),
             size_bytes: size,
             modified_secs: modified,
-            kind: LargeFileKind::from_name(&name),
+            level: risk_level(&path_str, &kind),
+            kind,
         });
         // 分批推送（每 50 个）
         if files.len() % 50 == 0 {
@@ -178,6 +238,136 @@ pub fn scan_large_files(
     }
     let _ = tx.send(DiskEvent::Done);
     files
+}
+
+/// 合并扫描：单次遍历同时产出大文件（≥min_bytes）与目录占用（父目录深度 ≤dir_depth，TASK-026）
+///
+/// 事件流：`Progress`（节流）→ `LargeFiles`（分批）→ `DirUsage`（结束一次性）→ `Done`。
+/// 与旧双函数（`scan_large_files` + `scan_dir_usage`）行为等价，仅省一次全目录遍历。
+pub fn scan_user_dir(
+    tx: Sender<DiskEvent>,
+    root: &Path,
+    min_bytes: u64,
+    cancel: &AtomicBool,
+    max_files: usize,
+    dir_depth: usize,
+) -> (Vec<LargeFile>, Vec<DirUsage>) {
+    let mut files: Vec<LargeFile> = Vec::new();
+    let mut usage: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
+    let mut scanned = 0u64;
+    let mut last_sent = 0u64;
+
+    let walker = jwalk::WalkDir::new(root)
+        .follow_links(false)
+        .process_read_dir(|_depth, _path, _state, children| {
+            let is_local_temp = _path
+                .to_string_lossy()
+                .to_lowercase()
+                .ends_with("appdata\\local");
+            children.retain(|e| {
+                e.as_ref().ok().is_none_or(|entry| {
+                    let name = entry.file_name.to_string_lossy();
+                    if SKIP_DIRS.contains(&name.as_ref()) {
+                        return false;
+                    }
+                    // AppData\Local\Temp 由 cleaner 负责，大文件扫描跳过
+                    if is_local_temp && SKIP_TEMP_DIRS.iter().any(|t| name.eq_ignore_ascii_case(t))
+                    {
+                        return false;
+                    }
+                    true
+                })
+            });
+            children.retain(|e| e.is_ok());
+        });
+
+    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        scanned += 1;
+        send_progress(
+            &tx,
+            scanned,
+            &entry.file_name.to_string_lossy(),
+            &mut last_sent,
+        );
+
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let size = meta.len();
+        let name = entry.file_name.to_string_lossy().to_string();
+        // 跳过系统 hive 文件（误删损坏用户配置）
+        if SKIP_SYSTEM_FILES
+            .iter()
+            .any(|s| name.eq_ignore_ascii_case(s))
+        {
+            continue;
+        }
+
+        // ── 目录占用聚合（仅父目录深度 < dir_depth，与旧 max_depth 语义一致）──
+        let mut dir = entry.path();
+        dir.pop();
+        let parent_depth = entry.depth().saturating_sub(1);
+        if parent_depth < dir_depth {
+            let key = dir.to_string_lossy().to_string();
+            let (s, c) = usage.entry(key).or_insert((0, 0));
+            *s += size;
+            *c += 1;
+        }
+
+        // ── 大文件收集（全深，阈值/风险分级/跳过逻辑不变）──
+        if size < min_bytes {
+            continue;
+        }
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let path_str = entry.path().to_string_lossy().to_string();
+        let kind = LargeFileKind::from_name(&name);
+        files.push(LargeFile {
+            path: path_str.clone(),
+            size_bytes: size,
+            modified_secs: modified,
+            level: risk_level(&path_str, &kind),
+            kind,
+        });
+        // 分批推送（每 50 个）
+        if files.len() % 50 == 0 {
+            let batch = files.split_off(files.len() - 50);
+            let _ = tx.send(DiskEvent::LargeFiles { files: batch });
+        }
+        if files.len() >= max_files {
+            break;
+        }
+    }
+
+    if !files.is_empty() {
+        files.sort_by_key(|f| std::cmp::Reverse(f.size_bytes));
+        let _ = tx.send(DiskEvent::LargeFiles {
+            files: files.clone(),
+        });
+    }
+    let mut dirs: Vec<DirUsage> = usage
+        .into_iter()
+        .map(|(path, (size_bytes, file_count))| DirUsage {
+            path,
+            size_bytes,
+            file_count,
+        })
+        .collect();
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.size_bytes));
+    dirs.truncate(100);
+    let _ = tx.send(DiskEvent::DirUsage { dirs: dirs.clone() });
+    let _ = tx.send(DiskEvent::Done);
+    (files, dirs)
 }
 
 /// 扫描目录占用：按目录聚合文件大小（限深度，只返回有文件的目录）
@@ -225,6 +415,14 @@ pub fn scan_dir_usage(
             continue;
         };
         let size = meta.len();
+        let name = entry.file_name.to_string_lossy();
+        // 系统 hive 文件不参与目录占用统计（与 scan_user_dir 语义一致）
+        if SKIP_SYSTEM_FILES
+            .iter()
+            .any(|s| name.eq_ignore_ascii_case(s))
+        {
+            continue;
+        }
         let mut dir = entry.path();
         dir.pop();
         let key = dir.to_string_lossy().to_string();
@@ -285,6 +483,21 @@ pub fn delete_large_files(paths: &[PathBuf], scan_root: &Path) -> crate::cleaner
                 .push(format!("Protected path: {}", safe_path.display()));
             continue;
         }
+        // 系统 hive 文件纵深防御（扫描时已排除，此处兜底）
+        if let Some(fname) = safe_path.file_name() {
+            let fname = fname.to_string_lossy();
+            if SKIP_SYSTEM_FILES
+                .iter()
+                .any(|s| fname.eq_ignore_ascii_case(s))
+            {
+                result.failed += 1;
+                result.errors.push(format!(
+                    "System file not deletable: {}",
+                    safe_path.display()
+                ));
+                continue;
+            }
+        }
 
         match std::fs::remove_file(&safe_path) {
             Ok(()) => {
@@ -293,7 +506,14 @@ pub fn delete_large_files(paths: &[PathBuf], scan_root: &Path) -> crate::cleaner
             }
             Err(e) => {
                 result.failed += 1;
-                result.errors.push(format!("{e}"));
+                // 占用文件给出明确原因（不做延迟删除，保持简单）
+                if crate::cleaner::is_file_busy(&safe_path) {
+                    result
+                        .errors
+                        .push(format!("文件被进程占用，无法删除: {}", safe_path.display()));
+                } else {
+                    result.errors.push(format!("{e}"));
+                }
             }
         }
     }
@@ -342,6 +562,58 @@ mod tests {
         );
         assert_eq!(LargeFileKind::from_name("data.bin"), LargeFileKind::Other);
         assert_eq!(LargeFileKind::from_name("noext"), LargeFileKind::Other);
+    }
+
+    #[test]
+    fn test_risk_level() {
+        // 安装包/程序本体 → Confirm
+        assert_eq!(
+            risk_level(
+                "C:\\Users\\u\\Downloads\\setup.exe",
+                &LargeFileKind::Installer
+            ),
+            LargeFileLevel::Confirm
+        );
+        // AppData 应用数据 → Confirm
+        assert_eq!(
+            risk_level(
+                "C:\\Users\\u\\AppData\\Local\\WeChat\\big.db",
+                &LargeFileKind::Other
+            ),
+            LargeFileLevel::Confirm
+        );
+        // 普通用户数据 → Safe
+        assert_eq!(
+            risk_level("C:\\Users\\u\\Documents\\movie.mp4", &LargeFileKind::Video),
+            LargeFileLevel::Safe
+        );
+        assert_eq!(
+            risk_level(
+                "C:\\Users\\u\\Downloads\\backup.zip",
+                &LargeFileKind::Archive
+            ),
+            LargeFileLevel::Safe
+        );
+    }
+
+    #[test]
+    fn test_scan_large_files_skips_local_temp_and_system_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // AppData\Local\Temp（垃圾区，归 cleaner）应跳过
+        let temp_dir = dir.path().join("AppData").join("Local").join("Temp");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("huge.tmp"), vec![0u8; 2048]).unwrap();
+        // 系统 hive 文件应跳过
+        std::fs::write(dir.path().join("NTUSER.DAT"), vec![0u8; 2048]).unwrap();
+        // 普通大文件应列出
+        std::fs::write(dir.path().join("big.bin"), vec![0u8; 2048]).unwrap();
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let cancel = AtomicBool::new(false);
+        let files = scan_large_files(tx, dir.path(), 1024, &cancel, 100);
+
+        assert_eq!(files.len(), 1, "only big.bin should be listed");
+        assert_eq!(files[0].path, dir.path().join("big.bin").to_string_lossy());
     }
 
     #[test]
@@ -406,6 +678,53 @@ mod tests {
             }
         }
         assert!(saw_done);
+    }
+
+    #[test]
+    fn test_scan_user_dir_matches_old_functions() {
+        // TASK-026: 合并单遍历与旧双函数结果一致
+        let dir = tempfile::tempdir().unwrap();
+        let sub1 = dir.path().join("sub1");
+        let deep = dir.path().join("sub2").join("deep");
+        std::fs::create_dir_all(&sub1).unwrap();
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(sub1.join("a.bin"), vec![0u8; 2000]).unwrap();
+        std::fs::write(deep.join("b.bin"), vec![0u8; 3000]).unwrap();
+        std::fs::write(dir.path().join("small.txt"), vec![0u8; 100]).unwrap();
+        // Temp 跳过（垃圾区归 cleaner）
+        let temp_dir = dir.path().join("AppData").join("Local").join("Temp");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("huge.tmp"), vec![0u8; 5000]).unwrap();
+        // 系统 hive 跳过
+        std::fs::write(dir.path().join("NTUSER.DAT"), vec![0u8; 5000]).unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let (tx1, _) = std::sync::mpsc::channel();
+        let old_files = scan_large_files(tx1, dir.path(), 1024, &cancel, 100);
+        let (tx2, _) = std::sync::mpsc::channel();
+        let old_dirs = scan_dir_usage(tx2, dir.path(), 3, &cancel);
+        let (tx3, _) = std::sync::mpsc::channel();
+        let (new_files, new_dirs) = scan_user_dir(tx3, dir.path(), 1024, &cancel, 100, 3);
+
+        let old_f: std::collections::HashSet<(String, u64)> = old_files
+            .iter()
+            .map(|f| (f.path.clone(), f.size_bytes))
+            .collect();
+        let new_f: std::collections::HashSet<(String, u64)> = new_files
+            .iter()
+            .map(|f| (f.path.clone(), f.size_bytes))
+            .collect();
+        assert_eq!(old_f, new_f, "large files must match old scan_large_files");
+
+        let old_d: std::collections::HashSet<(String, u64, u64)> = old_dirs
+            .iter()
+            .map(|d| (d.path.clone(), d.size_bytes, d.file_count))
+            .collect();
+        let new_d: std::collections::HashSet<(String, u64, u64)> = new_dirs
+            .iter()
+            .map(|d| (d.path.clone(), d.size_bytes, d.file_count))
+            .collect();
+        assert_eq!(old_d, new_d, "dir usage must match old scan_dir_usage");
     }
 
     #[test]

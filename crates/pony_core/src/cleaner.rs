@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
@@ -20,6 +20,8 @@ const MAX_UWP_PACKAGES: usize = 50;
 const LOG_EXPIRY_DAYS: i64 = 90;
 /// 默认扫描深度
 const DEFAULT_MAX_DEPTH: usize = 10;
+/// 扫描并行度（target 分组数，TASK-027）
+const SCAN_PARALLELISM: usize = 4;
 
 /// 安全级别
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -31,7 +33,7 @@ pub enum SafetyLevel {
 }
 
 /// 清理目标分类，序列化为小写 JSON
-/// 前端类型: type Category = 'temp' | 'cache' | 'logs' | 'prefetch' | 'recycle_bin' | 'old_install' | 'large_files' | 'app_cache' | 'dev_cache'
+/// 前端类型: type Category = 'temp' | 'cache' | 'logs' | 'prefetch' | 'recycle_bin' | 'old_install' | 'app_cache' | 'dev_cache'
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
@@ -41,8 +43,6 @@ pub enum Category {
     Prefetch,
     RecycleBin,
     OldInstall,
-    /// 大文件（≥50MB 的可清理文件）
-    LargeFiles,
     /// 应用缓存（Discord/Steam/微信/QQ/Electron 等）
     AppCache,
     /// 开发工具缓存（npm/pip/cargo/gradle 等）
@@ -54,7 +54,6 @@ impl Category {
         match self {
             Category::Cache => 512,
             Category::Logs => 4096,
-            Category::LargeFiles => 52_428_800, // 50MB
             _ => 1024,
         }
     }
@@ -69,7 +68,6 @@ impl fmt::Display for Category {
             Category::Prefetch => "prefetch",
             Category::RecycleBin => "recycle_bin",
             Category::OldInstall => "old_install",
-            Category::LargeFiles => "large_files",
             Category::AppCache => "app_cache",
             Category::DevCache => "dev_cache",
         };
@@ -500,7 +498,7 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
         ScanTarget::new(
             "wu_download".into(),
             "%WINDIR%\\SoftwareDistribution\\Download",
-            SafetyLevel::Confirm,
+            SafetyLevel::Safe,
             Category::Cache,
             "Windows Update 下载缓存".into(),
         ),
@@ -616,10 +614,18 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
         ScanTarget::new(
             "wu_datastore".into(),
             "%WINDIR%\\SoftwareDistribution\\DataStore",
-            SafetyLevel::Forbidden,
+            SafetyLevel::Confirm,
             Category::Cache,
-            "WU 数据库（需管理员）".into(),
-        ),
+            "Windows 更新数据库（停用更新服务后清理）".into(),
+        )
+        .with_service_stop("wuauserv".into())
+        .with_glob(vec![
+            "*.db".into(),
+            "*.edb".into(),
+            "*.jrs".into(),
+            "*.blb".into(),
+            "*.log".into(),
+        ]),
         ScanTarget::new(
             "spool_servers".into(),
             "%WINDIR%\\System32\\spool\\SERVERS",
@@ -728,64 +734,6 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             Category::Temp,
             "Windows 升级临时文件".into(),
         ),
-        // === 大文件分类（≥50MB，仅用户目录） ===
-        ScanTarget::new(
-            "large_temp".into(),
-            "%TEMP%",
-            SafetyLevel::Safe,
-            Category::LargeFiles,
-            "临时文件夹中大文件（≥50MB）".into(),
-        )
-        .with_min_size_mb(50),
-        ScanTarget::new(
-            "large_local_temp".into(),
-            "%LOCALAPPDATA%\\Temp",
-            SafetyLevel::Safe,
-            Category::LargeFiles,
-            "用户 Local Temp 中大文件（≥50MB）".into(),
-        )
-        .with_min_size_mb(50),
-        ScanTarget::new(
-            "large_downloads".into(),
-            "%USERPROFILE%\\Downloads",
-            SafetyLevel::Confirm,
-            Category::LargeFiles,
-            "下载文件夹中大文件（≥100MB，>90天未使用）".into(),
-        )
-        .with_min_size_mb(100)
-        .with_glob(vec![
-            "*.msi".into(),
-            "*.exe".into(),
-            "*.zip".into(),
-            "*.rar".into(),
-            "*.7z".into(),
-            "*.iso".into(),
-            "*.img".into(),
-            "*.tar.gz".into(),
-            "*.pkg".into(),
-        ]),
-        ScanTarget::new(
-            "large_installers".into(),
-            "%USERPROFILE%\\Downloads",
-            SafetyLevel::Confirm,
-            Category::LargeFiles,
-            "下载的安装包（≥50MB MSI/EXE/MSP，>90天）".into(),
-        )
-        .with_min_size_mb(50)
-        .with_glob(vec![
-            "*.msi".into(),
-            "*.exe".into(),
-            "*.msp".into(),
-            "*.cab".into(),
-        ]),
-        ScanTarget::new(
-            "large_recycle_bin".into(),
-            &format!("{d}\\$Recycle.Bin"),
-            SafetyLevel::Confirm,
-            Category::LargeFiles,
-            "回收站中大文件（通过回收站清空操作统一删除）".into(),
-        )
-        .with_min_size_mb(50),
         // === 应用缓存分类 ===
         ScanTarget::new(
             "discord_cache".into(),
@@ -1218,161 +1166,116 @@ pub fn start_scan(
             scanned: 0,
             current: "Starting scan...".into(),
         });
+        // ─── TASK-027: target 级并行扫描 ───
+        // 按 resolved 顺序轮询分为 SCAN_PARALLELISM 组，每组独立线程；汇总线程转发事件并统一计数
+        let mut groups: Vec<Vec<(PathBuf, usize)>> = vec![Vec::new(); SCAN_PARALLELISM];
+        for (i, item) in resolved.iter().enumerate() {
+            groups[i % SCAN_PARALLELISM].push(item.clone());
+        }
+        let groups: Vec<Vec<(PathBuf, usize)>> =
+            groups.into_iter().filter(|g| !g.is_empty()).collect();
 
-        let mut total_items = 0u64;
-        let mut total_bytes = 0u64;
-        let mut skipped_small = 0u64;
-        let mut hit_max = false;
-        let mut batch = Vec::with_capacity(BATCH_SIZE);
+        let (agg_tx, agg_rx) = mpsc::channel::<ScanEvent>();
+        let global_count = Arc::new(AtomicU64::new(0));
+        let global_hit = Arc::new(AtomicBool::new(false));
+        let mut handles = Vec::new();
 
-        'outer: for (target_path, target_idx) in &resolved {
-            let target_def = &targets[*target_idx];
-            if cancel_token_clone.is_cancelled() {
-                flush_and_cancel(&tx, &mut batch);
-                return;
-            }
-
-            let cat_min_size = target_def.min_size;
-            let glob_inc = target_def.glob_include.as_deref();
-            let needs_mtime = target_def.category == Category::Logs
-                || target_def.id == "downloads_old"
-                || target_def.id == "etl_logs"
-                || target_def.id == "app_logs"
-                || target_def.id == "large_downloads"
-                || target_def.id == "large_installers";
-            let mtime_cutoff = if needs_mtime {
-                Some(chrono_placeholder_now() - LOG_EXPIRY_DAYS * 86400)
-            } else {
-                None
-            };
-            let mut target_count = 0u64;
-
-            let walk_dir = jwalk::WalkDir::new(target_path)
-                .follow_links(false)
-                .max_depth(target_def.max_depth)
-                .process_read_dir(|depth, _path, _state, children| {
-                    if depth.unwrap_or(0) > 5 {
-                        children.retain(|e| {
-                            e.as_ref().ok().is_none_or(|entry| {
-                                let name = entry.file_name.to_string_lossy();
-                                !(name == "node_modules"
-                                    || name == ".git"
-                                    || name == "__pycache__"
-                                    || name == ".svn")
-                            })
-                        });
+        for group in groups {
+            let agg_tx = agg_tx.clone();
+            let cancel = cancel_token_clone.clone();
+            let targets = targets.clone();
+            let global_count = global_count.clone();
+            let global_hit = global_hit.clone();
+            handles.push(std::thread::spawn(move || {
+                let mut batch: Vec<CleanItem> = Vec::with_capacity(BATCH_SIZE);
+                let mut total_bytes = 0u64;
+                let mut skipped = 0u64;
+                let mut cancelled = false;
+                for (target_path, target_idx) in group {
+                    if cancel.is_cancelled() || global_hit.load(Ordering::Relaxed) {
+                        cancelled = cancel.is_cancelled();
+                        break;
                     }
-                    children.retain(|e| e.is_ok());
-                });
-
-            for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
-                if cancel_token_clone.is_cancelled() {
-                    flush_and_cancel(&tx, &mut batch);
-                    return;
+                    let (b, s) = scan_target_block(
+                        &targets[target_idx],
+                        &target_path,
+                        &cancel,
+                        &global_count,
+                        &global_hit,
+                        &mut batch,
+                        &agg_tx,
+                    );
+                    total_bytes += b;
+                    skipped += s;
                 }
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-
-                let Ok(meta) = entry.metadata() else {
-                    continue;
-                };
-                let size = meta.len();
-                if size < cat_min_size {
-                    skipped_small += 1;
-                    continue;
-                }
-
-                // mtime 过滤（logs 类别）
-                if let Some(cutoff) = mtime_cutoff {
-                    if let Ok(mtime) = meta.modified() {
-                        if let Ok(secs) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                            if secs.as_secs() as i64 > cutoff {
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                // glob_include 过滤：支持 `*.ext`（后缀）, `*WER*`（包含）, `prefix*`（前缀）
-                if let Some(inc) = glob_inc {
-                    let fname = entry.file_name().to_string_lossy();
-                    if !inc.iter().any(|p| {
-                        let p = p.as_str();
-                        let has_prefix_wild = p.starts_with('*');
-                        let has_suffix_wild = p.ends_with('*');
-                        let inner = p.trim_start_matches('*').trim_end_matches('*');
-                        match (has_prefix_wild, has_suffix_wild) {
-                            (true, true) => fname.contains(inner), // *WER* → contains "WER"
-                            (true, false) => fname.ends_with(inner), // *.ext → ends with ".ext"
-                            (false, true) => fname.starts_with(inner), // prefix* → starts with "prefix"
-                            (false, false) => fname == *p,             // exact literal
-                        }
-                    }) {
-                        continue;
-                    }
-                }
-
-                if target_count >= target_def.max_items_per_target {
-                    let _ = tx.send(ScanEvent::Warning(ScanWarning::MaxItemsReached {
-                        target_id: target_def.id.clone(),
-                        items: target_count,
-                    }));
-                    break;
-                }
-                if total_items >= MAX_SCAN_ITEMS {
-                    if !batch.is_empty() {
-                        let _ = tx.send(ScanEvent::ItemsFound {
-                            items: std::mem::take(&mut batch),
-                            batch_complete: false,
-                        });
-                    }
-                    hit_max = true;
-                    break 'outer;
-                }
-
-                total_items += 1;
-                total_bytes += size;
-                target_count += 1;
-                batch.push(CleanItem {
-                    path: entry.path(),
-                    size_bytes: size,
-                    level: target_def.level.clone(),
-                    category: target_def.category.to_string(),
-                });
-
-                if batch.len() >= BATCH_SIZE {
-                    let _ = tx.send(ScanEvent::ItemsFound {
-                        items: std::mem::take(&mut batch),
-                        batch_complete: false,
+                if !batch.is_empty() {
+                    let _ = agg_tx.send(ScanEvent::ItemsFound {
+                        items: batch,
+                        batch_complete: true,
                     });
                 }
-                if total_items % 100 == 0 {
-                    let _ = tx.send(ScanEvent::Progress {
-                        scanned: total_items,
-                        current: target_path.to_string_lossy().to_string(),
-                    });
-                }
-            }
-        }
-
-        if !batch.is_empty() {
-            let _ = tx.send(ScanEvent::ItemsFound {
-                items: batch,
-                batch_complete: true,
-            });
-        }
-        if hit_max {
-            let _ = tx.send(ScanEvent::Warning(ScanWarning::MaxItemsReached {
-                target_id: "global".into(),
-                items: MAX_SCAN_ITEMS,
+                (total_bytes, skipped, cancelled)
             }));
         }
-        let _ = tx.send(ScanEvent::Done {
-            total_items,
-            total_bytes,
-            skipped_small,
-        });
+        drop(agg_tx);
+
+        // 汇总：转发事件，join 全部工作线程后统一收尾
+        let mut total_bytes = 0u64;
+        let mut skipped_small = 0u64;
+        let mut cancelled_any = false;
+        let mut panicked = false;
+        for ev in agg_rx {
+            match ev {
+                ScanEvent::ItemsFound {
+                    items,
+                    batch_complete,
+                } => {
+                    let _ = tx.send(ScanEvent::ItemsFound {
+                        items,
+                        batch_complete,
+                    });
+                }
+                ScanEvent::Progress { scanned, current } => {
+                    let _ = tx.send(ScanEvent::Progress { scanned, current });
+                }
+                ScanEvent::Warning(w) => {
+                    let _ = tx.send(ScanEvent::Warning(w));
+                }
+                _ => {}
+            }
+        }
+        for h in handles {
+            match h.join() {
+                Ok((b, s, cancelled)) => {
+                    total_bytes += b;
+                    skipped_small += s;
+                    cancelled_any |= cancelled;
+                }
+                Err(_) => panicked = true,
+            }
+        }
+        if panicked {
+            let _ = tx.send(ScanEvent::Warning(ScanWarning::PermissionDenied {
+                target_id: "scan".into(),
+                path: "worker thread panicked".into(),
+            }));
+        }
+        let total_items = global_count.load(Ordering::SeqCst);
+        if cancelled_any {
+            let _ = tx.send(ScanEvent::Cancelled);
+        } else {
+            if global_hit.load(Ordering::SeqCst) {
+                let _ = tx.send(ScanEvent::Warning(ScanWarning::MaxItemsReached {
+                    target_id: "global".into(),
+                    items: MAX_SCAN_ITEMS,
+                }));
+            }
+            let _ = tx.send(ScanEvent::Done {
+                total_items,
+                total_bytes,
+                skipped_small,
+            });
+        }
     });
 
     let cancel_token_cmd = cancel_token.clone();
@@ -1389,14 +1292,138 @@ pub fn start_scan(
     Ok((cmd_tx, cancel_token))
 }
 
-fn flush_and_cancel(tx: &mpsc::Sender<ScanEvent>, batch: &mut Vec<CleanItem>) {
-    if !batch.is_empty() {
-        let _ = tx.send(ScanEvent::ItemsFound {
-            items: std::mem::take(batch),
-            batch_complete: false,
+/// 扫描单个 target（供并行扫描 worker 线程调用，TASK-027）
+///
+/// 保持原串行语义：glob/mtime/单 target 上限过滤、批次推送、进度推送。
+/// 全局计数经 `global_count`（AtomicU64）原子累加，超 `MAX_SCAN_ITEMS` 时置 `global_hit`。
+/// 返回 (累计字节, 跳过的微效文件数)。
+#[allow(clippy::too_many_arguments)]
+fn scan_target_block(
+    target_def: &ScanTarget,
+    target_path: &Path,
+    cancel_token: &CancellationToken,
+    global_count: &AtomicU64,
+    global_hit: &AtomicBool,
+    batch: &mut Vec<CleanItem>,
+    tx: &mpsc::Sender<ScanEvent>,
+) -> (u64, u64) {
+    let mut total_bytes = 0u64;
+    let mut skipped_small = 0u64;
+    let cat_min_size = target_def.min_size;
+    let glob_inc = target_def.glob_include.as_deref();
+    let needs_mtime = target_def.category == Category::Logs
+        || target_def.id == "downloads_old"
+        || target_def.id == "etl_logs"
+        || target_def.id == "app_logs";
+    let mtime_cutoff = if needs_mtime {
+        Some(chrono_placeholder_now() - LOG_EXPIRY_DAYS * 86400)
+    } else {
+        None
+    };
+    let mut target_count = 0u64;
+
+    let walk_dir = jwalk::WalkDir::new(target_path)
+        .follow_links(false)
+        .max_depth(target_def.max_depth)
+        .process_read_dir(|depth, _path, _state, children| {
+            if depth.unwrap_or(0) > 5 {
+                children.retain(|e| {
+                    e.as_ref().ok().is_none_or(|entry| {
+                        let name = entry.file_name.to_string_lossy();
+                        !(name == "node_modules"
+                            || name == ".git"
+                            || name == "__pycache__"
+                            || name == ".svn")
+                    })
+                });
+            }
+            children.retain(|e| e.is_ok());
         });
+
+    for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
+        if cancel_token.is_cancelled() || global_hit.load(Ordering::Relaxed) {
+            return (total_bytes, skipped_small);
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let size = meta.len();
+        if size < cat_min_size {
+            skipped_small += 1;
+            continue;
+        }
+
+        // mtime 过滤（logs 类别）
+        if let Some(cutoff) = mtime_cutoff {
+            if let Ok(mtime) = meta.modified() {
+                if let Ok(secs) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                    if secs.as_secs() as i64 > cutoff {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // glob_include 过滤：支持 `*.ext`（后缀）, `*WER*`（包含）, `prefix*`（前缀）
+        if let Some(inc) = glob_inc {
+            let fname = entry.file_name().to_string_lossy();
+            if !inc.iter().any(|p| {
+                let p = p.as_str();
+                let has_prefix_wild = p.starts_with('*');
+                let has_suffix_wild = p.ends_with('*');
+                let inner = p.trim_start_matches('*').trim_end_matches('*');
+                match (has_prefix_wild, has_suffix_wild) {
+                    (true, true) => fname.contains(inner),
+                    (true, false) => fname.ends_with(inner),
+                    (false, true) => fname.starts_with(inner),
+                    (false, false) => fname == *p,
+                }
+            }) {
+                continue;
+            }
+        }
+
+        if target_count >= target_def.max_items_per_target {
+            let _ = tx.send(ScanEvent::Warning(ScanWarning::MaxItemsReached {
+                target_id: target_def.id.clone(),
+                items: target_count,
+            }));
+            break;
+        }
+
+        let n = global_count.fetch_add(1, Ordering::Relaxed) + 1;
+        if n > MAX_SCAN_ITEMS {
+            global_hit.store(true, Ordering::Relaxed);
+            return (total_bytes, skipped_small);
+        }
+
+        total_bytes += size;
+        target_count += 1;
+        batch.push(CleanItem {
+            path: entry.path(),
+            size_bytes: size,
+            level: target_def.level.clone(),
+            category: target_def.category.to_string(),
+        });
+
+        if batch.len() >= BATCH_SIZE {
+            let _ = tx.send(ScanEvent::ItemsFound {
+                items: std::mem::take(batch),
+                batch_complete: false,
+            });
+        }
+        if n % 100 == 0 {
+            let _ = tx.send(ScanEvent::Progress {
+                scanned: n,
+                current: target_path.to_string_lossy().to_string(),
+            });
+        }
     }
-    let _ = tx.send(ScanEvent::Cancelled);
+    (total_bytes, skipped_small)
 }
 
 fn chrono_placeholder_now() -> i64 {
@@ -1404,6 +1431,56 @@ fn chrono_placeholder_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// 检测文件是否被进程占用（请求 DELETE 访问权限探测，TASK-023）
+///
+/// 被其他进程以不允许删除共享的方式打开 → true。
+/// 仅在 Windows 生效；非 Windows 恒 false。
+#[cfg(windows)]
+pub fn is_file_busy(path: &Path) -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::{
+        CloseHandle, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION, GetLastError,
+    };
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE, OPEN_EXISTING,
+    };
+
+    let wide: Vec<u16> = OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // 请求 DELETE 访问：任何已打开句柄未共享删除 → 打开失败（共享/锁冲突 = 占用）
+    let handle = unsafe {
+        CreateFileW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            DELETE.0,
+            FILE_SHARE_MODE(0),
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+    };
+    match handle {
+        Ok(h) => {
+            unsafe {
+                let _ = CloseHandle(h);
+            }
+            false
+        }
+        Err(_) => {
+            let err = unsafe { GetLastError() };
+            err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_file_busy(_path: &Path) -> bool {
+    false
 }
 
 /// 删除文件（阻塞调用，使用 spawn_blocking 执行）
@@ -1425,6 +1502,30 @@ pub fn delete_files_with_progress(
     let mut result = DeleteResult::default();
     let total = paths.len() as u64;
     let mut done = 0u64;
+
+    // TASK-025: 目标需停服务的（如 wu_datastore → wuauserv），先停止，删除后恢复
+    let service_targets: Vec<(String, String)> = targets
+        .iter()
+        .filter_map(|t| {
+            t.requires_service_stop
+                .as_ref()
+                .map(|s| (s.clone(), t.path.clone()))
+        })
+        .collect();
+    let mut stopped: Vec<String> = Vec::new();
+    let mut stop_failed: Vec<String> = Vec::new();
+    for (service, _) in &service_targets {
+        if stopped.contains(service) || stop_failed.contains(service) {
+            continue;
+        }
+        match stop_service(service) {
+            Ok(_) => stopped.push(service.clone()),
+            Err(e) => {
+                stop_failed.push(service.clone());
+                result.errors.push(format!("无法停止服务 {service}: {e}"));
+            }
+        }
+    }
 
     for path in paths {
         // 规范化路径防止 .. 遍历和正斜杠绕过
@@ -1461,27 +1562,58 @@ pub fn delete_files_with_progress(
             continue;
         }
 
+        // 服务停止失败时，属于该服务的 target 路径跳过删除（避免损坏数据）
+        let safe_str = safe_path.to_string_lossy().to_lowercase();
+        let blocked = service_targets.iter().any(|(s, p)| {
+            stop_failed.contains(s) && safe_str.starts_with(&expand_env(p).to_lowercase())
+        });
+        if blocked {
+            result.failed += 1;
+            done += 1;
+            result
+                .errors
+                .push(format!("服务无法停止，跳过删除: {}", safe_path.display()));
+            send_progress(&progress_tx, done, total, path);
+            continue;
+        }
+
         match std::fs::remove_file(&safe_path) {
             Ok(()) => result.success += 1,
             Err(e) => {
-                // 尝试延迟删除
-                if cfg!(windows) {
-                    match delete_file_delayed_windows(&safe_path) {
-                        Ok(()) => result.success += 1,
-                        Err(msg) => {
-                            result.failed += 1;
+                // 占用检测：被占用则注明原因（仍走延迟删除通道）
+                let busy = cfg!(windows) && is_file_busy(&safe_path);
+                let delayed = if cfg!(windows) {
+                    delete_file_delayed_windows(&safe_path)
+                } else {
+                    Err(format!("{e}"))
+                };
+                match delayed {
+                    Ok(()) => result.success += 1,
+                    Err(msg) => {
+                        result.failed += 1;
+                        if busy {
+                            result
+                                .errors
+                                .push(format!("文件被进程占用，延迟删除失败: {msg}"));
+                        } else {
                             result.errors.push(msg);
                         }
                     }
-                } else {
-                    result.failed += 1;
-                    result.errors.push(format!("{e}"));
                 }
             }
         }
         done += 1;
         if done % 10 == 0 || done == total {
             send_progress(&progress_tx, done, total, path);
+        }
+    }
+
+    // 恢复服务（后进先出）
+    for service in stopped.iter().rev() {
+        if let Err(e) = start_service(service) {
+            result
+                .errors
+                .push(format!("删除后无法恢复服务 {service}: {e}"));
         }
     }
 
@@ -1496,6 +1628,126 @@ fn send_progress(tx: &Option<mpsc::Sender<DeleteProgress>>, done: u64, total: u6
             current: current.to_string_lossy().to_string(),
         });
     }
+}
+
+/// 停止 Windows 服务，返回服务原本是否在运行（TASK-025）
+#[cfg(windows)]
+fn stop_service(name: &str) -> Result<bool, String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::time::Duration;
+    use windows::Win32::Foundation::{ERROR_SERVICE_NOT_ACTIVE, GetLastError};
+    use windows::Win32::Security::SC_HANDLE;
+    use windows::Win32::System::Services::*;
+    use windows::core::PCWSTR;
+
+    let wide: Vec<u16> = OsStr::new(name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // 句柄守卫：作用域结束时关闭
+    struct Handle(SC_HANDLE);
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseServiceHandle(self.0);
+            }
+        }
+    }
+
+    let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT) }
+        .map_err(|e| format!("OpenSCManagerW failed: {e}"))?;
+    let _scm = Handle(scm);
+
+    let svc = unsafe {
+        OpenServiceW(
+            scm,
+            PCWSTR(wide.as_ptr()),
+            SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_START,
+        )
+    }
+    .map_err(|e| format!("OpenServiceW({name}) failed（可能需要管理员权限）: {e}"))?;
+    let _svc = Handle(svc);
+
+    let mut status = SERVICE_STATUS::default();
+    unsafe { QueryServiceStatus(svc, &mut status) }
+        .map_err(|e| format!("QueryServiceStatus failed: {e}"))?;
+    if status.dwCurrentState == SERVICE_STOPPED {
+        return Ok(false);
+    }
+
+    if let Err(e) = unsafe { ControlService(svc, SERVICE_CONTROL_STOP, &mut status) } {
+        let err = unsafe { GetLastError() };
+        if err == ERROR_SERVICE_NOT_ACTIVE {
+            return Ok(false);
+        }
+        return Err(format!("ControlService({name}) 停止失败: {e}"));
+    }
+
+    // 等待服务停止（最多 30s）
+    for _ in 0..300 {
+        let mut st = SERVICE_STATUS::default();
+        if unsafe { QueryServiceStatus(svc, &mut st) }.is_ok()
+            && st.dwCurrentState == SERVICE_STOPPED
+        {
+            return Ok(true);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!("等待服务 {name} 停止超时"))
+}
+
+/// 启动 Windows 服务（已运行视为成功）
+#[cfg(windows)]
+fn start_service(name: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::{ERROR_SERVICE_ALREADY_RUNNING, GetLastError};
+    use windows::Win32::Security::SC_HANDLE;
+    use windows::Win32::System::Services::*;
+    use windows::core::PCWSTR;
+
+    let wide: Vec<u16> = OsStr::new(name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    struct Handle(SC_HANDLE);
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseServiceHandle(self.0);
+            }
+        }
+    }
+
+    let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT) }
+        .map_err(|e| format!("OpenSCManagerW failed: {e}"))?;
+    let _scm = Handle(scm);
+
+    let svc = unsafe { OpenServiceW(scm, PCWSTR(wide.as_ptr()), SERVICE_START) }
+        .map_err(|e| format!("OpenServiceW({name}) 失败: {e}"))?;
+    let _svc = Handle(svc);
+
+    if let Err(e) = unsafe { StartServiceW(svc, None) } {
+        let err = unsafe { GetLastError() };
+        if err == ERROR_SERVICE_ALREADY_RUNNING {
+            return Ok(());
+        }
+        return Err(format!("StartServiceW({name}) 失败: {e}"));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn stop_service(_name: &str) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(not(windows))]
+fn start_service(_name: &str) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1910,6 +2162,21 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn test_is_file_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("busy.bin");
+        std::fs::write(&f, vec![0u8; 16]).unwrap();
+        // 未占用
+        assert!(!is_file_busy(&f), "unlocked file should not be busy");
+        // Rust File::open 不共享删除 → 占用
+        let handle = std::fs::File::open(&f).unwrap();
+        assert!(is_file_busy(&f), "opened file should be busy");
+        drop(handle);
+        assert!(!is_file_busy(&f), "after close should be free");
+    }
+
+    #[test]
     fn test_delete_result_default() {
         let r = DeleteResult::default();
         assert_eq!(r.success, 0);
@@ -1988,8 +2255,8 @@ mod tests {
         let targets = get_clean_targets();
         assert_eq!(
             targets.len(),
-            60,
-            "should have 60 targets (43 original + 17 new)"
+            55,
+            "should have 55 targets (43 original + 12 new, 大文件分类已移交磁盘分析)"
         );
         // 检查一些特定目标存在
         assert!(targets.iter().any(|t| t.id == "sys_logfiles"));
@@ -2033,10 +2300,6 @@ mod tests {
             serde_json::json!("old_install")
         );
         assert_eq!(
-            serde_json::to_value(&Category::LargeFiles).unwrap(),
-            serde_json::json!("large_files")
-        );
-        assert_eq!(
             serde_json::to_value(&Category::AppCache).unwrap(),
             serde_json::json!("app_cache")
         );
@@ -2050,7 +2313,6 @@ mod tests {
     fn test_category_display() {
         assert_eq!(Category::Temp.to_string(), "temp");
         assert_eq!(Category::OldInstall.to_string(), "old_install");
-        assert_eq!(Category::LargeFiles.to_string(), "large_files");
         assert_eq!(Category::AppCache.to_string(), "app_cache");
         assert_eq!(Category::DevCache.to_string(), "dev_cache");
     }
@@ -2060,7 +2322,6 @@ mod tests {
         assert_eq!(Category::Cache.default_min_size(), 512);
         assert_eq!(Category::Logs.default_min_size(), 4096);
         assert_eq!(Category::Temp.default_min_size(), 1024);
-        assert_eq!(Category::LargeFiles.default_min_size(), 52_428_800);
         assert_eq!(Category::AppCache.default_min_size(), 1024);
         assert_eq!(Category::DevCache.default_min_size(), 1024);
     }
@@ -2361,6 +2622,107 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_target_block_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("big.log"), vec![0u8; 5000]).unwrap();
+        std::fs::write(dir.path().join("small.log"), vec![0u8; 100]).unwrap();
+        std::fs::write(dir.path().join("big.txt"), vec![0u8; 5000]).unwrap();
+
+        let target = ScanTarget::new(
+            "test".into(),
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "test".into(),
+        )
+        .with_min_size(4096)
+        .with_glob(vec!["*.log".into()]);
+
+        let (tx, _rx) = mpsc::channel::<ScanEvent>();
+        let cancel = CancellationToken::new();
+        let count = AtomicU64::new(0);
+        let hit = AtomicBool::new(false);
+        let mut batch = Vec::new();
+        let (bytes, skipped) =
+            scan_target_block(&target, dir.path(), &cancel, &count, &hit, &mut batch, &tx);
+
+        assert_eq!(batch.len(), 1, "only big.log should match");
+        assert_eq!(batch[0].path, dir.path().join("big.log"));
+        assert_eq!(bytes, 5000);
+        assert_eq!(skipped, 1, "small.log skipped by min_size");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "global count = matched files"
+        );
+    }
+
+    #[test]
+    fn test_scan_target_block_parallel_count() {
+        // 两个线程共享全局计数并发扫描，验证无丢失/重复
+        let dir = tempfile::tempdir().unwrap();
+        let sub1 = dir.path().join("a");
+        let sub2 = dir.path().join("b");
+        std::fs::create_dir_all(&sub1).unwrap();
+        std::fs::create_dir_all(&sub2).unwrap();
+        for i in 0..10 {
+            std::fs::write(sub1.join(format!("f{i}.tmp")), vec![0u8; 2048]).unwrap();
+            std::fs::write(sub2.join(format!("g{i}.tmp")), vec![0u8; 2048]).unwrap();
+        }
+
+        let target = ScanTarget::new(
+            "t".into(),
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::Temp,
+            "t".into(),
+        )
+        .with_min_size(1024);
+
+        let count = Arc::new(AtomicU64::new(0));
+        let hit = Arc::new(AtomicBool::new(false));
+        let cancel = CancellationToken::new();
+        let (tx, _rx) = mpsc::channel::<ScanEvent>();
+        let mut handles = Vec::new();
+        for sub in [sub1, sub2] {
+            let count = count.clone();
+            let hit = hit.clone();
+            let cancel = cancel.clone();
+            let target = target.clone();
+            let tx = tx.clone();
+            handles.push(std::thread::spawn(move || {
+                let mut batch = Vec::new();
+                scan_target_block(&target, &sub, &cancel, &count, &hit, &mut batch, &tx)
+            }));
+        }
+        let mut total_bytes = 0u64;
+        for h in handles {
+            total_bytes += h.join().unwrap().0;
+        }
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            20,
+            "10 + 10 files counted exactly"
+        );
+        assert_eq!(total_bytes, 20 * 2048);
+    }
+
+    #[test]
+    fn test_wu_targets_config() {
+        let targets = get_clean_targets();
+        let dl = targets.iter().find(|t| t.id == "wu_download").unwrap();
+        assert_eq!(dl.level, SafetyLevel::Safe, "下载缓存应可安全删除");
+        let ds = targets.iter().find(|t| t.id == "wu_datastore").unwrap();
+        assert_eq!(ds.level, SafetyLevel::Confirm, "更新数据库需确认");
+        assert_eq!(
+            ds.requires_service_stop.as_deref(),
+            Some("wuauserv"),
+            "DataStore 需停 wuauserv"
+        );
+        assert!(ds.glob_include.is_some(), "DataStore 仅清文件不删目录");
+    }
+
+    #[test]
     fn test_downloads_mtime_filters_recent() {
         let targets = get_clean_targets();
         let dl = targets.iter().find(|t| t.id == "downloads_old").unwrap();
@@ -2400,7 +2762,6 @@ mod tests {
         assert_eq!(Category::Prefetch.default_min_size(), 1024);
         assert_eq!(Category::RecycleBin.default_min_size(), 1024);
         assert_eq!(Category::OldInstall.default_min_size(), 1024);
-        assert_eq!(Category::LargeFiles.default_min_size(), 52_428_800);
         assert_eq!(Category::AppCache.default_min_size(), 1024);
         assert_eq!(Category::DevCache.default_min_size(), 1024);
     }

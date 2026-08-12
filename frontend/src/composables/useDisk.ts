@@ -7,6 +7,8 @@ export interface LargeFile {
   size_bytes: number
   modified_secs: number
   kind: 'video' | 'archive' | 'installer' | 'image' | 'document' | 'other'
+  /** 删除风险：installer/AppData 等为 confirm（默认不勾选，需二次确认） */
+  level: 'safe' | 'confirm'
 }
 
 export interface DirUsage {
@@ -23,7 +25,14 @@ export interface DeleteResult {
 
 export type DiskState = 'idle' | 'scanning' | 'done' | 'error'
 
+/**
+ * 磁盘分析（大文件 + 目录占用，TASK-026）。
+ *
+ * 后端已合并为单次遍历（`start_user_scan`）：进度/done/error 走 `disk-user-*`，
+ * 数据事件 `disk-large-files` / `disk-dir-usage` 分别填充两个区块。
+ */
 export function useDisk() {
+  // ── 合并扫描状态 ──
   const state = ref<DiskState>('idle')
   const scanned = ref(0)
   const current = ref('')
@@ -32,15 +41,11 @@ export function useDisk() {
   const errorMessage = ref('')
   const deleteResult = ref<DeleteResult | null>(null)
 
-  let unlistenProgress: UnlistenFn | null = null
-  let unlistenFiles: UnlistenFn | null = null
-  let unlistenDirs: UnlistenFn | null = null
-  let unlistenDone: UnlistenFn | null = null
-  let unlistenError: UnlistenFn | null = null
+  let unlistenFns: (UnlistenFn | null)[] = []
 
   onMounted(() => {
     Promise.all([
-      listen<{ scanned: number; current: string }>('disk-progress', (e) => {
+      listen<{ scanned: number; current: string }>('disk-user-progress', (e) => {
         scanned.value = e.payload.scanned
         current.value = e.payload.current
       }),
@@ -50,26 +55,24 @@ export function useDisk() {
       listen<{ dirs: DirUsage[] }>('disk-dir-usage', (e) => {
         dirUsage.value = e.payload.dirs
       }),
-      listen('disk-done', () => {
+      listen('disk-user-done', () => {
         state.value = 'done'
       }),
-      listen<{ message: string }>('disk-error', (e) => {
+      listen<{ message: string }>('disk-user-error', (e) => {
         state.value = 'error'
         errorMessage.value = e.payload.message
       }),
-    ]).then((listeners) => {
-      ;[unlistenProgress, unlistenFiles, unlistenDirs, unlistenDone, unlistenError] = listeners
-    }).catch((e) => {
-      console.error('Failed to register disk listeners:', e)
-    })
+    ])
+      .then((listeners) => {
+        unlistenFns = listeners
+      })
+      .catch((e) => {
+        console.error('Failed to register disk listeners:', e)
+      })
   })
 
   onUnmounted(() => {
-    unlistenProgress?.()
-    unlistenFiles?.()
-    unlistenDirs?.()
-    unlistenDone?.()
-    unlistenError?.()
+    unlistenFns.forEach((fn) => fn?.())
   })
 
   function reset() {
@@ -79,25 +82,13 @@ export function useDisk() {
     largeFiles.value = []
     dirUsage.value = []
     errorMessage.value = ''
-    deleteResult.value = null
   }
 
-  async function startLargeScan(minMb: number) {
+  async function startScan(minMb: number, maxDepth = 3) {
     reset()
     state.value = 'scanning'
     try {
-      await invoke('start_large_scan', { minBytesMb: minMb })
-    } catch (e) {
-      state.value = 'error'
-      errorMessage.value = String(e)
-    }
-  }
-
-  async function startDirScan(maxDepth = 3) {
-    reset()
-    state.value = 'scanning'
-    try {
-      await invoke('start_dir_scan', { maxDepth })
+      await invoke('start_user_scan', { minBytesMb: minMb, maxDepth })
     } catch (e) {
       state.value = 'error'
       errorMessage.value = String(e)
@@ -133,8 +124,7 @@ export function useDisk() {
     dirUsage,
     errorMessage,
     deleteResult,
-    startLargeScan,
-    startDirScan,
+    startScan,
     cancel,
     deleteFiles,
     reset,
