@@ -44,11 +44,19 @@ const memBg = computed(() => {
     <!-- CPU track（左半，向右填充；轨道底色与胶囊一致） -->
     <div class="track" :class="cpuBg">
       <div class="fill fill-cpu" :class="cpuTint" :style="cpuFill" />
+      <div class="track-label">
+        <span class="num">{{ cpuPercent }}</span>
+        <span class="lbl">CPU</span>
+      </div>
     </div>
     <div class="sep" />
     <!-- MEM track（右半，向左填充） -->
     <div class="track" :class="memBg">
       <div class="fill fill-mem" :class="memTint" :style="memFill" />
+      <div class="track-label">
+        <span class="num">{{ memPercent }}</span>
+        <span class="lbl">MEM</span>
+      </div>
     </div>
   </div>
 </template>
@@ -93,5 +101,36 @@ const memBg = computed(() => {
   width: 1px;
   flex-shrink: 0;
   background: rgba(255, 255, 255, 0.12);
+}
+
+/* ─── 各自轨道内居中的数值（适配 10px 细条） ─── */
+.track-label {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.num {
+  font-size: 8px;
+  line-height: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.lbl {
+  font-size: 6px;
+  line-height: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
 }
 </style>
