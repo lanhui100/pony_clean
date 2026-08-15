@@ -49,6 +49,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let idlePollTimer: ReturnType<typeof setTimeout> | null = null
   let barTimer: ReturnType<typeof setTimeout> | null = null
   let barHoverTimer: ReturnType<typeof setTimeout> | null = null
+  let leaveWatchdog: ReturnType<typeof setTimeout> | null = null
   let lastActivityMs = Date.now()
   let unlistenIslandEnter: UnlistenFn | null = null
   let unlistenIslandLeave: UnlistenFn | null = null
@@ -260,6 +261,14 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     win.show().catch(() => {})
     islandState.value = 'leaving'
     emitTo('island', 'island-leave').catch(() => {})
+    // 加固（P2-1）：onLeaveDone 依赖 motion-v 的 complete 回调；在 entering 极早期点击
+    // （胶囊淡出层目标态与当前态几乎无差）可能不派发 complete，leaving 会卡住。
+    // 1.5s 看门狗强制收尾（onLeaveDone 幂等，动画若稍后完成再触发为 no-op）。
+    if (leaveWatchdog) clearTimeout(leaveWatchdog)
+    leaveWatchdog = setTimeout(() => {
+      leaveWatchdog = null
+      if (islandState.value === 'leaving') onLeaveDone()
+    }, 1500)
   }
 
   function onEnterDone() {
@@ -525,6 +534,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     stopIdleDetection()
     if (barTimer) clearTimeout(barTimer)
     if (barHoverTimer) clearTimeout(barHoverTimer)
+    if (leaveWatchdog) clearTimeout(leaveWatchdog)
     window.removeEventListener('blur', onBlur)
     unlistenIslandEnter?.()
     unlistenIslandLeave?.()

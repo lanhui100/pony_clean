@@ -11,6 +11,7 @@ import { contentRectFor } from '@/lib/windowMorphConfig'
 const isScanning = ref(false)
 let unlistenScanState: UnlistenFn | null = null
 let unlistenResetPos: UnlistenFn | null = null
+let unlistenCollapseRequest: UnlistenFn | null = null
 const pillLayerRef = ref<HTMLElement | null>(null)
 const { cpuPercent, memPercent, setPollInterval } = useMonitor()
 const {
@@ -28,6 +29,7 @@ const {
   onLeaveDone,
   notifyActivity,
   resetToDefault,
+  hideIsland,
 } = useWindowMorph(isScanning)
 
 // 胶囊层 / 进度条层的内容矩形（窗口内 CSS 像素，横排）
@@ -101,6 +103,12 @@ onMounted(async () => {
     resetToDefault()
   }).catch(() => null)
 
+  // 岛屿面板“收起到胶囊”按钮：扫描期间空转检测被挂起，此入口让用户手动收起，
+  // 长时扫描不遮蔽其他窗口（扫描在后台继续，重新点开胶囊即恢复面板）
+  unlistenCollapseRequest = await listen('island-collapse-request', () => {
+    hideIsland()
+  }).catch(() => null)
+
   // 渲染自检：挂载后检查胶囊层是否真的可见，结果转发到 Rust 终端
   // motion.div 组件不保证转发 ref 到 DOM（ref 可能为组件实例），用 data 属性定位 + 类型守卫
   setTimeout(() => {
@@ -127,6 +135,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unlistenScanState?.()
   unlistenResetPos?.()
+  unlistenCollapseRequest?.()
 })
 
 function onCapsuleAnimComplete() {

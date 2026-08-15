@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { Activity, HardDrive, Search, Settings, X } from 'lucide-vue-next'
+import { emitTo } from '@tauri-apps/api/event'
+import { Activity, ChevronUp, HardDrive, Search, Settings, X } from 'lucide-vue-next'
 
 const props = defineProps<{
   activeTab: string
@@ -69,6 +70,11 @@ function handleBlur() {
 async function handleClose() {
   await invoke('quit_app')
 }
+
+/** 收起到胶囊态：通知胶囊窗口执行 hideIsland（扫描等后台任务不中断） */
+function collapseToCapsule() {
+  emitTo('capsule', 'island-collapse-request').catch(() => {})
+}
 </script>
 
 <template>
@@ -89,6 +95,15 @@ async function handleClose() {
     </button>
 
     <div class="flex-1" />
+
+    <!-- 收起到胶囊（扫描不中断，长时扫描不遮蔽窗口） -->
+    <button
+      class="mb-1 flex h-6 w-6 items-center justify-center rounded-lg text-muted-foreground/60 transition-all duration-200 hover:bg-white/5 hover:text-foreground/80"
+      title="收起到胶囊（扫描不中断）"
+      @click="collapseToCapsule"
+    >
+      <ChevronUp :size="14" />
+    </button>
 
     <!-- Close -->
     <button
