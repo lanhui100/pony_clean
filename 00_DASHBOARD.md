@@ -6,7 +6,7 @@
 - 技术栈: Rust (Tauri v2) + Vue 3 + shadcn-vue + Tailwind + sysinfo + jwalk
 - 负责人: @self
 - 当前阶段: Wave 4 — 清理体验优化（5 任务全部完成：占用检查/一键清理/WU缓存/扫描合并/并行提速，待手动 QA）
-- 更新日期: 2026-08-08
+- 更新日期: 2026-08-16
 
 ## 整体目标
 1. 实时监控 Windows 进程，对 CPU/内存异常超高的进程报警，支持一键 kill
@@ -40,6 +40,9 @@
 | TASK-025 | Windows Update 缓存 + DataStore | Done | P0 | @self | ✅ SCM 服务控制 |
 | TASK-026 | disk 大文件+目录占用合并 | Done | P1 | @self | ✅ 单遍历双产出 |
 | TASK-027 | cleaner target 并行扫描 | Done | P1 | @self | ✅ 4 线程并行 |
+| **TASK-028** | **空间面板傻瓜式重构** | **Validation** | **P0** | **@self** | **手动 QA（已修复 P0 大小写误删缺陷，门禁/复审全绿）** |
+| **TASK-029** | **窗口视觉统一与过渡打磨（三层合一/阴影/极简按钮）** | **Validation** | **P0** | **@self** | **手动 QA + 环境受限门禁补跑（build/cargo check）** |
+| TASK-030 | 版本管理体系建设 | Done | P1 | @self | ✅ 28 单测 + 全守卫实测 + 门禁全绿，待提交 |
 | TASK-011 | UI 设计规范制定与对抗式审核 | In Progress | P1 | @self | 补产物（SPEC-011 缺失） |
 
 ## 里程碑

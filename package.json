@@ -5,6 +5,9 @@
     "dev:tauri": "npx --prefix frontend tauri dev",
     "dev": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
-    "install": "cd frontend && npm install"
+    "install": "cd frontend && npm install",
+    "check:version": "node scripts/check-version.mjs",
+    "bump:version": "node scripts/bump-version.mjs",
+    "test:version": "node --test \"scripts/*.test.mjs\""
   }
 }

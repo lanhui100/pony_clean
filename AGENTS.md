@@ -34,6 +34,8 @@ Windows 极简桌面小组件：进程监控报警 + C盘安全分析清理。Ru
 | `cargo check -p pony_core -p pony_clean` | 类型检查（两 crate） |
 | `cargo clippy -p pony_core -p pony_clean` | clippy 检查两 crate |
 | `cargo test -p pony_core` | 运行全部测试 |
+| `node scripts/check-version.mjs` | 校验四处版本一致（三清单 + Cargo.lock） |
+| `node scripts/bump-version.mjs 0.2.0` | 发版：同步版本 + 刷新 lock + 归档 CHANGELOG（`--commit`/`--tag` 可选） |
 | `cargo fmt --check && cargo clippy -p pony_core -p pony_clean && cargo build -p pony_core && cargo test -p pony_core` | CI 完整链 |
 | `cargo clean` | 轻度清理（仅 `cargo clean`） |
 | `rm -rf frontend/node_modules frontend/dist frontend/.vite src-tauri/target` | 深度清理 |

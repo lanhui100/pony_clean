@@ -31,3 +31,12 @@ jobs:
       - run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  version-sync:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/check-version.mjs
+        name: 版本一致性（三处清单 + Cargo.lock 成员条目）
+      - run: node --test "scripts/*.test.mjs"
+        name: 版本工具契约测试

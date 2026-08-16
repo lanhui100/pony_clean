@@ -24,6 +24,13 @@ npm run dev:tauri      # Tauri dev（前端 HMR + Rust 热重载）
 cargo test -p pony_core # 运行单元测试
 ```
 
+## 版本管理
+
+- 版本号唯一权威：`Cargo.toml` / `frontend/package.json` / `src-tauri/tauri.conf.json` / `Cargo.lock` 四处一致（CI 强制校验）
+- 发版：`node scripts/bump-version.mjs 0.2.0 [--commit] [--tag]`（同步版本 + Cargo.lock + 归档 CHANGELOG）
+- 自查：`node scripts/check-version.mjs`
+- 流程详见 [docs/VERSIONING.md](docs/VERSIONING.md)
+
 ## 项目结构
 
 ```
@@ -31,7 +38,9 @@ pony_clean/
 ├── crates/pony_core/  # 业务核心库（零框架依赖）
 ├── src-tauri/         # Tauri 壳层
 ├── frontend/          # Vue 3 前端
+├── scripts/           # 版本管理脚本（bump / check + 契约测试）
 ├── docs/              # 项目文档
+├── CHANGELOG.md       # 版本变更记录
 ├── 00_DASHBOARD.md    # 任务总控面板
 ├── 01_TASK_BOARD.md   # 任务板
 └── 03_TASKS/          # 任务卡

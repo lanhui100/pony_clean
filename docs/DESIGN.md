@@ -247,3 +247,39 @@
 - `frontend/src/composables/useDisk.ts`、`frontend/src/views/SpacePanel.vue`
 
 **留待手动 QA**: 真实服务停止/恢复、运行中进程文件占用提示、并行扫描性能观感。
+
+---
+
+## ADR-012: 版本管理 — 三处清单同步 + 脚本唯一变更点 + CI 强制一致
+
+**状态**: 已采纳（TASK-030）
+
+**上下文**: 版本 `0.1.0` 手工散落三处清单（workspace `Cargo.toml` / `frontend/package.json` / `src-tauri/tauri.conf.json`），无 changelog、无版本 tag、无 bump 工具、CI 不校验一致性，发版靠手工多文件编辑且易漂移。
+
+**方案对比**:
+
+| 方案 | 说明 | 结论 |
+|---|---|---|
+| A: 三处同步 + bump/check 脚本 + CI 校验 | 单一变更点，纯 Node stdlib 零依赖，文本精改保留字节/行尾 | ✅ 采纳 |
+| B: beforeBuildCommand 从 package.json 注入版本 | 构建期耦合；Cargo/Rust 侧仍需版本，维护面未减少 | 不采纳 |
+| C: 单一来源 Cargo.toml，打包时读取 | Tauri v2 不支持直接引用清单版本，仍需注入 | 不采纳 |
+| D: release-plz / cargo-bump 等工具 | 引入外部工具链与远端集成；发版频率低，脚本已足够 | 不采纳 |
+
+**决策**:
+1. `scripts/bump-version.mjs` 为**唯一版本变更点**：semver 校验 → 三处清单正则精改（`[workspace.package]` 段 / JSON 顶层 `"version"` 行）→ `cargo update -p pony_core -p pony_clean -w` 刷新 Cargo.lock（限定成员最小 diff，隔离实验证实 `cargo metadata --no-deps` 不会刷新 lock；lock 与清单不一致时可能联网刷新索引）→ **回读断言**成员版本 → CHANGELOG `[Unreleased]` 归档（缺失/多个/空节均拒绝发版）。
+2. **事务与幂等**：写文件 / cargo update / 断言任一失败自动还原 5 个版本文件（不留半态）；版本已是目标版本时 `--commit`/`--tag` 跳过写文件直接收尾（支持"QA 修复后补提交、分步打 tag"两种真实流程）。
+3. `--commit` / `--tag` 守卫：提交白名单 = 5 个版本文件（其余改动/未跟踪文件一律中止，守卫前置到写文件之前），`git commit -- <5 文件>` 限定提交范围；提交体带本次发布条目；tag 前校验 HEAD 已含目标版本 + 同名 tag 不存在。
+4. `scripts/check-version.mjs` 校验**四处**（三清单 + Cargo.lock 成员条目，成员名从各成员 Cargo.toml 的 `[package] name` 解析，不硬编码）；CI `version-sync` job（windows-latest）在 push/PR 强制校验并运行 `node --test` 契约测试。
+5. 纯函数抽离 `scripts/version-utils.mjs`，`node --test` 契约测试覆盖版本校验/JSON 精改/lock 提取/changelog 归档（含节边界、CRLF、`-pre` 版本、回滚契约等 28 项）。
+
+**理由**:
+1. 零新依赖（Node 内置测试器）、跨平台（Windows 开发机 + CI）、可回归（契约测试 + CI 门禁）
+2. 文本精改保留字节与行尾（CRLF 安全），git diff 最小化可审
+3. 守卫集中在发版动作时点（空 changelog 拦截在 bump，而非阻塞日常 push 的 CI 检查）
+
+**影响**:
+- 新增 `scripts/bump-version.mjs` / `scripts/check-version.mjs` / `scripts/version-utils.mjs` / `scripts/version-utils.test.mjs`、`CHANGELOG.md`、`docs/VERSIONING.md`
+- `.github/workflows/ci.yml`（version-sync job）、根 `package.json`（check:version / bump:version / test:version）
+- `docs/README.md`、`RELEASE_CHECKLIST.md`、`README.md`、`AGENTS.md`（流程/命令文档化）
+
+**流程**: 发版 = `check-version` → 确认 CHANGELOG [Unreleased] → `bump <v>` → 构建 + 手动 QA → `bump <v> --commit --tag` → `git push --follow-tags`。详见 `docs/VERSIONING.md`。

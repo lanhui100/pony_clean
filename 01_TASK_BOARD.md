@@ -12,6 +12,8 @@
 |---|---|---|---|---|
 | TASK-013 | 灵动岛面板接入 + 窗口高度动态扩展 | P0 | @self | 手动 QA |
 | TASK-015 | Wave 3 — 托盘/通知/自启/配置持久化 | P1 | @self | 手动 QA |
+| TASK-028 | 空间面板傻瓜式重构（一键扫描 → 一键清理） | P0 | @self | 手动 QA（代码/门禁/复审已完成） |
+| TASK-029 | 窗口视觉统一与过渡打磨（三层合一/阴影/极简按钮） | P0 | @self | 手动 QA + 环境受限门禁补跑（`npm run build`/`cargo check`） |
 
 ## 待开发 (Ready)
 
@@ -54,3 +56,4 @@ _(暂无)_
 | TASK-025 | Windows Update 缓存 + DataStore 清理 | P0 | @self |
 | TASK-026 | disk 大文件 + 目录占用合并单遍历 | P1 | @self |
 | TASK-027 | cleaner target 并行扫描提速 | P1 | @self |
+| TASK-030 | 版本管理体系建设（bump/check 脚本 + CHANGELOG + CI 校验） | P1 | @self |
