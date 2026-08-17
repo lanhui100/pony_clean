@@ -2593,6 +2593,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows 0.54.0",
+ "winreg 0.52.0",
 ]
 
 [[package]]
