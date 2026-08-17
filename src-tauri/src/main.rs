@@ -30,13 +30,15 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
-/// 为灵动岛窗口应用 Acrylic 毛玻璃（HWND 层级，SWCA 原生 API）。
+/// 为灵动岛窗口应用「毛玻璃」（HWND 层级，SWCA 原生 API）。
 ///
 /// 层级说明：Windows 毛玻璃是窗口级效果，CSS backdrop-filter 无法模糊
 /// 窗口背后的桌面，必须对 HWND 调用系统 API。
-/// 使用自实现 SWCA（SetWindowCompositionAttribute + ACCENT_ENABLE_ACRYLICBLURBEHIND）：
-/// - Win10/11 通用
-/// - 不触发 DWM 标题栏（window-vibrancy 的 TRANSIENTWINDOW 路径会绘制系统标题栏）。
+/// SPEC-029 修订：此前用 DwmEnableBlurBehindWindow（区域化 hRgnBlur）在透明
+/// WebView2 窗口上实测**不出毛玻璃**（接口返回成功但无效果），面板变为透明。
+/// 恢复 SWCA（ACCENT_ENABLE_ACRYLICBLURBEHIND）——这是本透明窗口上历史验证
+/// 真正生效的方案（TASK-022）。形状统一由圆角 Region + CSS 圆角壳层负责；
+/// SWCA 染色取接近面板深色的低饱和值。
 ///
 /// 失败时回退 Blur，再失败回退 CSS 拟态玻璃。
 fn apply_island_vibrancy(app: &tauri::AppHandle) {
@@ -106,6 +108,16 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn main() {
+    // 提权子进程模式：由 startup_item_elevated 以管理员身份启动，
+    // 执行关闭/打开自启动后写入结果文件并退出（不创建任何窗口）
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() >= 5 && args[1] == "--elevated-startup" {
+            let code = pony_core::startup::run_elevated_startup(&args[2], &args[3], &args[4]);
+            std::process::exit(code);
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(EdgeCursorState::new())
@@ -193,12 +205,14 @@ fn main() {
             commands::window::get_system_idle_ms,
             commands::window::start_edge_cursor_detect,
             commands::window::stop_edge_cursor_detect,
-            commands::window::set_hit_test_mode,
             commands::window::set_capsule_geometry,
             commands::window::get_monitor_work_area,
             commands::window::log_frontend,
             commands::config::get_config,
             commands::config::set_config,
+            commands::startup::list_startup_items,
+            commands::startup::disable_startup_item,
+            commands::startup::enable_startup_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

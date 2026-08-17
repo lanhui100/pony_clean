@@ -11,7 +11,12 @@ export const buttonVariants = cva(
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
         outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-        ghost: 'hover:bg-accent hover:text-accent-foreground',
+        // 极简 ghost（SPEC-029）：默认无背景，仅 hover 出背景
+        ghost: 'text-muted-foreground hover:bg-white/5 hover:text-foreground',
+        // 危险操作极简版：默认无背景，hover 出淡红背景
+        'destructive-ghost': 'text-destructive hover:bg-destructive/15',
+        // 主 CTA 柔和版：低饱和底，无描边，保留层级但不刺眼（胶囊态极简）
+        soft: 'bg-primary/15 text-primary hover:bg-primary/25',
         link: 'text-primary underline-offset-4 hover:underline',
       },
       size: {
@@ -19,6 +24,7 @@ export const buttonVariants = cva(
         sm: 'h-9 rounded-md px-3',
         lg: 'h-11 rounded-md px-8',
         icon: 'h-10 w-10',
+        'icon-sm': 'h-7 w-7 rounded-md',
       },
     },
     defaultVariants: {

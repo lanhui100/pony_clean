@@ -43,7 +43,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
     <button
       type="button"
       :disabled="disabled"
-      class="flex w-full items-center justify-between gap-1 rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[11px] text-foreground transition-colors hover:border-primary/40 focus:border-primary/50 focus:outline-none disabled:opacity-50"
+      class="flex w-full items-center justify-between gap-1 rounded-md px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-white/5 focus:bg-white/5 focus:outline-none disabled:opacity-50"
       @click.stop="toggle"
     >
       <span class="truncate">{{ options.find(o => o.value === modelValue)?.label ?? modelValue }}</span>

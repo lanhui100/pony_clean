@@ -83,6 +83,8 @@ const memBg = computed(() => {
   background:
     linear-gradient(180deg, rgba(42, 39, 35, 0.98), rgba(20, 19, 18, 0.96));
   border: 0;
+  /* 顶部内高光；外阴影由原生 DWM（CS_DROPSHADOW 按胶囊 Region）提供
+     （SPEC-029 二次修订，面板即窗口，无 CSS 阴影边距） */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   transition:
     box-shadow 0.25s ease,

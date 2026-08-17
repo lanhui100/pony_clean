@@ -19,9 +19,19 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
-  --color-success: hsl(140 48% 55%);
-  --color-warning: hsl(35 82% 60%);
-  --color-info: hsl(45 68% 60%);
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-info: hsl(var(--info));
+  /* 胶囊态分类色（低饱和矿物色系，稳重克制） */
+  --color-cat-temp: hsl(215 26% 55%);
+  --color-cat-cache: hsl(264 22% 60%);
+  --color-cat-logs: hsl(38 30% 56%);
+  --color-cat-prefetch: hsl(150 22% 47%);
+  --color-cat-recycle: hsl(28 32% 50%);
+  --color-cat-old: hsl(8 32% 54%);
+  --color-cat-app: hsl(328 22% 60%);
+  --color-cat-dev: hsl(240 22% 58%);
+  --color-cat-gray: hsl(30 8% 56%);
   --radius: 0.5rem;
 }
 
@@ -34,19 +44,23 @@
     --card: 30 10% 14%;
     --card-glass: 30 10% 14% / 0.35;
     --card-foreground: 35 8% 88%;
-    --primary: 38 85% 58%;
+    --primary: 40 12% 92%;
     --primary-foreground: 30 12% 9%;
     --secondary: 30 8% 22%;
     --secondary-foreground: 35 8% 88%;
     --muted: 30 8% 18%;
     --muted-foreground: 30 6% 55%;
-    --accent: 38 85% 58%;
+    --accent: 40 12% 92%;
     --accent-foreground: 30 12% 9%;
-    --destructive: 8 68% 65%;
+    --destructive: 0 64% 55%;
     --destructive-foreground: 30 12% 9%;
     --border: 30 8% 18%;
     --input: 30 8% 18%;
-    --ring: 38 85% 58%;
+    --ring: 40 12% 92%;
+    /* 状态色与胶囊（CapsuleBar/EdgeBar）同族：绿 green-600 · 琥珀 amber-600 · 红 red-500 */
+    --success: 142 50% 42%;
+    --warning: 32 72% 47%;
+    --info: 40 30% 60%;
   }
 
   * {
@@ -113,6 +127,56 @@
 .scrollbar-none {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* ─── 胶囊态滑杆：细轨道 + 圆形滑块，无边框（SPEC 极简） ─── */
+.slider-capsule {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border: 0;
+  border-radius: 9999px;
+  background: hsl(30 8% 18%);
+  outline: none;
+  cursor: pointer;
+}
+.slider-capsule::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border: 0;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s ease;
+}
+.slider-capsule::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.slider-capsule:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.slider-capsule::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 9999px;
+  background: hsl(30 8% 18%);
+}
+.slider-capsule::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.slider-capsule::-moz-focus-outer {
+  border: 0;
+}
+.slider-capsule:focus-visible {
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.35);
 }
 
 .glass-panel {

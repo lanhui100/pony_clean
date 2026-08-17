@@ -2,7 +2,7 @@
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo } from '@tauri-apps/api/event'
-import { Activity, ChevronUp, HardDrive, Search, Settings, X } from 'lucide-vue-next'
+import { Activity, ChevronUp, HardDrive, Rocket, Search, Settings, X } from 'lucide-vue-next'
 
 const props = defineProps<{
   activeTab: string
@@ -17,6 +17,7 @@ const emit = defineEmits<{
 const navItems = [
   { value: 'monitor', icon: Activity, label: '监控' },
   { value: 'cleaner', icon: HardDrive, label: '清理' },
+  { value: 'startup', icon: Rocket, label: '启动项' },
   { value: 'settings', icon: Settings, label: '设置' },
 ]
 
@@ -89,6 +90,8 @@ function collapseToCapsule() {
         ? 'bg-primary/15 text-primary'
         : 'text-muted-foreground/60 hover:text-foreground/80 hover:bg-white/5'"
       :title="item.label"
+      :aria-label="item.label"
+      :aria-current="activeTab === item.value ? 'page' : undefined"
       @click="emit('update:activeTab', item.value)"
     >
       <component :is="item.icon" :size="16" />
@@ -100,6 +103,7 @@ function collapseToCapsule() {
     <button
       class="mb-1 flex h-6 w-6 items-center justify-center rounded-lg text-muted-foreground/60 transition-all duration-200 hover:bg-white/5 hover:text-foreground/80"
       title="收起到胶囊（扫描不中断）"
+      aria-label="收起到胶囊"
       @click="collapseToCapsule"
     >
       <ChevronUp :size="14" />
@@ -109,6 +113,7 @@ function collapseToCapsule() {
     <button
       class="flex h-6 w-6 items-center justify-center rounded-lg text-muted-foreground/60 transition-all duration-200 hover:bg-destructive/20 hover:text-destructive"
       title="退出"
+      aria-label="退出"
       @click="handleClose"
     >
       <X :size="14" />

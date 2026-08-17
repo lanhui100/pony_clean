@@ -57,6 +57,8 @@ unsafe extern "system" {
     fn RemovePropW(hWnd: isize, lpString: *const u16) -> isize;
     fn GetWindowLongPtrW(hWnd: isize, nIndex: i32) -> isize;
     fn SetWindowLongPtrW(hWnd: isize, nIndex: i32, dwNewLong: isize) -> isize;
+    fn GetClassLongPtrW(hWnd: isize, nIndex: i32) -> isize;
+    fn SetClassLongPtrW(hWnd: isize, nIndex: i32, dwNewLong: isize) -> isize;
     fn SetWindowPos(
         hWnd: isize,
         hWndInsertAfter: isize,
@@ -204,15 +206,19 @@ const SM_CYVIRTUALSCREEN: i32 = 79;
 const EDGE_THRESHOLD: i32 = 20;
 
 // Logical window dimensions (CSS pixels)
-const LOGICAL_W: i32 = 315;
+//
+// 面板即窗口（SPEC-029 二次修订）：SWCA Acrylic 是窗口级效果、铺满整个窗口
+// 矩形且不被圆角 Region 裁剪。若窗口比 CSS 面板大（留阴影边距），边距区会露出
+// 一圈直角毛玻璃（用户反馈的「外圈」）。故面板 CSS 占满窗口；阴影改用原生 DWM
+// 阴影（CS_DROPSHADOW，跟随圆角 Region 投影，不占 CSS 边距）。
+const LOGICAL_W: i32 = 315; // island 窗口宽 = 内容宽
 const LOGICAL_H: i32 = 100; // island 概要态高度
-const ISLAND_EXPANDED_H: i32 = 480; // island 展开态高度（监控/清理面板）
-const CAPSULE_W_LOGICAL: i32 = 166; // 横边窗口宽度（逻辑 px，含 6px 抗锯齿余量）
-const CAPSULE_H_LOGICAL: i32 = 44; // 横边窗口高度（逻辑 px，含 4px 余量）
+const ISLAND_EXPANDED_H: i32 = 480; // island 展开态高度
+const CAPSULE_W_LOGICAL: i32 = 166; // 胶囊窗口宽（含 3px 左右抗锯齿余量）
+const CAPSULE_H_LOGICAL: i32 = 44; // 胶囊窗口高（含 2px 上下余量）
 const PILL_W: i32 = 160; // 胶囊视觉宽度
 const PILL_H: i32 = 40; // 胶囊视觉高度
 const STRIP_THICK: i32 = 10; // 贴边进度条厚度
-const ISLAND_RADIUS: i32 = 16;
 
 // Window property name for hit-test mode
 const HT_MODE_PROP: &str = "PonyCleanHitMode\0";
@@ -283,7 +289,7 @@ unsafe fn read_capsule_geometry(hwnd: isize) -> CapsuleGeometry {
     CapsuleGeometry { form, edge }
 }
 
-/// 窗口逻辑尺寸：竖边（左/右）旋转为 44×166，横边为 166×44
+/// 窗口逻辑尺寸：竖边（左/右）旋转为 56×192，横边为 192×56
 #[cfg(target_os = "windows")]
 fn capsule_logical_size(edge: ScreenEdge) -> (i32, i32) {
     match edge {
@@ -292,7 +298,7 @@ fn capsule_logical_size(edge: ScreenEdge) -> (i32, i32) {
     }
 }
 
-/// 内容矩形（逻辑 px，相对窗口左上角）：胶囊居中，进度条贴边细条
+/// 内容矩形（逻辑 px，相对窗口左上角）：胶囊居中，进度条贴边细条。
 #[cfg(target_os = "windows")]
 fn capsule_content_logical(geo: CapsuleGeometry) -> (i32, i32, i32, i32) {
     let (lw, lh) = capsule_logical_size(geo.edge);
@@ -348,7 +354,10 @@ unsafe fn capsule_content_phys(hwnd: isize, geo: CapsuleGeometry) -> Option<(i32
     Some((x, y, w, h))
 }
 
-/// 为胶囊窗口应用与当前形态/贴边方向匹配的圆角区域（点击穿透 + 形状裁剪）
+/// 为胶囊窗口应用与当前形态/贴边方向匹配的圆角区域（点击穿透 + 形状裁剪）。
+///
+/// Region = 内容矩形本身，圆角 = 短边（胶囊/进度条两端半圆）。
+/// 不加阴影外扩：阴影由原生 DWM（CS_DROPSHADOW）按本 Region 形状投影。
 #[cfg(target_os = "windows")]
 unsafe fn apply_capsule_region(hwnd: isize) {
     let geo = unsafe { read_capsule_geometry(hwnd) };
@@ -397,41 +406,6 @@ unsafe fn redraw_window_frame(hwnd: isize) {
     }
 }
 
-#[cfg(target_os = "windows")]
-unsafe fn apply_window_region(hwnd: isize, mode: isize) {
-    if mode == HT_MODE_FULL {
-        let mut cr = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        if unsafe { GetClientRect(hwnd, &mut cr) } == 0 {
-            return;
-        }
-
-        let phys_w = cr.right - cr.left;
-        let phys_h = cr.bottom - cr.top;
-        if phys_w <= 0 || phys_h <= 0 {
-            return;
-        }
-
-        let dpr = phys_w as f32 / LOGICAL_W as f32;
-        // CreateRoundRectRgn expects the corner ellipse size, not the CSS radius.
-        let ellipse = (ISLAND_RADIUS as f32 * dpr * 2.0).round() as i32;
-        let region = unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, ellipse, ellipse) };
-        if region != 0 {
-            unsafe {
-                SetWindowRgn(hwnd, region, 1);
-                redraw_window_frame(hwnd);
-            }
-        }
-    } else {
-        // 胶囊模式：按当前形态/贴边方向动态计算区域
-        unsafe { apply_capsule_region(hwnd) };
-    }
-}
-
 #[derive(Clone, Serialize)]
 pub struct EdgeCursorPayload {
     pub cursor_x: i32,
@@ -472,8 +446,14 @@ pub fn get_hwnd_for_label(app: &AppHandle, label: &str) -> Option<isize> {
     }
 }
 
+/// 为 island 窗口应用**方角**区域：整个窗口矩形（面板=窗口）。
+///
+/// SPEC-029 终版（用户裁决）：SWCA Acrylic 是窗口级效果、铺满整个方形窗口且
+/// 不被 Region 裁剪——若 Region/CSS 用圆角，四角必然露出底层 SWCA 的直角毛玻璃
+/// （"两层不重叠"）。故面板采用**方角毛玻璃**：Region 方角 = SWCA 方角 = CSS
+/// 方角，四角彻底一致、无分层。阴影由原生 DWM（CS_DROPSHADOW）按方角 Region 投影。
 #[cfg(target_os = "windows")]
-unsafe fn apply_full_round_region(hwnd: isize, logical_w: i32, radius: i32) {
+unsafe fn apply_island_region(hwnd: isize) {
     let mut cr = RECT {
         left: 0,
         top: 0,
@@ -483,16 +463,13 @@ unsafe fn apply_full_round_region(hwnd: isize, logical_w: i32, radius: i32) {
     if unsafe { GetClientRect(hwnd, &mut cr) } == 0 {
         return;
     }
-
     let phys_w = cr.right - cr.left;
     let phys_h = cr.bottom - cr.top;
     if phys_w <= 0 || phys_h <= 0 {
         return;
     }
-
-    let dpr = phys_w as f32 / logical_w as f32;
-    let ellipse = (radius as f32 * dpr * 2.0).round() as i32;
-    let region = unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, ellipse, ellipse) };
+    // 方角：椭圆直径 0 = 矩形区域（四角与 SWCA 直角一致，无分层）
+    let region = unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, 0, 0) };
     if region != 0 {
         unsafe {
             SetWindowRgn(hwnd, region, 1);
@@ -580,11 +557,28 @@ unsafe extern "system" fn hit_test_subclass(
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
+/// 启用原生 Windows 阴影（CS_DROPSHADOW 类样式）。
+///
+/// 面板即窗口，无 CSS 阴影边距；阴影由 DWM 按窗口 Region 形状（圆角面板 /
+/// 胶囊 / 进度条各自形状）投影。CS_DROPSHADOW 是经典 popup+region 方案。
+#[cfg(target_os = "windows")]
+unsafe fn enable_native_shadow(hwnd: isize) {
+    const GCLP_STYLE: i32 = -26;
+    const CS_DROPSHADOW: isize = 0x0002_0000;
+    let style = unsafe { GetClassLongPtrW(hwnd, GCLP_STYLE) };
+    if (style & CS_DROPSHADOW) == 0 {
+        unsafe {
+            SetClassLongPtrW(hwnd, GCLP_STYLE, style | CS_DROPSHADOW);
+        }
+    }
+}
+
 /// Prepare the floating windows for transparent, borderless rendering.
 ///
-/// 注意：island 窗口使用**直角** Region（radius=0），让 Acrylic 毛玻璃整块
-/// 直铺整个窗口——圆角 Region 与 DWM Acrylic 在 Win11 上不一致，
-/// 会出现"圆角面板 + 直角底部"的分层。圆角观感由 CSS 玻璃壳 + 内容卡片承担。
+/// 面板即窗口（SPEC-029 二次修订）：无阴影边距，CSS 面板占满窗口；毛玻璃由
+/// 窗口级 SWCA Acrylic（apply_island_vibrancy）铺满整个窗口（不被 Region 裁剪），
+/// 因此窗口尺寸 = 面板尺寸、无外圈直角毛玻璃。圆角 Region + CSS 圆角壳层对齐；
+/// 阴影用原生 CS_DROPSHADOW 按 Region 投影。
 #[cfg(target_os = "windows")]
 pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
     // 胶囊窗口：命中/裁剪区域由 set_capsule_geometry 按形态+贴边动态维护，
@@ -615,14 +609,14 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
             }
 
+            enable_native_shadow(hwnd);
             apply_capsule_region(hwnd);
             eprintln!("[PonyClean] Prepared floating window: capsule");
         }
     }
 
-    // island 窗口：直角圆角区域（Acrylic 整块直铺），命中区域为全窗口
-    let windows = [("island", LOGICAL_W, ISLAND_RADIUS)];
-    for (label, logical_w, radius) in windows {
+    // island 窗口：整窗圆角（16px）区域，命中区域为全窗口，原生阴影
+    for label in ["island"] {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.set_decorations(false);
             let _ = window.set_effects(None);
@@ -649,7 +643,8 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
             }
 
-            apply_full_round_region(hwnd, logical_w, radius);
+            enable_native_shadow(hwnd);
+            apply_island_region(hwnd);
             eprintln!("[PonyClean] Prepared floating window: {label}");
         }
     }
@@ -753,42 +748,6 @@ unsafe fn remove_dwm_border(hwnd: isize) {
 
 #[cfg(not(target_os = "windows"))]
 pub fn install_hit_test_subclass(_app: &AppHandle) -> Result<(), String> {
-    Ok(())
-}
-
-#[tauri::command]
-pub fn set_hit_test_mode(
-    app: AppHandle,
-    state: tauri::State<'_, EdgeCursorState>,
-    mode: String,
-) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let hwnd = if let Some(hwnd) = *state.hwnd.lock().unwrap() {
-            hwnd
-        } else {
-            let hwnd = get_hwnd(&app).ok_or("cannot get window handle")?;
-            *state.hwnd.lock().unwrap() = Some(hwnd);
-            hwnd
-        };
-
-        unsafe {
-            let prop_name: Vec<u16> = HT_MODE_PROP.encode_utf16().collect();
-            if mode == "full" {
-                SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_FULL);
-                apply_window_region(hwnd, HT_MODE_FULL);
-            } else {
-                SetPropW(hwnd, prop_name.as_ptr(), HT_MODE_CAPSULE);
-                apply_window_region(hwnd, HT_MODE_CAPSULE);
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (&app, &state, mode);
-    }
-
     Ok(())
 }
 
@@ -951,8 +910,9 @@ pub fn log_frontend(level: String, message: String) {
     eprintln!("[PonyClean][frontend:{level}] {message}");
 }
 
-/// 切换 island 窗口的概要态/展开态高度，并重算圆角裁剪区域。
+/// 切换 island 窗口的概要态/展开态高度，并重算圆角裁剪区域与区域化模糊。
 ///
+/// 窗口物理高度 = 内容高度 + 阴影边距（顶边贴边无上边距）。
 /// 展开态用于承载监控/清理面板，概要态仅显示摘要条。
 #[tauri::command]
 pub fn set_island_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
@@ -969,12 +929,23 @@ pub fn set_island_expanded(app: AppHandle, expanded: bool) -> Result<(), String>
         window
             .set_size(tauri::LogicalSize::new(LOGICAL_W, h))
             .map_err(|e| e.to_string())?;
-        // 圆角 Region：原生层控制窗口形状（与 Acrylic 一起被裁剪，单层视觉）
+        // 圆角 Region + 原生阴影：窗口 resize 后客户端矩形可能尚未稳定，
+        // 立即应用一次，并延迟 40ms 重算兜底（与胶囊 set_capsule_geometry 同策略）。
+        // 毛玻璃为窗口级 SWCA Acrylic（apply_island_vibrancy），无需随尺寸重设。
         if let Some(hwnd) = get_hwnd_for_label(&app, "island") {
             unsafe {
-                apply_full_round_region(hwnd, LOGICAL_W, ISLAND_RADIUS);
+                apply_island_region(hwnd);
             }
         }
+        let app2 = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            if let Some(hwnd) = get_hwnd_for_label(&app2, "island") {
+                unsafe {
+                    apply_island_region(hwnd);
+                }
+            }
+        });
     }
 
     #[cfg(not(target_os = "windows"))]

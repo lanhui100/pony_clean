@@ -12,12 +12,10 @@ const isScanning = ref(false)
 let unlistenScanState: UnlistenFn | null = null
 let unlistenResetPos: UnlistenFn | null = null
 let unlistenCollapseRequest: UnlistenFn | null = null
-const pillLayerRef = ref<HTMLElement | null>(null)
 const { cpuPercent, memPercent, setPollInterval } = useMonitor()
 const {
   islandState,
   capsuleHovered,
-  isDragging,
   form,
   onCapsuleEnter,
   onCapsuleLeave,
@@ -36,53 +34,61 @@ const {
 const pillRect = computed(() => contentRectFor('pill'))
 const barRect = computed(() => contentRectFor('bar'))
 
-const pillLayerStyle = computed(() => ({
-  left: `${pillRect.value.x}px`,
-  top: `${pillRect.value.y}px`,
-  width: `${pillRect.value.w}px`,
-  height: `${pillRect.value.h}px`,
-  pointerEvents: form.value === 'pill' ? 'auto' : 'none',
-  zIndex: form.value === 'pill' ? 20 : 10,
-}))
-
-const barLayerStyle = computed(() => ({
-  left: `${barRect.value.x}px`,
-  top: `${barRect.value.y}px`,
-  width: `${barRect.value.w}px`,
-  height: `${barRect.value.h}px`,
-  pointerEvents: form.value === 'bar' ? 'auto' : 'none',
-  zIndex: form.value === 'bar' ? 20 : 10,
-}))
-
-// 形态变换：transform-origin 为 0 0，用 x/y + scale 精确映射 pillRect ⇄ barRect
-const pillAnim = computed(() => {
-  if (form.value === 'pill') return { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 }
+// 形态变换（SPEC-029）：出层只淡出（位置不变），入层从另一形态的矩形
+// morph 到自身矩形 —— 单方向空间变化，杜绝双向交叉淡入的叠影残影。
+// transform-origin 0 0，CSS Transition（见 style 块），时长为
+// WINDOW_MORPH.morphDurationMs，与 useWindowMorph 的延迟原生几何同步对齐。
+const pillLayerStyle = computed(() => {
   const p = pillRect.value
   const b = barRect.value
-  return { x: b.x - p.x, y: b.y - p.y, scaleX: b.w / p.w, scaleY: b.h / p.h, opacity: 0 }
+  return {
+    left: `${p.x}px`,
+    top: `${p.y}px`,
+    width: `${p.w}px`,
+    height: `${p.h}px`,
+    // enter-from：pill 层从 bar 矩形 morph 而来
+    '--from-x': `${b.x - p.x}px`,
+    '--from-y': `${b.y - p.y}px`,
+    '--from-sx': (b.w / p.w).toString(),
+    '--from-sy': (b.h / p.h).toString(),
+  }
 })
 
-const barAnim = computed(() => {
-  if (form.value === 'bar') return { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 }
+const barLayerStyle = computed(() => {
   const p = pillRect.value
   const b = barRect.value
-  return { x: p.x - b.x, y: p.y - b.y, scaleX: p.w / b.w, scaleY: p.h / b.h, opacity: 0 }
+  return {
+    left: `${b.x}px`,
+    top: `${b.y}px`,
+    width: `${b.w}px`,
+    height: `${b.h}px`,
+    // enter-from：bar 层从 pill 矩形 morph 而来
+    '--from-x': `${p.x - b.x}px`,
+    '--from-y': `${p.y - b.y}px`,
+    '--from-sx': (p.w / b.w).toString(),
+    '--from-sy': (p.h / b.h).toString(),
+  }
 })
 
-const morphTransition = { type: 'spring' as const, stiffness: 240, damping: 22, mass: 0.9 }
+const prefersReducedMotion =
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-// island 展开/收起时的整体淡出缩放
+// island 展开/收起时的整体淡出缩放（仅包裹层，pill/bar 的 complete 事件不再污染此回调）
 const capsuleAnimate = computed(() => {
   if (islandState.value === 'idle' || islandState.value === 'leaving') return { opacity: 1, scale: 1 }
   return { opacity: 0, scale: 0.9 }
 })
 
-const capsuleTransition = computed(() => ({
-  type: 'spring' as const,
-  stiffness: 220,
-  damping: 18,
-  mass: 0.75,
-}))
+const capsuleTransition = computed(() => {
+  if (prefersReducedMotion) return { duration: 0.001 }
+  return {
+    type: 'spring' as const,
+    stiffness: 220,
+    damping: 18,
+    mass: 0.75,
+  }
+})
 
 watch(islandState, () => {
   setPollInterval(islandState.value === 'visible' ? 2000 : 3000)
@@ -110,13 +116,9 @@ onMounted(async () => {
   }).catch(() => null)
 
   // 渲染自检：挂载后检查胶囊层是否真的可见，结果转发到 Rust 终端
-  // motion.div 组件不保证转发 ref 到 DOM（ref 可能为组件实例），用 data 属性定位 + 类型守卫
   setTimeout(() => {
     window.__ponyLog?.('info', `render-check: form=${form.value}`)
-    const refEl = pillLayerRef.value
-    const el = (refEl && (refEl as unknown as Element).nodeType === 1
-      ? (refEl as unknown as Element)
-      : document.querySelector<HTMLElement>('[data-pill-layer]'))
+    const el = document.querySelector<HTMLElement>('[data-pill-layer]')
     if (!el) {
       window.__ponyLog?.('error', 'render-check: pill layer element not found (template render failed?)')
       return
@@ -138,7 +140,13 @@ onUnmounted(() => {
   unlistenCollapseRequest?.()
 })
 
-function onCapsuleAnimComplete() {
+/**
+ * 仅由最外层 motion.div（island 淡出层）的 complete 触发。
+ * 注意：pill/bar 两层是【纯 CSS Transition】，不派发 motion-v 的 complete；
+ * 本回调与 pill⇄bar 形态切换完全解耦（SPEC-029 裁决：complete 回调不得共享），
+ * 请勿在 pill/bar 层改用 motion 时不经拆分直接复用此回调。
+ */
+function onIslandFadeComplete() {
   if (islandState.value === 'entering') onEnterDone()
   else if (islandState.value === 'leaving') onLeaveDone()
 }
@@ -150,42 +158,43 @@ function onCapsuleAnimComplete() {
       class="island-fade-layer"
       :animate="capsuleAnimate"
       :transition="capsuleTransition"
-      :on-animation-complete="onCapsuleAnimComplete"
+      :on-animation-complete="onIslandFadeComplete"
     >
-      <!-- 胶囊层 -->
-      <motion.div
-        ref="pillLayerRef"
-        class="content-layer"
-        data-pill-layer
-        :style="pillLayerStyle"
-        :animate="pillAnim"
-        :transition="morphTransition"
-        @mouseenter="onCapsuleEnter"
-        @mouseleave="onCapsuleLeave"
-        @click="onCapsuleClick"
-      >
-        <CapsuleBar
-          :cpu-percent="cpuPercent"
-          :mem-percent="memPercent"
-          :is-hovered="capsuleHovered"
-        />
-      </motion.div>
+      <!-- 胶囊层（form=pill 时挂载；进入时从 bar 矩形 morph 而来，离开时仅淡出） -->
+      <Transition name="morph-pill">
+        <div
+          v-if="form === 'pill'"
+          class="content-layer"
+          data-pill-layer
+          :style="pillLayerStyle"
+          @mouseenter="onCapsuleEnter"
+          @mouseleave="onCapsuleLeave"
+          @click="onCapsuleClick"
+        >
+          <CapsuleBar
+            :cpu-percent="cpuPercent"
+            :mem-percent="memPercent"
+            :is-hovered="capsuleHovered"
+          />
+        </div>
+      </Transition>
 
-      <!-- 贴边进度条层 -->
-      <motion.div
-        class="content-layer"
-        :style="barLayerStyle"
-        :animate="barAnim"
-        :transition="morphTransition"
-        @mouseenter="onBarEnter"
-        @mouseleave="onBarLeave"
-        @click="onCapsuleClick"
-      >
-        <EdgeBar
-          :cpu-percent="cpuPercent"
-          :mem-percent="memPercent"
-        />
-      </motion.div>
+      <!-- 贴边进度条层（form=bar 时挂载；进入时从 pill 矩形 morph 而来，离开时仅淡出） -->
+      <Transition name="morph-bar">
+        <div
+          v-if="form === 'bar'"
+          class="content-layer"
+          :style="barLayerStyle"
+          @mouseenter="onBarEnter"
+          @mouseleave="onBarLeave"
+          @click="onCapsuleClick"
+        >
+          <EdgeBar
+            :cpu-percent="cpuPercent"
+            :mem-percent="memPercent"
+          />
+        </div>
+      </Transition>
     </motion.div>
   </div>
 </template>
@@ -206,6 +215,7 @@ function onCapsuleAnimComplete() {
 
 .content-layer {
   position: absolute;
+  z-index: 20;
   cursor: grab;
   will-change: transform, opacity;
   transform-origin: 0 0;
@@ -213,5 +223,38 @@ function onCapsuleAnimComplete() {
 
 .content-layer:active {
   cursor: grabbing;
+}
+
+/* ─── pill ⇄ bar morph（SPEC-029）───
+   入层：从另一形态矩形 translate+scale 到自身 + 淡入（300ms，与
+   useWindowMorph 的延迟原生几何同步对齐）；出层：仅 160ms 淡出，不做空间变换。
+   两端 rect 通过 CSS 变量（--from-*）注入，无需 JS 动画回调。 */
+.morph-pill-enter-from,
+.morph-bar-enter-from {
+  transform: translate(var(--from-x), var(--from-y)) scale(var(--from-sx), var(--from-sy));
+  opacity: 0;
+}
+.morph-pill-enter-active,
+.morph-bar-enter-active {
+  transition:
+    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease-out;
+}
+.morph-pill-enter-to,
+.morph-bar-enter-to {
+  transform: translate(0, 0) scale(1, 1);
+  opacity: 1;
+}
+.morph-pill-leave-from,
+.morph-bar-leave-from {
+  opacity: 1;
+}
+.morph-pill-leave-active,
+.morph-bar-leave-active {
+  transition: opacity 160ms ease-in;
+}
+.morph-pill-leave-to,
+.morph-bar-leave-to {
+  opacity: 0;
 }
 </style>

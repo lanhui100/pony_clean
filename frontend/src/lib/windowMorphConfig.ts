@@ -4,13 +4,18 @@
  * - `pill`：胶囊态，显示 CPU/MEM 数字
  * - `bar`：贴边进度条态，10s 无操作后自动收起为贴边细条
  * - 胶囊仅支持**顶部贴边**（左右/底部贴边已按需求移除，后续需要可扩展）
+ *
+ * 面板即窗口（SPEC-029 二次修订）：窗口尺寸 = 面板尺寸，CSS 面板占满窗口，
+ * SWCA Acrylic 毛玻璃铺满整个窗口（不被 Region 裁剪），因此无阴影边距、无
+ * 外圈直角毛玻璃；阴影改由原生 DWM（CS_DROPSHADOW）按圆角 Region 投影。
+ * 注意：尺寸常量必须与 `src-tauri/src/commands/window.rs` 同步。
  */
 export const WINDOW_MORPH = {
-  fullW: 315, // island 展开宽度
-  fullH: 100, // island 概要态高度（仅显示摘要条）
-  expandedH: 480, // island 展开态高度（显示监控/清理面板）
-  capsuleW: 166, // 胶囊窗口宽度（逻辑 px，额外 6px 抗锯齿余量）
-  capsuleH: 44, // 胶囊窗口高度（逻辑 px，额外 4px）
+  fullW: 315, // island 窗口宽 = 内容宽
+  fullH: 100, // island 概要态高度
+  expandedH: 480, // island 展开态高度
+  capsuleW: 166, // 胶囊窗口宽（含 3px 左右抗锯齿余量）
+  capsuleH: 44, // 胶囊窗口高（含 2px 上下余量）
   pillW: 160, // 胶囊视觉宽度
   pillH: 40, // 胶囊视觉高度
   stripThick: 10, // 贴边进度条厚度
@@ -20,14 +25,16 @@ export const WINDOW_MORPH = {
   barHoverDelay: 500, // 进度条 hover 后展开为胶囊的延迟
   idlePollInterval: 1000,
   dragStartThreshold: 4,
+  /** pill⇄bar CSS morph 时长（与 CapsuleWindow 的 transition 一致，用于延迟原生几何同步） */
+  morphDurationMs: 300,
 } as const
 
 export type CapsuleForm = 'pill' | 'bar'
 
 /**
  * 内容矩形（CSS 逻辑像素，相对窗口左上角）。
- * - pill：窗口内居中
- * - bar：顶部贴边细条（满宽）
+ * - pill：居中（横向留 ~3px 抗锯齿余量）
+ * - bar：顶部贴边细条（满窗口宽）
  */
 export function contentRectFor(form: CapsuleForm): { x: number; y: number; w: number; h: number } {
   if (form === 'pill') {

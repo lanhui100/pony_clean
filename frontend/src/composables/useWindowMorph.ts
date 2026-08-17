@@ -54,6 +54,12 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   let unlistenIslandEnter: UnlistenFn | null = null
   let unlistenIslandLeave: UnlistenFn | null = null
   let unlistenIslandActivity: UnlistenFn | null = null
+  // 面板态拖动（island 展开时按住面板空白处水平拖动，胶囊+面板同步移动）
+  let unlistenIslandDragStart: UnlistenFn | null = null
+  let unlistenIslandDragMove: UnlistenFn | null = null
+  let unlistenIslandDragEnd: UnlistenFn | null = null
+  const islandDragActive = ref(false)
+  let islandDragOffsetX = 0 // island 相对胶囊的水平偏移（物理 px，拖动开始时记录）
 
   // island 收起动画期间再次请求展开时，等待动画完成后重试
   let pendingShowAfterLeave = false
@@ -168,13 +174,26 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   /** ─── 形态切换（胶囊 ⇄ 进度条） ─── */
+  // 原生几何同步延迟到 CSS morph 完成后（SPEC-029）：form 变化瞬间即同步会把
+  // Region 硬切到目标形态，裁剪动画中间态造成「框体残影」。单一定时器串行化：
+  // 快速来回切换时旧任务被清除，末次生效，等价于 pending 队列且无动画回调依赖。
+  let geomSyncTimer: ReturnType<typeof setTimeout> | null = null
+
+  function scheduleGeometrySync() {
+    if (geomSyncTimer) clearTimeout(geomSyncTimer)
+    geomSyncTimer = setTimeout(() => {
+      geomSyncTimer = null
+      syncGeometryToBackend()
+    }, WINDOW_MORPH.morphDurationMs + 50)
+  }
+
   async function expandToPill() {
     if (form.value === 'pill') {
       resetBarTimer()
       return
     }
     form.value = 'pill'
-    await syncGeometryToBackend()
+    scheduleGeometrySync()
     resetBarTimer()
   }
 
@@ -182,7 +201,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     if (form.value === 'bar' || islandState.value !== 'idle') return
     if (isDragging.value || scanning.value || capsuleHovered.value) return
     form.value = 'bar'
-    await syncGeometryToBackend()
+    scheduleGeometrySync()
   }
 
   /** 胶囊无操作收起计时：island 收起后 10s 缩成贴边进度条 */
@@ -258,6 +277,10 @@ export function useWindowMorph(scanning: Ref<boolean>) {
 
   function hideIsland() {
     if (islandState.value === 'idle' || islandState.value === 'leaving') return
+    // 立即显示胶囊，并让其位于 island 下方（z 序低于后展开的 island）：
+    // island 收起动画为「向顶边 scaleY 折叠」，从底部先起、逐段露出下方的胶囊，
+    // 视觉上正是「面板缩回胶囊」，无叠影/空档，也无需用定时器对齐两窗口动画
+    //（Reviewer A/B 认为硬编码 140ms 与 island 0.22s easeIn 无同步锚点易竞态）。
     win.show().catch(() => {})
     islandState.value = 'leaving'
     emitTo('island', 'island-leave').catch(() => {})
@@ -417,21 +440,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     pendingDragX = null
 
     const onMove = (ev: MouseEvent) => {
-      if (!isDragging.value) return
-      const dx = ev.screenX - dragStartX
-      if (!dragMoved && Math.abs(dx) >= WINDOW_MORPH.dragStartThreshold) dragMoved = true
-      if (!dragMoved) return
-      const dpr = window.devicePixelRatio || 1
-      pendingDragX = dragStartWinX + Math.round(dx * dpr)
-      if (dragRafId === null) {
-        dragRafId = requestAnimationFrame(() => {
-          dragRafId = null
-          const targetX = pendingDragX
-          pendingDragX = null
-          if (targetX === null) return
-          applyDragPosition(targetX)
-        })
-      }
+      handleDragMove(ev.screenX)
     }
 
     const onUp = () => {
@@ -476,6 +485,90 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     dockX.value = currentWinX - monitor.left
     await applyWindowGeometry()
     resetBarTimer()
+  }
+
+  /** 拖动移动核心（胶囊拖动与面板态拖动共用）：屏幕位移 → clamp 后的目标 X */
+  function handleDragMove(screenX: number) {
+    if (!isDragging.value) return
+    const dx = screenX - dragStartX
+    if (!dragMoved && Math.abs(dx) >= WINDOW_MORPH.dragStartThreshold) dragMoved = true
+    if (!dragMoved) return
+    const dpr = window.devicePixelRatio || 1
+    pendingDragX = dragStartWinX + Math.round(dx * dpr)
+    if (dragRafId === null) {
+      dragRafId = requestAnimationFrame(() => {
+        dragRafId = null
+        const targetX = pendingDragX
+        pendingDragX = null
+        if (targetX === null) return
+        applyDragPosition(targetX)
+        if (islandDragActive.value) moveIslandWithCapsule()
+      })
+    }
+  }
+
+  /** ─── 面板态拖动（island 展开时按住面板空白处水平拖动） ─── */
+  async function startIslandDrag(screenX: number) {
+    if (islandState.value !== 'visible') return
+    isDragging.value = true
+    islandDragActive.value = true
+    dragMoved = false
+    capsuleHovered.value = false
+    dragStartX = screenX
+    dragStartWinX = currentWinX
+    pendingDragX = null
+    if (barTimer) {
+      clearTimeout(barTimer)
+      barTimer = null
+    }
+    if (barHoverTimer) {
+      clearTimeout(barHoverTimer)
+      barHoverTimer = null
+    }
+    // 记录 island 相对胶囊的水平偏移（物理 px），拖动中保持该相对位置
+    const dpr = window.devicePixelRatio || 1
+    const island = await getIslandWindow()
+    if (island) {
+      const ip = await island.outerPosition().catch(() => null)
+      islandDragOffsetX = ip
+        ? ip.x - currentWinX
+        : Math.round(((WINDOW_MORPH.fullW - WINDOW_MORPH.capsuleW) * dpr) / 2)
+    } else {
+      islandDragOffsetX = Math.round(((WINDOW_MORPH.fullW - WINDOW_MORPH.capsuleW) * dpr) / 2)
+    }
+  }
+
+  /** 拖动中同步移动 island 窗口（保持相对胶囊的水平偏移，Y 恒为工作区顶边） */
+  async function moveIslandWithCapsule() {
+    const island = await getIslandWindow()
+    if (!island) return
+    const dpr = window.devicePixelRatio || 1
+    const monitor = await getMonitorBounds()
+    const edgePx = Math.round(WINDOW_MORPH.edgePadding * dpr)
+    const fullWPx = Math.round(WINDOW_MORPH.fullW * dpr)
+    const x = clamp(
+      currentWinX + islandDragOffsetX,
+      monitor.left + edgePx,
+      monitor.right - fullWPx - edgePx,
+    )
+    await island.setPosition(new PhysicalPosition(x, monitor.top)).catch(() => {})
+  }
+
+  async function endIslandDrag() {
+    isDragging.value = false
+    islandDragActive.value = false
+    if (dragRafId !== null) cancelAnimationFrame(dragRafId)
+    dragRafId = null
+    if (pendingDragX !== null) await applyDragPosition(pendingDragX)
+    pendingDragX = null
+    if (dragMoved) {
+      // 吸附顶边并保存位置，随后把 island 重新对齐到胶囊正下方（含钳位）
+      await snapToTopEdge()
+      const island = await getIslandWindow()
+      if (island) await positionIslandWindow(island)
+    } else {
+      resetBarTimer()
+    }
   }
 
   function onBlur() {
@@ -523,6 +616,17 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       unlistenIslandEnter = await listen('island-pointer-enter', onIslandEnter)
       unlistenIslandLeave = await listen('island-pointer-leave', onIslandLeave)
       unlistenIslandActivity = await listen('island-user-activity', onIslandUserActivity)
+      unlistenIslandDragStart = await listen<{ screenX: number }>('island-drag-start', (e) => {
+        startIslandDrag(e.payload?.screenX ?? 0)
+      })
+      unlistenIslandDragMove = await listen<{ screenX: number }>('island-drag-move', (e) => {
+        if (!islandDragActive.value) return
+        handleDragMove(e.payload?.screenX ?? 0)
+      })
+      unlistenIslandDragEnd = await listen('island-drag-end', () => {
+        if (!islandDragActive.value) return
+        endIslandDrag()
+      })
     } catch {
       // best-effort
     }
@@ -535,10 +639,14 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     if (barTimer) clearTimeout(barTimer)
     if (barHoverTimer) clearTimeout(barHoverTimer)
     if (leaveWatchdog) clearTimeout(leaveWatchdog)
+    if (geomSyncTimer) clearTimeout(geomSyncTimer)
     window.removeEventListener('blur', onBlur)
     unlistenIslandEnter?.()
     unlistenIslandLeave?.()
     unlistenIslandActivity?.()
+    unlistenIslandDragStart?.()
+    unlistenIslandDragMove?.()
+    unlistenIslandDragEnd?.()
 
     if (isDragging.value) {
       isDragging.value = false
