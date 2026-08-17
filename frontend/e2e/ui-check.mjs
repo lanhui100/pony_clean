@@ -22,12 +22,20 @@ if (!executablePath) {
   process.exit(1)
 }
 
-// ─── Tauri API mock（浏览器环境注入） ───
+// ─── Tauri API mock（浏览器环境注入，含事件总线：start_* 会派发 done 事件，
+//     使自动扫描断言真正覆盖"扫描完成后再切回不重扫"的 5 分钟冷却路径） ───
 const TAURI_MOCK = `
 window.__TAURI_INTERNALS__ = {
   invoke: async (cmd, args) => {
+    window.__invokeCalls = window.__invokeCalls || [];
+    window.__invokeCalls.push(cmd);
     const a = args || {};
     switch (cmd) {
+      case 'plugin:event|listen': {
+        const ev = a.event, h = a.handler;
+        (window.__evHandlers[ev] = window.__evHandlers[ev] || []).push(h);
+        return { id: h };
+      }
       case 'get_processes':
         return {
           summary: { cpu_total: 32.5, mem_used_mb: 8192, mem_total_mb: 16384, process_count: 120, disk_used_gb: 210, disk_total_gb: 512 },
@@ -41,7 +49,7 @@ window.__TAURI_INTERNALS__ = {
       case 'get_config':
         return { alert_cpu_pct: 80, alert_mem_pct: 85, autostart: false };
       case 'get_clean_config':
-        return { version: 2, disabled_target_ids: [], disabled_targets: [], custom_exclude_paths: [], per_target_config: {}, custom_targets: [] };
+        return { version: 2, disabled_target_ids: [], disabled_targets: [], custom_exclude_paths: [], per_target_config: {}, custom_targets: [], disk_scan: { min_bytes_mb: 100, dir_depth: 3 } };
       case 'get_clean_logs':
         return { entries: [] };
       case 'get_system_idle_ms':
@@ -53,10 +61,14 @@ window.__TAURI_INTERNALS__ = {
       case 'delete_large_files':
         return { success: 1, failed: 0, errors: [] };
       case 'start_scan':
+        setTimeout(() => window.__dispatch('scan-done', { total_items: 0, total_bytes: 0, skipped_small: 0 }), 250);
+        return {};
+      case 'start_user_scan':
+        setTimeout(() => window.__dispatch('disk-user-done', {}), 250);
+        return {};
       case 'cancel_scan':
-      case 'start_large_scan':
-      case 'start_dir_scan':
       case 'cancel_disk_scan':
+      case 'empty_recycle_bin':
       case 'set_config':
       case 'save_clean_config':
       case 'set_island_expanded':
@@ -67,9 +79,22 @@ window.__TAURI_INTERNALS__ = {
         return {};
     }
   },
-  transformCallback: (fn) => { window.__cb = window.__cb || 0; return ++window.__cb; },
+  transformCallback: (fn) => {
+    window.__cb = window.__cb || 0;
+    window.__cbMap = window.__cbMap || {};
+    const id = ++window.__cb;
+    window.__cbMap[id] = fn;
+    return id;
+  },
   plugins: {},
   metadata: { currentWindow: { label: '__WINDOW_LABEL__' } },
+};
+window.__evHandlers = {};
+window.__dispatch = (event, payload) => {
+  (window.__evHandlers[event] || []).forEach((h) => {
+    const fn = window.__cbMap && window.__cbMap[h];
+    if (fn) fn({ payload });
+  });
 };
 window.__TAURI_MOCK__ = true;
 `
@@ -224,8 +249,26 @@ async function runWindow(label) {
   }
   console.log('tab 依次点击完成')
 
+  // TASK-028 回归断言：自动扫描在窗口会话内只触发一次（切走再切回不重扫）
+  let autoScanFail = 0
+  if (tabTitles.includes('清理') && tabTitles.includes('监控')) {
+    await page.click('.sidebar button[title="监控"]').catch(() => {})
+    await page.waitForTimeout(400)
+    await page.click('.sidebar button[title="清理"]').catch(() => {})
+    await page.waitForTimeout(600)
+    const counts = await page.evaluate(() => {
+      const calls = window.__invokeCalls || []
+      const count = (c) => calls.filter((x) => x === c).length
+      return { start_scan: count('start_scan'), start_user_scan: count('start_user_scan') }
+    })
+    console.log('自动扫描调用次数:', JSON.stringify(counts))
+    const ok = counts.start_scan === 1 && counts.start_user_scan === 1
+    console.log(ok ? 'PASS: 自动扫描只触发一次' : 'FAIL: 自动扫描触发次数异常')
+    if (!ok) autoScanFail = 1
+  }
+
   await browser.close()
-  return { errors: errors.length, lowContrast: low.length }
+  return { errors: errors.length, lowContrast: low.length, autoScanFail }
 }
 
 const results = []

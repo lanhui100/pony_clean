@@ -232,10 +232,15 @@ Users\Public\AccountPictures
 | `cache` | purple | Yes | 512 B |
 | `logs` | amber | No | 4096 B |
 | `prefetch` | green | No | 1024 B |
-| `recycle_bin` | orange | Yes | - |
+| `recycle_bin` | orange | — | - |
 | `old_install` | red | No | - |
 
 `update_cache` 归入 `cache`。`dev_cache` 推迟到 Phase 2。
+
+> **TASK-028 更新**：`recycle_bin` 已从扫描目标移除（`$Recycle.Bin` 目录扫描基本权限失败），
+> 回收站唯一入口改为 `empty_recycle_bin` 命令（`SHEmptyRecycleBinW`）+ 前端一次确认弹窗。
+> 空间面板重构为「一键扫描 → 一键清理」：Safe 级按分类勾选（`dev_cache` 默认不勾选），
+> Confirm 级收进折叠「高级」区，大文件/目录占用合并为折叠「空间分析」区，扫描参数移入设置面板。
 
 ---
 

@@ -71,8 +71,13 @@ pub async fn start_user_scan(
     let cancel_holder = state.cancel_flag.clone();
     let root_holder = state.scan_root.clone();
     let app_handle = app.clone();
-    let min_bytes = min_bytes_mb.unwrap_or(100).saturating_mul(1024 * 1024);
-    let depth = max_depth.unwrap_or(3);
+    // TASK-028：参数可选；未传时读配置（设置面板可调），统一 clamp 防越界
+    let (cfg_mb, cfg_depth) = pony_core::cleaner::load_config().disk_scan_params();
+    let min_bytes = min_bytes_mb
+        .unwrap_or(cfg_mb)
+        .clamp(50, 10_000)
+        .saturating_mul(1024 * 1024);
+    let depth = max_depth.unwrap_or(cfg_depth).clamp(1, 5);
     let root = user_profile_root();
     root_holder.lock().unwrap().replace(root.clone());
 

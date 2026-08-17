@@ -62,15 +62,16 @@ fn test_resolve_targets_excludes_forbidden() {
     );
 }
 
-/// 测试 get_clean_targets 返回 55 个目标（移除大文件分类后）
+/// 测试 get_clean_targets 返回 54 个目标（移除大文件分类后，TASK-028 再移除 recycle_bin）
 #[test]
 fn test_get_clean_targets_count() {
     let targets = cleaner::get_clean_targets();
     assert_eq!(
         targets.len(),
-        55,
-        "should have 55 targets (43 original + 12 new, 大文件分类已移交磁盘分析)"
+        54,
+        "should have 54 targets (55 minus recycle_bin, TASK-028)"
     );
+    assert!(!targets.iter().any(|t| t.id == "recycle_bin"));
 }
 
 /// 测试 target id 唯一性

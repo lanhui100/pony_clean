@@ -28,6 +28,8 @@ interface CleanConfig {
   custom_exclude_paths: string[]
   per_target_config: Record<string, unknown>
   custom_targets: CustomTarget[]
+  /** TASK-028：磁盘分析参数（旧配置缺失为 null，UI 回退默认 100/3） */
+  disk_scan?: { min_bytes_mb?: number | null; dir_depth?: number | null } | null
 }
 
 const CATEGORY_OPTIONS = [
@@ -42,6 +44,16 @@ const LEVEL_OPTIONS = [
   { value: 'safe', label: '安全（默认勾选）' },
   { value: 'confirm', label: '需确认（不勾选）' },
 ]
+
+// TASK-028：扫描与清理参数（大文件阈值 + 目录占用分解层数）
+const MIN_MB_OPTIONS = [
+  { value: 100, label: '≥ 100 MB' },
+  { value: 500, label: '≥ 500 MB' },
+  { value: 1000, label: '≥ 1 GB' },
+]
+const DEPTH_OPTIONS = [1, 2, 3, 4, 5].map((v) => ({ value: v, label: `${v} 层` }))
+const minBytesMb = ref(100)
+const dirDepth = ref(3)
 
 const { setAlertThresholds } = useMonitor()
 
@@ -75,6 +87,9 @@ onMounted(async () => {
   try {
     const cleanCfg = await invoke<CleanConfig>('get_clean_config')
     customTargets.value = cleanCfg.custom_targets ?? []
+    // TASK-028：旧配置 disk_scan 缺失/null → 回退默认
+    minBytesMb.value = cleanCfg.disk_scan?.min_bytes_mb ?? 100
+    dirDepth.value = cleanCfg.disk_scan?.dir_depth ?? 3
   } catch {
     // 无清理配置
   }
@@ -133,9 +148,10 @@ async function handleSave() {
     })
     setAlertThresholds(cpuPct.value, memPct.value)
 
-    // 保存清理配置（保留原有字段，仅更新自定义目标）
+    // 保存清理配置（保留原有字段，更新自定义目标 + TASK-028 扫描参数）
     const cleanCfg = await invoke<CleanConfig>('get_clean_config')
     cleanCfg.custom_targets = customTargets.value
+    cleanCfg.disk_scan = { min_bytes_mb: minBytesMb.value, dir_depth: dirDepth.value }
     await invoke('save_clean_config', { config: cleanCfg })
 
     savedMsg.value = '✓ 已保存'
@@ -153,70 +169,80 @@ function categoryLabel(value: string) {
 </script>
 
 <template>
-  <div class="flex h-full flex-col gap-3 overflow-y-auto px-1 py-1">
+  <div class="scrollbar-none flex h-full flex-col gap-6 overflow-y-auto px-1 py-1">
     <div v-if="loading" class="flex flex-1 items-center justify-center">
       <Loader2 class="h-4 w-4 animate-spin text-muted-foreground" />
     </div>
 
     <template v-else>
-      <!-- CPU threshold -->
-      <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-foreground/90">CPU 告警阈值</span>
-          <span class="text-xs tabular-nums text-primary">{{ cpuPct }}%</span>
-        </div>
-        <input
-          v-model.number="cpuPct"
-          type="range"
-          min="50"
-          max="100"
-          step="5"
-          class="mt-2 w-full accent-primary"
-        />
-        <p class="mt-1 text-[10px] text-muted-foreground/70">CPU 占用超过该值时发送系统通知</p>
-      </div>
+      <!-- ═══ 告警阈值：边距分区，无背景块 ═══ -->
+      <section class="space-y-4">
+        <h3 class="text-[11px] font-semibold text-foreground/85">告警阈值</h3>
 
-      <!-- Memory threshold -->
-      <div class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-foreground/90">内存告警阈值</span>
-          <span class="text-xs tabular-nums text-primary">{{ memPct }}%</span>
-        </div>
-        <input
-          v-model.number="memPct"
-          type="range"
-          min="50"
-          max="100"
-          step="5"
-          class="mt-2 w-full accent-primary"
-        />
-        <p class="mt-1 text-[10px] text-muted-foreground/70">内存占用超过该值时发送系统通知</p>
-      </div>
+        <div class="space-y-4">
+          <!-- CPU threshold -->
+          <div>
+            <div class="flex items-baseline justify-between">
+              <span class="text-xs text-foreground/90">CPU 告警阈值</span>
+              <span class="text-xs tabular-nums text-primary">{{ cpuPct }}%</span>
+            </div>
+            <input
+              v-model.number="cpuPct"
+              type="range"
+              min="50"
+              max="100"
+              step="5"
+              class="slider-capsule mt-2.5 w-full"
+            />
+            <p class="mt-1 text-[10px] text-muted-foreground/70">CPU 占用超过该值时发送系统通知</p>
+          </div>
 
-      <!-- Autostart -->
-      <label class="flex cursor-pointer items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
-        <div>
-          <span class="text-xs font-medium text-foreground/90">开机自启</span>
-          <p class="mt-0.5 text-[10px] text-muted-foreground/70">登录 Windows 后自动启动 PonyClean</p>
+          <!-- Memory threshold -->
+          <div>
+            <div class="flex items-baseline justify-between">
+              <span class="text-xs text-foreground/90">内存告警阈值</span>
+              <span class="text-xs tabular-nums text-primary">{{ memPct }}%</span>
+            </div>
+            <input
+              v-model.number="memPct"
+              type="range"
+              min="50"
+              max="100"
+              step="5"
+              class="slider-capsule mt-2.5 w-full"
+            />
+            <p class="mt-1 text-[10px] text-muted-foreground/70">内存占用超过该值时发送系统通知</p>
+          </div>
         </div>
-        <button
-          class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
-          :class="autostart ? 'bg-primary/80' : 'bg-white/15'"
-          role="switch"
-          :aria-checked="autostart"
-          @click="autostart = !autostart"
-        >
-          <span
-            class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all"
-            :class="autostart ? 'left-[18px]' : 'left-0.5'"
-          />
-        </button>
-      </label>
+      </section>
 
-      <!-- Custom clean rules -->
-      <div class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
+      <!-- ═══ 启动 ═══ -->
+      <section class="space-y-2.5">
+        <h3 class="text-[11px] font-semibold text-foreground/85">启动</h3>
         <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-foreground/90">自定义清理规则</span>
+          <div>
+            <span class="text-xs text-foreground/90">开机自启</span>
+            <p class="mt-0.5 text-[10px] text-muted-foreground/70">登录 Windows 后自动启动 PonyClean</p>
+          </div>
+          <button
+            class="relative h-4 w-7 shrink-0 rounded-full transition-colors"
+            :class="autostart ? 'bg-success/80' : 'bg-white/15'"
+            role="switch"
+            :aria-checked="autostart"
+            @click="autostart = !autostart"
+          >
+            <span
+              class="absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all"
+              :class="autostart ? 'left-[14px]' : 'left-0.5'"
+            />
+          </button>
+        </div>
+      </section>
+
+      <!-- ═══ 自定义清理规则 ═══ -->
+      <section class="space-y-2.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-[11px] font-semibold text-foreground/85">自定义清理规则</h3>
           <button
             class="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-primary/15 hover:text-primary"
             title="添加规则"
@@ -225,19 +251,19 @@ function categoryLabel(value: string) {
             <Plus class="h-3.5 w-3.5" />
           </button>
         </div>
-        <p class="mt-0.5 text-[10px] text-muted-foreground/70">
+        <p class="text-[10px] text-muted-foreground/70">
           添加你自己的缓存/临时目录，扫描时一并纳入（受保护路径自动跳过）
         </p>
 
         <!-- Add form -->
-        <div v-if="showAddForm" class="mt-2 space-y-1.5 rounded bg-white/5 p-2">
+        <div v-if="showAddForm" class="space-y-2 pt-0.5">
           <input
             v-model="newPath"
             type="text"
             placeholder="目录路径，支持 %TEMP% 等环境变量"
-            class="w-full rounded border border-white/10 bg-transparent px-2 py-1 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
+            class="w-full border-0 border-b border-white/10 bg-transparent px-0.5 pb-1 pt-0.5 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:border-primary/60 focus:outline-none"
           />
-          <div class="flex gap-1.5">
+          <div class="flex gap-2">
             <OptionPicker
               v-model="newCategory"
               :options="CATEGORY_OPTIONS"
@@ -251,25 +277,25 @@ function categoryLabel(value: string) {
             v-model="newDesc"
             type="text"
             placeholder="描述（可选）"
-            class="w-full rounded border border-white/10 bg-transparent px-2 py-1 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
+            class="w-full border-0 border-b border-white/10 bg-transparent px-0.5 pb-1 pt-0.5 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:border-primary/60 focus:outline-none"
           />
           <div class="flex items-center justify-end gap-1.5">
             <span v-if="ruleMsg" class="text-[10px] text-warning">{{ ruleMsg }}</span>
-            <Button size="sm" variant="outline" @click="showAddForm = false">取消</Button>
+            <Button size="sm" variant="ghost" @click="showAddForm = false">取消</Button>
             <Button size="sm" @click="addRule">添加</Button>
           </div>
         </div>
 
         <!-- Rule list -->
-        <div v-if="customTargets.length > 0" class="mt-2 space-y-1">
+        <div v-if="customTargets.length > 0" class="space-y-0.5 pt-0.5">
           <div
             v-for="(rule, i) in customTargets"
             :key="rule.id"
-            class="flex items-center gap-2 rounded bg-white/5 px-2 py-1.5"
+            class="group flex items-center gap-2 rounded px-1 py-1 transition-colors hover:bg-muted/20"
           >
             <button
               class="relative h-4 w-7 shrink-0 rounded-full transition-colors"
-              :class="rule.enabled ? 'bg-primary/70' : 'bg-white/15'"
+              :class="rule.enabled ? 'bg-success/70' : 'bg-white/15'"
               role="switch"
               :aria-checked="rule.enabled"
               :title="rule.enabled ? '已启用' : '已停用'"
@@ -287,7 +313,7 @@ function categoryLabel(value: string) {
               </p>
             </div>
             <button
-              class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-destructive/20 hover:text-destructive"
+              class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-60 transition-all group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive"
               title="删除规则"
               @click="removeRule(i)"
             >
@@ -295,19 +321,40 @@ function categoryLabel(value: string) {
             </button>
           </div>
         </div>
-        <p v-else-if="!showAddForm" class="mt-1.5 text-[10px] text-muted-foreground/50">暂无自定义规则</p>
-      </div>
+        <p v-else-if="!showAddForm" class="text-[10px] text-muted-foreground/50">暂无自定义规则</p>
+      </section>
+
+      <!-- ═══ 扫描与清理参数（TASK-028） ═══ -->
+      <section class="space-y-2.5">
+        <h3 class="text-[11px] font-semibold text-foreground/85">扫描与清理参数</h3>
+        <p class="text-[10px] text-muted-foreground/70">
+          调整空间分析的范围，保存后下次扫描生效
+        </p>
+        <div class="flex gap-2">
+          <OptionPicker v-model="minBytesMb" :options="MIN_MB_OPTIONS" />
+          <OptionPicker v-model="dirDepth" :options="DEPTH_OPTIONS" />
+        </div>
+        <p class="text-[10px] text-muted-foreground/60">
+          大文件最小体积 · 目录占用分解层数（层数只影响目录分解粒度，不影响扫描范围）
+        </p>
+      </section>
 
       <!-- Save -->
-      <div class="mt-auto flex items-center justify-between pt-1">
+      <div class="mt-auto flex items-center justify-between pt-2">
         <span v-if="savedMsg" class="text-[11px]" :class="savedMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
           {{ savedMsg }}
         </span>
         <span v-else class="text-[10px] text-muted-foreground/60">设置保存在本地配置文件中</span>
-        <Button size="sm" :disabled="saving" @click="handleSave">
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          :disabled="saving"
+          title="保存设置"
+          aria-label="保存设置"
+          @click="handleSave"
+        >
           <Save v-if="!saving" class="h-3.5 w-3.5" />
           <Loader2 v-else class="h-3.5 w-3.5 animate-spin" />
-          <span class="ml-1">保存</span>
         </Button>
       </div>
     </template>

@@ -33,7 +33,8 @@ pub enum SafetyLevel {
 }
 
 /// 清理目标分类，序列化为小写 JSON
-/// 前端类型: type Category = 'temp' | 'cache' | 'logs' | 'prefetch' | 'recycle_bin' | 'old_install' | 'app_cache' | 'dev_cache'
+/// 前端类型: type Category = 'temp' | 'cache' | 'logs' | 'prefetch' | 'old_install' | 'app_cache' | 'dev_cache'
+/// （recycle_bin 枚举保留用于配置兼容，但 TASK-028 起不再作为扫描目标）
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
@@ -255,6 +256,35 @@ pub struct PonyConfig {
     pub per_target_config: HashMap<String, TargetConfig>,
     #[serde(default)]
     pub custom_targets: Vec<CustomTarget>,
+    /// 磁盘分析参数（TASK-028）：大文件阈值与目录占用分解层数，缺失时使用默认值
+    #[serde(default)]
+    pub disk_scan: Option<DiskScanConfig>,
+}
+
+/// 磁盘分析扫描参数（TASK-028），全部字段可选、缺失时取默认值
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DiskScanConfig {
+    /// 大文件最小体积（MB），None = 100，合法范围 50..=10000
+    pub min_bytes_mb: Option<u64>,
+    /// 目录占用分解层数，None = 3，合法范围 1..=5
+    pub dir_depth: Option<usize>,
+}
+
+impl PonyConfig {
+    /// 解析磁盘分析扫描参数为 (min_bytes_mb, dir_depth)，带 clamp 防手改配置文件恶意值
+    pub fn disk_scan_params(&self) -> (u64, usize) {
+        let mb = self
+            .disk_scan
+            .as_ref()
+            .and_then(|d| d.min_bytes_mb)
+            .unwrap_or(100);
+        let depth = self
+            .disk_scan
+            .as_ref()
+            .and_then(|d| d.dir_depth)
+            .unwrap_or(3);
+        (mb.clamp(50, 10_000), depth.clamp(1, 5))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -398,7 +428,8 @@ pub fn default_targets() -> Vec<ScanTarget> {
     get_clean_targets()
 }
 
-/// 安全扫描路径列表（43 原有 + 17 新增 = 60 target）
+/// 安全扫描路径列表（54 个 target；TASK-028 起回收站不再作为扫描目标，
+/// 唯一入口为 `empty_recycle_bin` 命令 + 前端确认弹窗）
 pub fn get_clean_targets() -> Vec<ScanTarget> {
     let d = system_drive();
     vec![
@@ -516,13 +547,8 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             Category::Cache,
             "Internet 临时文件".into(),
         ),
-        ScanTarget::new(
-            "recycle_bin".into(),
-            &format!("{d}\\$Recycle.Bin"),
-            SafetyLevel::Safe,
-            Category::RecycleBin,
-            "回收站".into(),
-        ),
+        // 注意（TASK-028）：回收站不再作为扫描目标（$Recycle.Bin 目录扫描基本权限失败），
+        // 唯一入口为 empty_recycle_bin 命令 + 前端确认弹窗。
         // === 新增 28 目标 ===
         ScanTarget::new(
             "sys_logfiles".into(),
@@ -1498,7 +1524,19 @@ pub fn delete_files_with_progress(
     paths: &[PathBuf],
     progress_tx: Option<mpsc::Sender<DeleteProgress>>,
 ) -> DeleteResult {
-    let targets = get_clean_targets();
+    // TASK-028：校验目标集使用与扫描一致的 filtered targets（内置 + 用户自定义，
+    // 受 disabled_target_ids / per_target_config 过滤），否则自定义 target 扫出的
+    // 文件会在删除时因不在内置目标集而被拒绝。
+    let targets = get_filtered_targets(&load_config());
+    delete_files_with_targets(paths, &targets, progress_tx)
+}
+
+/// 按给定目标集删除文件（内部实现：公开入口传入 filtered targets，测试传入 fixture）
+fn delete_files_with_targets(
+    paths: &[PathBuf],
+    targets: &[ScanTarget],
+    progress_tx: Option<mpsc::Sender<DeleteProgress>>,
+) -> DeleteResult {
     let mut result = DeleteResult::default();
     let total = paths.len() as u64;
     let mut done = 0u64;
@@ -1552,7 +1590,7 @@ pub fn delete_files_with_progress(
             send_progress(&progress_tx, done, total, path);
             continue;
         }
-        if !is_path_allowed(&safe_path, &targets) {
+        if !is_path_allowed(&safe_path, targets) {
             result.failed += 1;
             done += 1;
             result
@@ -2255,13 +2293,15 @@ mod tests {
         let targets = get_clean_targets();
         assert_eq!(
             targets.len(),
-            55,
-            "should have 55 targets (43 original + 12 new, 大文件分类已移交磁盘分析)"
+            54,
+            "should have 54 targets (55 minus recycle_bin, TASK-028 回收站改走 empty_recycle_bin)"
         );
         // 检查一些特定目标存在
         assert!(targets.iter().any(|t| t.id == "sys_logfiles"));
         assert!(targets.iter().any(|t| t.id == "uwp_temp"));
         assert!(targets.iter().any(|t| t.id == "downloads_old"));
+        // 回收站不再作为扫描目标（TASK-028）
+        assert!(!targets.iter().any(|t| t.id == "recycle_bin"));
     }
 
     #[test]
@@ -2502,6 +2542,129 @@ mod tests {
         assert!(v2.disabled_target_ids.contains(&"sys_temp".to_string()));
         assert!(v2.custom_exclude_paths.contains(&"C:\\MyData".to_string()));
         assert!(v2.disabled_targets.is_empty());
+    }
+
+    // ===== TASK-028: DiskScanConfig 兼容性 + clamp =====
+    #[test]
+    fn test_disk_scan_config_missing_field_defaults() {
+        // 旧 config.json 无 disk_scan 字段 → 默认 (100, 3)
+        let cfg: PonyConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(cfg.disk_scan_params(), (100, 3));
+        // disk_scan 空对象 → 默认 (100, 3)
+        let cfg: PonyConfig = serde_json::from_str(r#"{"disk_scan": {}}"#).unwrap();
+        assert_eq!(cfg.disk_scan_params(), (100, 3));
+    }
+
+    #[test]
+    fn test_disk_scan_config_partial_field() {
+        // 只设 min_bytes_mb，dir_depth 缺失 → 深度回退默认
+        let cfg: PonyConfig =
+            serde_json::from_str(r#"{"disk_scan": {"min_bytes_mb": 500}}"#).unwrap();
+        assert_eq!(cfg.disk_scan_params(), (500, 3));
+        // 只设 dir_depth
+        let cfg: PonyConfig = serde_json::from_str(r#"{"disk_scan": {"dir_depth": 5}}"#).unwrap();
+        assert_eq!(cfg.disk_scan_params(), (100, 5));
+    }
+
+    #[test]
+    fn test_disk_scan_config_clamp_out_of_range() {
+        // 手改配置文件恶意/越界值 → clamp 到合法范围
+        let cfg: PonyConfig =
+            serde_json::from_str(r#"{"disk_scan": {"min_bytes_mb": 0, "dir_depth": 0}}"#).unwrap();
+        assert_eq!(cfg.disk_scan_params(), (50, 1));
+        let cfg: PonyConfig =
+            serde_json::from_str(r#"{"disk_scan": {"min_bytes_mb": 99999999, "dir_depth": 999}}"#)
+                .unwrap();
+        assert_eq!(cfg.disk_scan_params(), (10_000, 5));
+        // 边界值：合法下限/上限两侧
+        let cfg: PonyConfig =
+            serde_json::from_str(r#"{"disk_scan": {"min_bytes_mb": 49, "dir_depth": 0}}"#).unwrap();
+        assert_eq!(cfg.disk_scan_params(), (50, 1));
+        let cfg: PonyConfig =
+            serde_json::from_str(r#"{"disk_scan": {"min_bytes_mb": 50, "dir_depth": 1}}"#).unwrap();
+        assert_eq!(cfg.disk_scan_params(), (50, 1));
+        let cfg: PonyConfig =
+            serde_json::from_str(r#"{"disk_scan": {"min_bytes_mb": 10000, "dir_depth": 5}}"#)
+                .unwrap();
+        assert_eq!(cfg.disk_scan_params(), (10_000, 5));
+        let cfg: PonyConfig =
+            serde_json::from_str(r#"{"disk_scan": {"min_bytes_mb": 10001, "dir_depth": 6}}"#)
+                .unwrap();
+        assert_eq!(cfg.disk_scan_params(), (10_000, 5));
+    }
+
+    #[test]
+    fn test_disk_scan_config_roundtrip() {
+        let cfg = PonyConfig {
+            disk_scan: Some(DiskScanConfig {
+                min_bytes_mb: Some(500),
+                dir_depth: Some(4),
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: PonyConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.disk_scan_params(), (500, 4));
+    }
+
+    // ===== TASK-028: 自定义 target 文件可删除 =====
+    #[test]
+    fn test_delete_custom_target_file_succeeds() {
+        // 临时目录作为自定义 target，其下文件应能被删除
+        // （修复：删除校验目标集此前只用内置 get_clean_targets，自定义路径被拒）
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("custom_file.bin");
+        std::fs::write(&f, vec![0u8; 2048]).unwrap();
+
+        let mut config = PonyConfig::default();
+        config.custom_targets.push(CustomTarget {
+            id: "my_custom".into(),
+            path: dir.path().to_string_lossy().to_string(),
+            level: SafetyLevel::Safe,
+            category: Category::Temp,
+            description: "测试自定义目标".into(),
+            enabled: true,
+        });
+        let filtered = get_filtered_targets(&config);
+        assert!(
+            filtered.iter().any(|t| t.id == "my_custom"),
+            "custom target should be in filtered targets"
+        );
+        assert!(
+            is_path_allowed(&f, &filtered),
+            "custom target file should pass scope check"
+        );
+
+        let result = delete_files_with_targets(&[f.clone()], &filtered, None);
+        assert_eq!(
+            result.success, 1,
+            "custom target file should be deleted: {:?}",
+            result.errors
+        );
+        assert!(!f.exists());
+    }
+
+    #[test]
+    fn test_delete_custom_target_file_rejects_outside_path() {
+        // 自定义 target 之外的文件仍被拒绝（安全边界不回退）。
+        // 注意：tempfile 目录位于 %LOCALAPPDATA%\Temp，属于内置 local_temp 目标，
+        // 因此用"仅含自定义目标"的目标集验证自定义目标的边界拒绝逻辑。
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let f = outside.path().join("outside.bin");
+        std::fs::write(&f, vec![0u8; 2048]).unwrap();
+
+        let custom_only = vec![ScanTarget::new(
+            "my_custom".into(),
+            &dir.path().to_string_lossy(),
+            SafetyLevel::Safe,
+            Category::Temp,
+            "".into(),
+        )];
+        assert!(!is_path_allowed(&f, &custom_only));
+        let result = delete_files_with_targets(&[f.clone()], &custom_only, None);
+        assert_eq!(result.failed, 1);
+        assert!(f.exists(), "file outside custom target must not be deleted");
     }
 
     #[test]
