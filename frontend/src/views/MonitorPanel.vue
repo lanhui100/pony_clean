@@ -199,34 +199,42 @@ onUnmounted(() => {
 
 <template>
   <div class="relative flex h-full flex-col gap-2 pt-2.5">
-    <!-- CPU + MEM 大数字 -->
-    <div class="flex items-center justify-center gap-10">
+    <!-- 正三角统计：PIDs 在上，CPU + MEM 在下 -->
+    <div class="flex flex-col items-center gap-1.5">
+      <!-- PIDs -->
       <div class="flex flex-col items-center">
-        <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">CPU</span>
-        <span class="text-xl font-bold tabular-nums leading-none" :class="cpuTextColor(summary?.cpu_total ?? 0)">
-          {{ summary ? summary.cpu_total.toFixed(1) : '—' }}<span class="text-xs" :class="cpuTextColor(summary?.cpu_total ?? 0)">%</span>
+        <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">PIDs</span>
+        <span class="text-xl font-bold tabular-nums leading-none text-foreground/90">
+          {{ summary?.process_count ?? 0 }}
         </span>
       </div>
-      <div class="flex flex-col items-center">
-        <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">MEM</span>
-        <span class="text-xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
-          {{ memPct ? memPct.toFixed(1) : '—' }}<span class="text-xs" :class="memTextColor(memPct)">%</span>
-        </span>
+      <!-- CPU + MEM -->
+      <div class="flex items-center justify-center gap-10">
+        <div class="flex flex-col items-center">
+          <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">CPU</span>
+          <span class="text-xl font-bold tabular-nums leading-none" :class="cpuTextColor(summary?.cpu_total ?? 0)">
+            {{ summary ? summary.cpu_total.toFixed(1) : '—' }}<span class="text-xs" :class="cpuTextColor(summary?.cpu_total ?? 0)">%</span>
+          </span>
+        </div>
+        <div class="flex flex-col items-center">
+          <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">MEM</span>
+          <span class="text-xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
+            {{ memPct ? memPct.toFixed(1) : '—' }}<span class="text-xs" :class="memTextColor(memPct)">%</span>
+          </span>
+        </div>
       </div>
     </div>
 
-    <!-- Trim memory 按钮 -->
-    <div class="flex justify-center">
-      <button
-        class="inline-flex items-center justify-center gap-1.5 rounded-md px-5 py-1.5 text-xs font-medium bg-primary/10 text-primary/80 hover:bg-primary/20 hover:text-primary hover:shadow-sm transition-all disabled:opacity-50"
-        :disabled="trimming"
-        @click="handleTrim"
-      >
-        <Loader2 v-if="trimming" class="h-3.5 w-3.5 animate-spin" />
-        <Droplets v-else class="h-3.5 w-3.5" />
-        {{ trimming ? '整理中...' : '内存整理' }}
-      </button>
-    </div>
+    <!-- Trim memory 按钮（右上角，仅图标） -->
+    <button
+      class="absolute right-0 top-2.5 flex h-7 w-7 items-center justify-center rounded-md text-primary/70 transition-colors hover:bg-primary/15 hover:text-primary disabled:opacity-50"
+      :disabled="trimming"
+      :title="trimming ? '整理中...' : '内存整理'"
+      @click="handleTrim"
+    >
+      <Loader2 v-if="trimming" class="h-4 w-4 animate-spin" />
+      <Droplets v-else class="h-4 w-4" />
+    </button>
 
     <!-- Trim feedback toast -->
     <Transition name="kill-fade">
@@ -295,10 +303,10 @@ onUnmounted(() => {
         <button class="flex-[8] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
           TOP {{ filtered.length }} {{ sortIcon('name') }}
         </button>
-        <button class="flex-[3] text-right hover:text-foreground transition-colors" @click="toggleSort('cpu')">
+        <button class="flex-[3] text-left hover:text-foreground transition-colors" @click="toggleSort('cpu')">
           CPU {{ sortIcon('cpu') }}
         </button>
-        <button class="flex-[4] text-right whitespace-nowrap hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
+        <button class="flex-[4] text-left whitespace-nowrap hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
           内存 {{ summary ? (summary.mem_total_mb / 1024).toFixed(1) : '—' }}G {{ sortIcon('mem_mb') }}
         </button>
         <div class="w-5" />
@@ -321,10 +329,10 @@ onUnmounted(() => {
               />
               <span class="truncate text-foreground/90" :title="p.name">{{ p.name }}</span>
             </span>
-            <span :class="['flex-[3] text-right tabular-nums whitespace-nowrap', cpuTextColor(p.cpu)]">
+            <span :class="['flex-[3] text-left tabular-nums whitespace-nowrap', cpuTextColor(p.cpu)]">
               {{ Math.min(p.cpu, 999).toFixed(1) }}%
             </span>
-            <span :class="['flex-[4] text-right tabular-nums whitespace-nowrap', memTextColor(p.mem_pct)]">
+            <span :class="['flex-[4] text-left tabular-nums whitespace-nowrap', memTextColor(p.mem_pct)]">
               {{ fmMem(p.mem_mb) }} <span class="text-[11px] text-muted-foreground">{{ fmPct(p.mem_pct) }}</span>
             </span>
             <div v-if="!killingPids[p.pid]" class="flex w-5 shrink-0 items-center justify-center">

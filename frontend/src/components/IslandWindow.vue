@@ -5,12 +5,10 @@ import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { motion } from 'motion-v'
 import TitleBar from '@/components/TitleBar.vue'
-import IslandSummary from '@/components/IslandSummary.vue'
 import MonitorPanel from '@/views/MonitorPanel.vue'
 import SpacePanel from '@/views/SpacePanel.vue'
 import StartupPanel from '@/views/StartupPanel.vue'
 import SettingsPanel from '@/views/SettingsPanel.vue'
-import { useMonitor } from '@/composables/useMonitor'
 
 const activeTab = ref('monitor')
 const searchQuery = ref('')
@@ -20,8 +18,6 @@ const islandWindow = getCurrentWindow()
 let unlistenEnter: UnlistenFn | null = null
 let unlistenLeave: UnlistenFn | null = null
 let shrinkFallback: ReturnType<typeof setTimeout> | null = null
-
-const { cpuPercent, memPercent, summary } = useMonitor()
 
 // 胶囊仅贴顶边：island 始终从上方滑入
 const islandInitial = computed(() => ({ x: 0, y: -120, opacity: 0 }))
@@ -176,13 +172,6 @@ onUnmounted(() => {
             v-model:searchQuery="searchQuery"
           />
           <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div v-if="activeTab === 'monitor'" class="px-4 pt-3">
-              <IslandSummary
-                :cpu-percent="cpuPercent"
-                :mem-percent="memPercent"
-                :process-count="summary?.process_count ?? 0"
-              />
-            </div>
             <main class="flex-1 overflow-hidden px-4 pb-4 pt-2">
               <MonitorPanel v-if="activeTab === 'monitor'" :search="searchQuery" />
               <SpacePanel
