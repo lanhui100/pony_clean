@@ -16,6 +16,8 @@ pub struct ProcessInfo {
     pub cpu: f32,
     pub mem_mb: f64,
     pub status: String,
+    /// 可执行文件路径（用于提取图标），可能为 None（系统进程等）
+    pub exe_path: Option<String>,
 }
 
 /// 系统级聚合指标
@@ -176,6 +178,7 @@ pub fn start(
                     }) / num_cpus,
                     mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
                     status: format!("{:?}", process.status()),
+                    exe_path: process.exe().map(|p| p.to_string_lossy().to_string()),
                 });
             }
 
@@ -272,6 +275,7 @@ pub fn start_shared(
                     }) / num_cpus,
                     mem_mb: process.memory() as f64 / (1024.0 * 1024.0),
                     status: format!("{:?}", process.status()),
+                    exe_path: process.exe().map(|p| p.to_string_lossy().to_string()),
                 });
             }
             sort_processes(&mut processes);
@@ -326,6 +330,7 @@ mod tests {
                 cpu: 50.0,
                 mem_mb: 150.0,
                 status: "Running".into(),
+                exe_path: None,
             },
             ProcessInfo {
                 pid: 1,
@@ -333,6 +338,7 @@ mod tests {
                 cpu: 10.0,
                 mem_mb: 100.0,
                 status: "Running".into(),
+                exe_path: None,
             },
             ProcessInfo {
                 pid: 2,
@@ -340,6 +346,7 @@ mod tests {
                 cpu: 90.0,
                 mem_mb: 200.0,
                 status: "Running".into(),
+                exe_path: None,
             },
         ];
         sort_processes(&mut processes);
@@ -357,6 +364,7 @@ mod tests {
                 cpu: 50.0,
                 mem_mb: 100.0,
                 status: "Running".into(),
+                exe_path: None,
             },
             ProcessInfo {
                 pid: 1,
@@ -364,6 +372,7 @@ mod tests {
                 cpu: 50.0,
                 mem_mb: 100.0,
                 status: "Running".into(),
+                exe_path: None,
             },
         ];
         sort_processes(&mut processes);
@@ -379,6 +388,7 @@ mod tests {
             cpu: 45.5,
             mem_mb: 256.0,
             status: "Running".into(),
+            exe_path: None,
         };
         let s = p.to_string();
         assert!(s.contains("1234"));

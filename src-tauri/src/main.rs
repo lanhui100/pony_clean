@@ -190,6 +190,7 @@ fn main() {
             commands::monitor::get_processes,
             commands::monitor::kill_process,
             commands::monitor::trim_memory,
+            commands::monitor::get_process_icon,
             commands::cleaner::start_scan,
             commands::cleaner::cancel_scan,
             commands::cleaner::execute_clean,

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
-import { X, Cpu, MemoryStick, Zap, Loader2 } from 'lucide-vue-next'
+import { ref, computed, watch, onUnmounted } from 'vue'
+import { X, Droplets, Loader2 } from 'lucide-vue-next'
 import { useMonitor, type ProcessInfo } from '../composables/useMonitor'
 
-const { processes, summary, loading, error, killProcess, trimMemory } = useMonitor()
+const { processes, summary, loading, error, killProcess, trimMemory, getProcessIcon } = useMonitor()
 
 const props = defineProps<{
   search: string
@@ -11,6 +11,22 @@ const props = defineProps<{
 
 const sortKey = ref<'name' | 'cpu' | 'mem_mb' | 'mem_pct'>('cpu')
 const sortDir = ref<'asc' | 'desc'>('desc')
+
+// 图标缓存：exe_path → base64 data URL
+const iconCache = ref<Record<string, string>>({})
+const loadingIcons = ref<Record<string, boolean>>({})
+
+async function loadIcon(exePath: string | null) {
+  if (!exePath) return
+  if (iconCache.value[exePath]) return
+  if (loadingIcons.value[exePath]) return
+  loadingIcons.value = { ...loadingIcons.value, [exePath]: true }
+  const dataUrl = await getProcessIcon(exePath)
+  if (dataUrl) {
+    iconCache.value = { ...iconCache.value, [exePath]: dataUrl }
+  }
+  loadingIcons.value = { ...loadingIcons.value, [exePath]: false }
+}
 const killMsg = ref('')
 let killTimer: ReturnType<typeof setTimeout> | null = null
 const confirmPid = ref<number | null>(null)
@@ -47,8 +63,10 @@ const filtered = computed(() => {
     mem_pct: total > 0 ? (p.mem_mb / total) * 100 : 0,
   }))
   if (!props.search.trim()) {
-    list = list.filter(p => p.cpu > 10 || p.mem_mb > 200)
+    // 无搜索时：取 CPU 最高前 20 个（进程已按 CPU 降序排列）
+    list = list.slice(0, 20)
   } else {
+    // 有搜索时：搜索全部进程
     const q = props.search.toLowerCase()
     list = list.filter(p => p.name.toLowerCase().includes(q))
   }
@@ -62,6 +80,13 @@ const filtered = computed(() => {
     return 0
   })
 })
+
+// 为当前显示的进程异步加载图标
+watch(filtered, (list) => {
+  for (const p of list) {
+    loadIcon(p.exe_path)
+  }
+}, { immediate: true })
 
 const memPct = computed(() => {
   const s = summary.value
@@ -173,66 +198,41 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="relative flex h-full flex-col gap-3">
-    <!-- Summary bar -->
-    <div class="flex items-center justify-center gap-6">
-            <!-- CPU -->
-      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-2.5">
-        <Cpu class="h-5 w-5 shrink-0 text-muted-foreground" />
-        <div class="flex flex-col items-center">
-          <div class="flex items-baseline gap-0.5">
-            <span class="text-xl font-bold tabular-nums leading-none" :class="cpuTextColor(summary?.cpu_total ?? 0)">
-              {{ summary ? summary.cpu_total.toFixed(1) : '—' }}
-            </span>
-            <span class="text-xs tabular-nums" :class="cpuTextColor(summary?.cpu_total ?? 0)">%</span>
-          </div>
-          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/15">
-            <span
-              class="block h-full rounded-full transition-all"
-              :class="cpuColor(summary?.cpu_total ?? 0)"
-              :style="{ width: Math.min(summary?.cpu_total ?? 0, 100) + '%' }"
-            />
-          </div>
-        </div>
+  <div class="relative flex h-full flex-col gap-2 pt-2.5">
+    <!-- CPU + MEM 大数字 -->
+    <div class="flex items-center justify-center gap-10">
+      <div class="flex flex-col items-center">
+        <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">CPU</span>
+        <span class="text-xl font-bold tabular-nums leading-none" :class="cpuTextColor(summary?.cpu_total ?? 0)">
+          {{ summary ? summary.cpu_total.toFixed(1) : '—' }}<span class="text-xs" :class="cpuTextColor(summary?.cpu_total ?? 0)">%</span>
+        </span>
       </div>
-
-            <!-- Memory -->
-      <div class="flex flex-1 min-w-0 items-center justify-center gap-4 rounded-xl px-5 py-2.5">
-        <MemoryStick class="h-5 w-5 shrink-0 text-muted-foreground" />
-        <div class="flex flex-col items-center">
-          <div class="flex items-baseline gap-0.5">
-            <span class="text-xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
-              {{ memPct ? memPct.toFixed(1) : '—' }}
-            </span>
-            <span class="text-xs tabular-nums" :class="memTextColor(memPct)">%</span>
-          </div>
-          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/15">
-            <span
-              class="block h-full rounded-full transition-all"
-              :class="memColor(memPct)"
-              :style="{ width: memPct + '%' }"
-            />
-          </div>
-        </div>
+      <div class="flex flex-col items-center">
+        <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">MEM</span>
+        <span class="text-xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
+          {{ memPct ? memPct.toFixed(1) : '—' }}<span class="text-xs" :class="memTextColor(memPct)">%</span>
+        </span>
       </div>
+    </div>
 
-      <!-- Trim memory -->
+    <!-- Trim memory 按钮 -->
+    <div class="flex justify-center">
       <button
-        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-all hover:bg-primary/15 hover:text-primary disabled:opacity-50"
+        class="inline-flex items-center justify-center gap-1.5 rounded-md px-5 py-1.5 text-xs font-medium bg-primary/10 text-primary/80 hover:bg-primary/20 hover:text-primary hover:shadow-sm transition-all disabled:opacity-50"
         :disabled="trimming"
-        :title="trimming ? '内存整理中...' : '释放内存'"
         @click="handleTrim"
       >
-        <Loader2 v-if="trimming" class="h-4 w-4 animate-spin" />
-        <Zap v-else class="h-4 w-4" />
+        <Loader2 v-if="trimming" class="h-3.5 w-3.5 animate-spin" />
+        <Droplets v-else class="h-3.5 w-3.5" />
+        {{ trimming ? '整理中...' : '内存整理' }}
       </button>
     </div>
 
-    <!-- Trim feedback toast — below summary bar -->
+    <!-- Trim feedback toast -->
     <Transition name="kill-fade">
       <div
         v-if="trimMsg"
-        class="absolute left-1/2 top-14 z-10 -translate-x-1/2 rounded px-2.5 py-1.5 text-xs font-medium"
+        class="absolute left-1/2 top-1/3 z-10 -translate-x-1/2 rounded px-2.5 py-1.5 text-xs font-medium"
         :class="trimMsg.startsWith('✓') ? 'bg-success/30 text-success' : 'bg-destructive/30 text-destructive'"
       >
         {{ trimMsg }}
@@ -251,7 +251,7 @@ onUnmounted(() => {
     </Transition>
 
     <!-- Loading skeleton -->
-    <div v-if="loading" class="flex flex-col gap-0.5">
+    <div v-if="loading" class="flex flex-1 flex-col gap-0.5">
       <div v-for="i in 8" :key="i" class="flex h-6 items-center gap-3 rounded px-2">
         <div class="h-2.5 w-32 rounded-sm bg-white/15 animate-pulse" />
         <div class="h-2.5 w-12 rounded-sm bg-white/15 animate-pulse" />
@@ -263,42 +263,42 @@ onUnmounted(() => {
     <!-- Error state -->
     <div
       v-else-if="error"
-      class="rounded bg-destructive/10 px-3 py-2 text-xs text-destructive"
+      class="flex flex-1 items-center justify-center rounded bg-destructive/10 px-3 py-2 text-xs text-destructive"
     >
       {{ error }}
     </div>
 
     <!-- Empty states -->
     <div
-      v-else-if="!loading && !error && processes.length === 0 && !search"
+      v-else-if="processes.length === 0 && !search"
       class="flex flex-1 items-center justify-center text-xs text-muted-foreground"
     >
       暂无进程数据
     </div>
     <div
-      v-else-if="!loading && !error && !search && filtered.length === 0"
+      v-else-if="!search && filtered.length === 0"
       class="flex flex-1 items-center justify-center text-xs text-muted-foreground"
     >
       所有进程运行正常
     </div>
     <div
-      v-else-if="!loading && !error && filtered.length === 0"
+      v-else-if="filtered.length === 0"
       class="flex flex-1 items-center justify-center text-xs text-muted-foreground"
     >
       {{ processes.length === 0 ? '暂无进程数据' : '没有匹配的进程' }}
     </div>
 
     <!-- Process list -->
-    <div v-else class="flex flex-1 flex-col -mx-1 px-1">
+    <div v-else class="flex flex-1 flex-col -mx-1 px-1 min-h-0">
       <!-- Header -->
       <div class="flex shrink-0 items-center gap-2 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground">
-        <button class="flex-[6] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
-          进程 TOP {{ filtered.length }} {{ sortIcon('name') }}
+        <button class="flex-[8] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
+          TOP {{ filtered.length }} {{ sortIcon('name') }}
         </button>
-        <button class="flex-[4] text-left hover:text-foreground transition-colors" @click="toggleSort('cpu')">
+        <button class="flex-[3] text-right hover:text-foreground transition-colors" @click="toggleSort('cpu')">
           CPU {{ sortIcon('cpu') }}
         </button>
-        <button class="flex-[5] text-center hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
+        <button class="flex-[4] text-right whitespace-nowrap hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
           内存 {{ summary ? (summary.mem_total_mb / 1024).toFixed(1) : '—' }}G {{ sortIcon('mem_mb') }}
         </button>
         <div class="w-5" />
@@ -312,18 +312,19 @@ onUnmounted(() => {
             :key="p.pid"
             class="group flex items-center gap-2 rounded px-2 py-1 text-xs transition-colors hover:bg-muted/20"
           >
-            <span class="flex-[6] truncate text-foreground/90" :title="p.name">{{ p.name }}</span>
-            <span class="flex flex-[4] items-center justify-start gap-1.5 tabular-nums">
-              <span class="h-1 w-8 overflow-hidden rounded-full bg-white/15">
-                <span
-                  class="block h-full rounded-full transition-all"
-                  :class="cpuColor(p.cpu)"
-                  :style="{ width: Math.min(p.cpu, 100) + '%' }"
-                />
-              </span>
-              <span :class="['text-[11px]', cpuTextColor(p.cpu)]">{{ Math.min(p.cpu, 999).toFixed(1) }}%</span>
+            <span class="flex-[8] flex items-center gap-1.5 truncate">
+              <img
+                v-if="p.exe_path && iconCache[p.exe_path]"
+                :src="iconCache[p.exe_path]"
+                class="h-4 w-4 shrink-0 rounded"
+                alt=""
+              />
+              <span class="truncate text-foreground/90" :title="p.name">{{ p.name }}</span>
             </span>
-            <span :class="['flex-[5] text-center tabular-nums whitespace-nowrap', memTextColor(p.mem_pct)]">
+            <span :class="['flex-[3] text-right tabular-nums whitespace-nowrap', cpuTextColor(p.cpu)]">
+              {{ Math.min(p.cpu, 999).toFixed(1) }}%
+            </span>
+            <span :class="['flex-[4] text-right tabular-nums whitespace-nowrap', memTextColor(p.mem_pct)]">
               {{ fmMem(p.mem_mb) }} <span class="text-[11px] text-muted-foreground">{{ fmPct(p.mem_pct) }}</span>
             </span>
             <div v-if="!killingPids[p.pid]" class="flex w-5 shrink-0 items-center justify-center">

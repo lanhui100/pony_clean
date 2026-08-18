@@ -24,6 +24,7 @@ export interface ProcessInfo {
   cpu: number
   mem_mb: number
   status: string
+  exe_path: string | null
 }
 
 export interface TrimResult {
@@ -153,6 +154,15 @@ export function useMonitor() {
     return invoke<TrimResult>('trim_memory')
   }
 
+  /** 从 exe 路径提取图标，返回 base64 data URL */
+  async function getProcessIcon(exePath: string): Promise<string | null> {
+    try {
+      return (await invoke<string | null>('get_process_icon', { exePath })) ?? null
+    } catch {
+      return null
+    }
+  }
+
   /** 更新告警阈值（设置面板保存后调用） */
   function setAlertThresholds(cpuPct: number, memPct: number) {
     alertCpuPct = cpuPct
@@ -194,6 +204,7 @@ export function useMonitor() {
     diskTotalGb,
     killProcess,
     trimMemory,
+    getProcessIcon,
     setAlertThresholds,
     fetch,
     setPollInterval,

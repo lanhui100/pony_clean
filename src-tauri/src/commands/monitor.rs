@@ -3,6 +3,21 @@ use std::sync::{Arc, RwLock, mpsc};
 use std::thread;
 use tauri::State;
 
+/// 提取进程 exe 的图标，返回 PNG base64 data URL。
+/// 非 Windows 平台或提取失败返回 `None`。
+#[tauri::command]
+pub fn get_process_icon(exe_path: String) -> Option<String> {
+    #[cfg(windows)]
+    {
+        pony_core::icon::extract_exe_icon_png(&exe_path)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = exe_path;
+        None
+    }
+}
+
 pub struct MonitorState {
     pub snapshot: Arc<RwLock<Option<Snapshot>>>,
     pub cmd_tx: Option<mpsc::Sender<monitor::MonitorCommand>>,
