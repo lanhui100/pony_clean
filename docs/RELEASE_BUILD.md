@@ -2,7 +2,8 @@
 
 > 调研日期：2026-08-19
 > 状态：已实施方案 A（官方构建机交叉编译 NSIS `.exe`）并**验证通过**（2026-08-19）
-> 首个产物：`PonyClean_0.1.0_x64-setup.exe`（1.9 MB），见 [v0.1.0 Release](https://cnb.cool/lanhui100/pony_clean/-/releases/tag/v0.1.0)
+> 双架构验证通过（2026-08-19）：x64 + ARM64 双安装包已上线
+> 产物：`PonyClean_0.1.0_x64-setup.exe`（1.93 MB）+ `PonyClean_0.1.0_arm64-setup.exe`（1.74 MB），见 [v0.1.0 Release](https://cnb.cool/lanhui100/pony_clean/-/releases/tag/v0.1.0)
 
 ## 1. 背景
 

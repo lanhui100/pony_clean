@@ -8,6 +8,7 @@
 
 - Added: 版本管理体系建设 — bump/check 脚本（`scripts/bump-version.mjs` / `scripts/check-version.mjs`）、CHANGELOG、CI 版本一致性校验、docs/VERSIONING.md
 - Added: CNB 流水线交叉编译 Windows 安装包（NSIS `.exe`，推 tag 自动构建发布）+ docs/RELEASE_BUILD.md 方案文档
+- Added: 双架构构建 — x64 + ARM64（Windows on ARM）安装包一并产出并上传 Release 附件
 
 ## [0.1.0] - 2026-08-15
 
