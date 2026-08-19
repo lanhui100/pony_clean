@@ -74,7 +74,9 @@ $:
             export CC_aarch64_pc_windows_msvc="clang"
             export CXX_aarch64_pc_windows_msvc="clang++"
             export XWIN_DIR="/root/.cache/cargo-xwin/xwin"
-            export CFLAGS_aarch64_pc_windows_msvc="--target=aarch64-pc-windows-msvc -isystem $XWIN_DIR/crt/include -isystem $XWIN_DIR/sdk/include/ucrt -isystem $XWIN_DIR/sdk/include/um -isystem $XWIN_DIR/sdk/include/shared -isystem $XWIN_DIR/sdk/include/winrt"
+            # 注意：CNB script 环境中 $XWIN_DIR 在 RUSTFLAGS 变量里未展开（实测字面保留），
+            # 因此 CFLAGS / RUSTFLAGS 全部使用写死的完整路径
+            export CFLAGS_aarch64_pc_windows_msvc="--target=aarch64-pc-windows-msvc -isystem /root/.cache/cargo-xwin/xwin/crt/include -isystem /root/.cache/cargo-xwin/xwin/sdk/include/ucrt -isystem /root/.cache/cargo-xwin/xwin/sdk/include/um -isystem /root/.cache/cargo-xwin/xwin/sdk/include/shared -isystem /root/.cache/cargo-xwin/xwin/sdk/include/winrt"
             # llvm 包带版本后缀（llvm-lib-19 等），cc-rs 找 lib.exe / llvm-lib：
             # 动态探测 llvm-lib 命令名，建符号链接满足 lib.exe 期望，并用其作为 AR
             LLVM_LIB="$(command -v llvm-lib-19 || command -v llvm-lib || command -v llvm-lib-18 || echo llvm-lib)"
@@ -83,7 +85,7 @@ $:
             # 链接器 + 库搜索路径（参照 cargo-xwin 的 clang_cl.rs 逻辑）：
             #   -Lnative 注入 target 专属 RUSTFLAGS；SDK 库路径为 crt/lib、sdk/lib/um、sdk/lib/ucrt
             export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER="lld-link"
-            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=$XWIN_DIR/crt/lib/arm64 -Lnative=$XWIN_DIR/sdk/lib/um/arm64 -Lnative=$XWIN_DIR/sdk/lib/ucrt/arm64 -C linker-flavor=lld-link"
+            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=/root/.cache/cargo-xwin/xwin/crt/lib/arm64 -Lnative=/root/.cache/cargo-xwin/xwin/sdk/lib/um/arm64 -Lnative=/root/.cache/cargo-xwin/xwin/sdk/lib/ucrt/arm64 -C linker-flavor=lld-link"
             # 注意：不要设置全局 RUSTFLAGS（cargo 优先全局而忽略 target 专属 flag，导致链接找不到系统库）
             npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
             unset CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER AR_aarch64_pc_windows_msvc CC_aarch64_pc_windows_msvc CXX_aarch64_pc_windows_msvc CFLAGS_aarch64_pc_windows_msvc
