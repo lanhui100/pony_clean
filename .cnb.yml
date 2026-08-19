@@ -2,10 +2,15 @@
 #
 # 触发方式：推送 vX.Y.Z tag（配合 `node scripts/bump-version.mjs <ver> --commit --tag`）
 # 构建环境：CNB 官方 Linux 构建机（Docker 容器，node:20-bookworm）
-# 产物（双架构 NSIS）：
+# 产物（双架构 NSIS，含 updater 支持）：
 #   x86_64 : target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
+#             + 同目录 PonyClean_<ver>_x64-setup.nsis.zip / .sig（updater bundle）
 #   aarch64: target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_arm64-setup.exe
-# 上传为 Release 附件，用户可在 Release 页面直接下载安装
+#             + 同目录 .nsis.zip / .sig
+# 分发：所有产物上传 Release 附件；生成 updater/latest.json 提交到 main 分支
+#       （app 通过 git raw 固定 URL 检查更新，见 tauri.conf.json plugins.updater.endpoints）
+# 签名：tauri build 通过 TAURI_SIGNING_PRIVATE_KEY 环境变量自动签名，
+#       私钥存放于 CNB 密钥仓库 lanhui100/pony_clean-secrets（imports 注入，禁止进入本仓库）
 # 限制：仅产出 NSIS .exe；.msi 需要 Windows 构建环境
 # 升级：正式发版或交叉编译报错时，切换到 Windows 自托管构建机（方案 B）
 #       详见 docs/RELEASE_BUILD.md
@@ -22,6 +27,9 @@ $:
       # 工具链每次重新安装（约 3-5 分钟），换取稳定性；未来可改为 docker.build 预装镜像。
       docker:
         image: node:20-bookworm
+      imports:
+        # CNB 密钥仓库：Tauri updater 签名私钥（TAURI_SIGNING_PRIVATE_KEY）
+        - https://cnb.cool/lanhui100/pony_clean-secrets/-/blob/main/updater.yml
       stages:
         - name: 安装交叉编译工具链
           timeout: 20m
@@ -47,11 +55,14 @@ $:
           script: |
             export CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup
             export PATH="$CARGO_HOME/bin:$PATH"
+            # updater 签名：私钥由密钥仓库 imports 注入（updater.yml 的 TAURI_SIGNING_PRIVATE_KEY）
+            export TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"
             npm ci --prefix frontend
             npm run build
             # 注意：必须保持 CWD 在仓库根目录（tauri CLI 需在子目录中找到 src-tauri/tauri.conf.json），
             # 通过 npx --prefix frontend 使用 frontend 下安装的 @tauri-apps/cli
             # 双架构交叉编译：x86_64（x64）+ aarch64（ARM64，Windows on ARM 设备）
+            # createUpdaterArtifacts: true 会自动生成 .nsis.zip + .sig（签名）
             npx --prefix frontend tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
             npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-windows-msvc
 
@@ -60,12 +71,48 @@ $:
           options:
             tag: $CNB_BRANCH
 
-        - name: 上传安装包到 Release 附件
+        - name: 上传安装包与更新包到 Release 附件
           image: cnbcool/attachments:latest
           settings:
             # 产物在 workspace 共享 target（仓库根 target/），不在 src-tauri/target/
-            # glob 匹配双架构（x64 + arm64）：
-            #   target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
-            #   target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_arm64-setup.exe
+            # glob 匹配双架构的全部产物：
+            #   setup.exe（安装器）+ setup.nsis.zip + .sig（updater bundle）
+            #   target/<arch>-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_<arch>-setup.*
             attachments:
               - "./target/**/bundle/nsis/*-setup.exe"
+              - "./target/**/bundle/nsis/*.sig"
+
+        - name: 生成并提交更新清单 latest.json
+          script: |
+            set -e
+            VERSION="${CNB_BRANCH#v}"
+            BASE="https://cnb.cool/lanhui100/pony_clean/-/releases/download/$CNB_BRANCH"
+            # 读取各架构 .sig 签名内容（base64，单行）
+            SIG_X64=$(cat target/x86_64-pc-windows-msvc/release/bundle/nsis/*x64-setup.exe.sig 2>/dev/null | tr -d '\n' || true)
+            SIG_ARM=$(cat target/aarch64-pc-windows-msvc/release/bundle/nsis/*arm64-setup.exe.sig 2>/dev/null | tr -d '\n' || true)
+            PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            NOTES=$(git log -1 --format=%s "$CNB_BRANCH" 2>/dev/null || echo "PonyClean $VERSION")
+            mkdir -p updater
+            cat > updater/latest.json <<EOF
+            {
+              "version": "$VERSION",
+              "notes": "$NOTES",
+              "pub_date": "$PUB_DATE",
+              "platforms": {
+                "windows-x86_64": {
+                  "signature": "$SIG_X64",
+                  "url": "$BASE/PonyClean_${VERSION}_x64-setup.exe"
+                },
+                "windows-aarch64": {
+                  "signature": "$SIG_ARM",
+                  "url": "$BASE/PonyClean_${VERSION}_arm64-setup.exe"
+                }
+              }
+            }
+            EOF
+            # 提交并推送 latest.json 到 main（endpoint 固定为 git raw 路径）
+            git config user.email "cnb@cnb.cool"
+            git config user.name "cnb-release-bot"
+            git add updater/latest.json
+            git commit -m "docs: 更新 updater latest.json v$VERSION"
+            git push "https://cnb:${CNB_TOKEN}@cnb.cool/lanhui100/pony_clean.git" HEAD:main
