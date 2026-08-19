@@ -57,22 +57,29 @@ $:
             export PATH="$CARGO_HOME/bin:$PATH"
             # updater 签名：私钥由密钥仓库 imports 注入（updater.yml 的 TAURI_SIGNING_PRIVATE_KEY）
             export TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"
-            # 修复 ring 0.17 在 aarch64-pc-windows-msvc 交叉编译失败：
-            # 根因：cc-rs 生成的 CFLAGS 含 MSVC 风格 /imsvc 参数，GNU 模式的 clang 不识别
-            #       （把 /imsvc 当文件路径）；且 clang-cl 家族检测失败导致回退 GNU 模式。
-            # 解法：显式覆盖 CFLAGS_aarch64_pc_windows_msvc，把 /imsvc 换成 -imsvc（GNU 语法），
-            #       并强制 CC 为 clang（禁 clang-cl 检测歧义）。
-            export CC_aarch64_pc_windows_msvc="clang"
-            export CXX_aarch64_pc_windows_msvc="clang++"
-            export CFLAGS_aarch64_pc_windows_msvc="--target=aarch64-pc-windows-msvc -Wno-unused-command-line-argument -fuse-ld=lld-link -imsvc /root/.cache/cargo-xwin/xwin/crt/include -imsvc /root/.cache/cargo-xwin/xwin/sdk/include/ucrt -imsvc /root/.cache/cargo-xwin/xwin/sdk/include/um -imsvc /root/.cache/cargo-xwin/xwin/sdk/include/shared -imsvc /root/.cache/cargo-xwin/xwin/sdk/include/winrt"
             npm ci --prefix frontend
             npm run build
             # 注意：必须保持 CWD 在仓库根目录（tauri CLI 需在子目录中找到 src-tauri/tauri.conf.json），
             # 通过 npx --prefix frontend 使用 frontend 下安装的 @tauri-apps/cli
-            # 双架构交叉编译：x86_64（x64）+ aarch64（ARM64，Windows on ARM 设备）
-            # createUpdaterArtifacts: true 会自动生成 .nsis.zip + .sig（签名）
+            # ── 双架构交叉编译 ─────────────────────────────────────────────
+            # x86_64（x64）：用 cargo-xwin runner（已验证通过）
             npx --prefix frontend tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
-            npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-windows-msvc
+            # ── ARM64 手动交叉编译（绕开 cargo-xwin runner 的 env 覆盖）─────
+            # 根因：cargo-xwin runner 强制注入 CC=clang-cl + /imsvc 参数；
+            #       Linux 上 clang-cl 家族检测失败回退 GNU clang，GNU clang 又不识别 /imsvc。
+            # 解法：不用 runner，普通 cargo + 手动环境变量：
+            #   - CC/CXX 用 GNU clang（跳过 clang-cl 检测）
+            #   - CFLAGS 用 -isystem（GNU 语法，-imsvc 在 clang19 下不可用）
+            #   - linker 用 lld-link
+            export CC_aarch64_pc_windows_msvc="clang"
+            export CXX_aarch64_pc_windows_msvc="clang++"
+            export XWIN_DIR="/root/.cache/cargo-xwin/xwin"
+            export CFLAGS_aarch64_pc_windows_msvc="--target=aarch64-pc-windows-msvc -isystem $XWIN_DIR/crt/include -isystem $XWIN_DIR/sdk/include/ucrt -isystem $XWIN_DIR/sdk/include/um -isystem $XWIN_DIR/sdk/include/shared -isystem $XWIN_DIR/sdk/include/winrt"
+            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER="lld-link"
+            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=$XWIN_DIR/crt/lib/arm64 -Lnative=$XWIN_DIR/sdk/lib/arm64"
+            export RUSTFLAGS="-C link-arg=/LIBPATH:$XWIN_DIR/crt/lib/arm64 -C link-arg=/LIBPATH:$XWIN_DIR/sdk/lib/arm64"
+            npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
+            unset RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER CC_aarch64_pc_windows_msvc CXX_aarch64_pc_windows_msvc CFLAGS_aarch64_pc_windows_msvc
 
         - name: 创建 Release
           type: git:release
