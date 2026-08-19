@@ -99,15 +99,20 @@ const DRAG_IGNORE =
  * document 上监听 move/up（WebView2 隐式鼠标捕获保证移出窗口仍持续），
  * 位移经事件转发给 capsule（screenX 为逻辑 CSS px，capsule 端按 DPR 换算）。
  */
+/** 面板态拖动中光标状态（空白处按住 → 抓手） */
+const islandDragGrabbing = ref(false)
+
 function onIslandDragStart(e: MouseEvent) {
   if (e.button !== 0) return
   const t = e.target as HTMLElement | null
   if (!t || t.closest(DRAG_IGNORE)) return
+  islandDragGrabbing.value = true
   emitTo('capsule', 'island-drag-start', { screenX: e.screenX }).catch(() => {})
   const onMove = (ev: MouseEvent) => {
     emitTo('capsule', 'island-drag-move', { screenX: ev.screenX }).catch(() => {})
   }
   const onUp = () => {
+    islandDragGrabbing.value = false
     document.removeEventListener('mousemove', onMove)
     document.removeEventListener('mouseup', onUp)
     emitTo('capsule', 'island-drag-end').catch(() => {})
@@ -152,6 +157,7 @@ onUnmounted(() => {
 <template>
   <div
     class="island-root h-screen w-screen overflow-hidden select-none"
+    :class="islandDragGrabbing ? 'cursor-grabbing' : 'cursor-grab'"
     @mousedown="onIslandDragStart"
   >
     <motion.div
