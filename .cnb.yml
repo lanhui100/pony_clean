@@ -57,6 +57,11 @@ $:
             export PATH="$CARGO_HOME/bin:$PATH"
             # updater 签名：私钥由密钥仓库 imports 注入（updater.yml 的 TAURI_SIGNING_PRIVATE_KEY）
             export TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"
+            # 修复 ring 0.17 在 aarch64-pc-windows-msvc 交叉编译失败：
+            # cc-rs 传递 /imsvc 参数，GNU 模式的 clang 不识别（当作文件路径）；
+            # 用 --driver-mode=cl 让 clang 以 MSVC 模式解析 /imsvc。
+            export CC_aarch64_pc_windows_msvc="clang --driver-mode=cl"
+            export CXX_aarch64_pc_windows_msvc="clang++ --driver-mode=cl"
             npm ci --prefix frontend
             npm run build
             # 注意：必须保持 CWD 在仓库根目录（tauri CLI 需在子目录中找到 src-tauri/tauri.conf.json），
