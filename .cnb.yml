@@ -34,7 +34,9 @@ $:
               cargo install cargo-xwin --locked
             fi
             apt-get update
-            apt-get install -y nsis lld llvm
+            # clang 提供 clang-cl（cc-rs 编译 C 依赖必需，如 winreg/windows-sys 相关构建脚本）
+            # lld 提供 lld-link 链接器；llvm 提供 llvm-rc 编译 Windows 资源文件；nsis 用于打包
+            apt-get install -y nsis lld llvm clang
 
         - name: 构建前端并交叉编译安装包
           timeout: 60m
