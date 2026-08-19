@@ -9,6 +9,7 @@
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
 - Added: Windows NSIS 安装程序支持简体中文（安装界面语言选择器，默认随系统语言显示）
+- Added: 代码签名初期方案 — 自签名证书生成 + exe 签名脚本（`scripts/sign/`），解决 Issue #7 浏览器/SmartScreen 警告；README 增加下载安装指引（解除文件锁定）
 
 ## [0.1.1] - 2026-08-19
 
