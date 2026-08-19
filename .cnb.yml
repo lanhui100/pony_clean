@@ -81,19 +81,19 @@ $:
             ln -sf "$LLVM_LIB" /usr/local/bin/lib.exe
             export AR_aarch64_pc_windows_msvc="$(basename "$LLVM_LIB")"
             # ── 探测 xwin SDK 库真实路径（避免硬编码路径失效） ──
+            # 架构目录名为 aarch64（不是 arm64）；x64 构建先行，可能残留 x86_64 目录，
+            # 因此必须精确匹配 aarch64
             echo "=== xwin 目录探测 ==="
-            find /root/.cache/cargo-xwin -maxdepth 6 -name "kernel32.lib" 2>/dev/null | head -5
-            find /root/.cache/cargo-xwin -maxdepth 6 -type d -name "arm64" 2>/dev/null | head -10
+            K32_AARCH64="$(find /root/.cache/cargo-xwin -name "kernel32.lib" -path "*aarch64*" 2>/dev/null | head -1)"
+            echo "K32_AARCH64=$K32_AARCH64"
+            CRT_LIB="$(find /root/.cache/cargo-xwin -type d -path "*crt/lib/aarch64" 2>/dev/null | head -1)"
+            echo "CRT_LIB=$CRT_LIB"
+            UCRT_LIB="$(find /root/.cache/cargo-xwin -type d -path "*sdk/lib/ucrt/aarch64" 2>/dev/null | head -1)"
+            echo "UCRT_LIB=$UCRT_LIB"
             echo "=== 探测结束 ==="
             # 基于探测结果定位 SDK 库目录（um 系统库 / ucrt / crt）
-            K32="$(find /root/.cache/cargo-xwin -name "kernel32.lib" -path "*arm64*" 2>/dev/null | head -1)"
-            if [ -z "$K32" ]; then K32="$(find /root/.cache/cargo-xwin -name "kernel32.lib" 2>/dev/null | head -1)"; fi
-            SDK_UM_DIR="$(dirname "$K32")"
-            echo "kernel32.lib 位于: $SDK_UM_DIR"
-            SDK_ROOT="$(dirname "$(dirname "$SDK_UM_DIR")")"
-            CRT_LIB="$(find /root/.cache/cargo-xwin -type d -path "*crt/lib/arm64" 2>/dev/null | head -1)"
-            UCRT_LIB="$(find /root/.cache/cargo-xwin -type d -path "*sdk/lib/ucrt/arm64" 2>/dev/null | head -1)"
-            CFLAGS_EXTRA=""
+            SDK_UM_DIR="$(dirname "$K32_AARCH64")"
+            echo "SDK_UM_DIR=$SDK_UM_DIR"
             RUSTFLAGS_LN="-Lnative=$SDK_UM_DIR"
             [ -n "$CRT_LIB" ] && RUSTFLAGS_LN="$RUSTFLAGS_LN -Lnative=$CRT_LIB"
             [ -n "$UCRT_LIB" ] && RUSTFLAGS_LN="$RUSTFLAGS_LN -Lnative=$UCRT_LIB"
