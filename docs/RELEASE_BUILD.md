@@ -3,7 +3,8 @@
 > 调研日期：2026-08-19
 > 状态：已实施方案 A（官方构建机交叉编译 NSIS `.exe`）并**验证通过**（2026-08-19）
 > 双架构验证通过（2026-08-19）：x64 + ARM64 双安装包已上线
-> 产物：`PonyClean_0.1.0_x64-setup.exe`（1.93 MB）+ `PonyClean_0.1.0_arm64-setup.exe`（1.74 MB），见 [v0.1.0 Release](https://cnb.cool/lanhui100/pony_clean/-/releases/tag/v0.1.0)
+> 自动更新（tauri-plugin-updater）验证通过（2026-08-19）：v0.1.2 含签名 + latest.json 全链路
+> 最新产物：`PonyClean_0.1.2_x64-setup.exe` + `PonyClean_0.1.2_arm64-setup.exe`，见 [v0.1.2 Release](https://cnb.cool/lanhui100/pony_clean/-/releases/tag/v0.1.2)
 
 ## 1. 背景
 
@@ -61,7 +62,7 @@ Tauri 2 在 Windows 上打包产出两种安装包，均支持"直接下载安�
   - `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc`
   - `cargo install cargo-xwin`（Tauri 的交叉编译 runner，自动下载 Windows SDK）
   - `apt-get install nsis lld llvm clang libayatana-appindicator3-dev`（NSIS 打包 + lld 链接器 + llvm-rc 资源编译 + clang-cl + tray 检查）
-- 签名密钥：`imports` 从 CNB 密钥仓库注入 `TAURI_SIGNING_PRIVATE_KEY`（见 §8）
+- 签名密钥：`imports` 从 CNB 密钥仓库注入 `TAURI_SIGNING_PRIVATE_KEY`（见 §9.3）
 
 ### 5.2 构建命令（stage 2，双架构）
 
@@ -69,25 +70,34 @@ Tauri 2 在 Windows 上打包产出两种安装包，均支持"直接下载安�
 npm ci --prefix frontend      # 安装前端依赖
 npm run build                 # 产出 frontend/dist
 # 必须在仓库根目录执行（tauri CLI 需在子目录中找到 src-tauri/tauri.conf.json）
+
+# x64：用 cargo-xwin runner（已验证通过）
 npx --prefix frontend tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
-npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-windows-msvc
+
+# ARM64：手动交叉编译（绕开 cargo-xwin runner，详见 §5.4 坑 7）
+# 需先设置 CC/CXX/CFLAGS/AR 及 CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS 等环境变量
+npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
 ```
+
+> 完整的 ARM64 环境变量配置见 `.cnb.yml` 的「构建前端并交叉编译安装包」阶段（含 xwin SDK 库路径动态探测）。
 
 ### 5.3 产物与分发（双架构）
 
 - 产物路径（注意：因 workspace 共享 target（见 AGENTS.md），产物在仓库根 `target/`，**不是** `src-tauri/target/`）：
   - x64：`target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_x64-setup.exe`
   - ARM64：`target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_arm64-setup.exe`
-- updater 产物（因 `createUpdaterArtifacts: true`）：
-  - `..._x64-setup.nsis.zip` + `.sig`（x64 更新包 + 签名）
-  - `..._arm64-setup.nsis.zip` + `.sig`（ARM64 更新包 + 签名）
-  - 均上传 Release 附件；`setup.exe` 安装器本身也带 `.sig` 签名
+- updater 产物（因 `createUpdaterArtifacts: true`，**默认模式**）：
+  - updater 直接复用 `..._x64-setup.exe` + `..._x64-setup.exe.sig`（安装器 + 签名）
+  - `..._arm64-setup.exe` + `..._arm64-setup.exe.sig`（ARM64 同）
+  - 均上传 Release 附件；`latest.json` 的 `url` 指向 `setup.exe`、`signature` 取 `.exe.sig`
+  - 注：不生成 `.nsis.zip`（那是 `v1Compatible` 旧模式的产物，本项目未启用）
 - ARM64 说明：NSIS 安装器本体为 x86（在 ARM 机器上经模拟运行），应用二进制为原生 ARM64，用户安装体验无差异
 - 命名规则：Tauri bundler 固定为 `{productName}_{version}_{arch}-setup.exe`，架构短名 `x64`/`arm64`/`x86`；`x64` = `x86_64`，为 Windows 生态通行叫法，无需改成 `x86_64`
 - 分发链路：
   1. `git:release` 内置任务为当前 tag 创建 Release；
-  2. `cnbcool/attachments` 插件把 `.exe` 上传为 Release 附件（官方构建机有 Docker，可运行该插件）；
-  3. 用户在 CNB Release 页面直接下载安装。
+  2. `cnbcool/attachments` 插件把 `setup.exe` + `.sig` 上传为 Release 附件（官方构建机有 Docker，可运行该插件）；
+  3. 「生成并提交 latest.json」阶段把更新清单提交到 main（git raw 固定 URL），供 app 内自动更新检查；
+  4. 用户在 CNB Release 页面直接下载安装，或通过 app 内「软件更新」自动升级。
 
 ### 5.4 实施中踩过的坑（2026-08-19 测试）
 
@@ -167,9 +177,9 @@ osslsigncode 可在 **Linux 上对交叉编译的 Windows .exe 直接签名**，
 
 ### 9.1 更新链路
 
-1. **发版**：推送 tag → 流水线交叉编译双架构 → 自动签名（`TAURI_SIGNING_PRIVATE_KEY`）→ 上传 `setup.exe` + `.nsis.zip` + `.sig` 到 Release 附件
-2. **清单**：流水线生成 `updater/latest.json` 并提交到 main（固定 URL：`https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json`）
-3. **客户端**：app 启动/手动检查时请求该 URL → 对比版本 → 下载 `.nsis.zip` → 校验签名 → 安装重启
+1. **发版**：推送 tag → 流水线交叉编译双架构 → 自动签名（`TAURI_SIGNING_PRIVATE_KEY`）→ 上传 `setup.exe` + `.exe.sig` 到 Release 附件
+2. **清单**：流水线生成 `updater/latest.json` 并提交到 main（固定 URL：`https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json`），`url` 指向对应架构的 `setup.exe`
+3. **客户端**：app 启动/手动检查时请求该 URL → 对比版本 → 下载对应架构 `setup.exe` → 校验签名 → 被动安装（`installMode: passive`）→ 重启
 
 ### 9.2 配置
 

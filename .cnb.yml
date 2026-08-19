@@ -4,10 +4,12 @@
 # 构建环境：CNB 官方 Linux 构建机（Docker 容器，node:20-bookworm）
 # 产物（双架构 NSIS，含 updater 支持）：
 #   x86_64 : target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
-#             + 同目录 PonyClean_<ver>_x64-setup.nsis.zip / .sig（updater bundle）
+#             + 同目录 PonyClean_<ver>_x64-setup.exe.sig（updater 签名）
 #   aarch64: target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_arm64-setup.exe
-#             + 同目录 .nsis.zip / .sig
-# 分发：所有产物上传 Release 附件；生成 updater/latest.json 提交到 main 分支
+#             + 同目录 .exe.sig
+#   注：createUpdaterArtifacts: true（默认模式）下 updater 直接复用 setup.exe + .exe.sig，
+#       不生成 .nsis.zip（那是 v1Compatible 旧模式的产物）
+# 分发：上传 setup.exe + .sig 到 Release 附件；生成 updater/latest.json 提交到 main 分支
 #       （app 通过 git raw 固定 URL 检查更新，见 tauri.conf.json plugins.updater.endpoints）
 # 签名：tauri build 通过 TAURI_SIGNING_PRIVATE_KEY 环境变量自动签名，
 #       私钥存放于 CNB 密钥仓库 lanhui100/pony_clean-secrets（imports 注入，禁止进入本仓库）
@@ -114,9 +116,8 @@ $:
           image: cnbcool/attachments:latest
           settings:
             # 产物在 workspace 共享 target（仓库根 target/），不在 src-tauri/target/
-            # glob 匹配双架构的全部产物：
-            #   setup.exe（安装器）+ setup.nsis.zip + .sig（updater bundle）
-            #   target/<arch>-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_<arch>-setup.*
+            # glob 匹配双架构：setup.exe（安装器，updater 也直接复用）+ .exe.sig（updater 签名）
+            #   target/<arch>-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_<arch>-setup.exe
             attachments:
               - "./target/**/bundle/nsis/*-setup.exe"
               - "./target/**/bundle/nsis/*.sig"
