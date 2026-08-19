@@ -9,6 +9,7 @@ import MonitorPanel from '@/views/MonitorPanel.vue'
 import SpacePanel from '@/views/SpacePanel.vue'
 import StartupPanel from '@/views/StartupPanel.vue'
 import SettingsPanel from '@/views/SettingsPanel.vue'
+import { initUpdater, disposeUpdater } from '@/composables/useUpdater'
 
 const activeTab = ref('monitor')
 const searchQuery = ref('')
@@ -135,12 +136,16 @@ onMounted(async () => {
 
   await nextTick()
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  // 自动更新：启动定时检查（首次 3 秒后提示角标，之后周期检查）
+  initUpdater()
 })
 
 onUnmounted(() => {
   unlistenEnter?.()
   unlistenLeave?.()
   if (shrinkFallback) clearTimeout(shrinkFallback)
+  disposeUpdater()
 })
 </script>
 

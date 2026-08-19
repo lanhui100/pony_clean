@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub alert_mem_pct: u8,
     /// 开机自启
     pub autostart: bool,
+    /// 自动更新：定时检查新版本并自动下载安装（默认开启）
+    pub auto_update: bool,
 }
 
 impl Default for AppConfig {
@@ -20,6 +22,7 @@ impl Default for AppConfig {
             alert_cpu_pct: 80,
             alert_mem_pct: 85,
             autostart: false,
+            auto_update: true,
         }
     }
 }

@@ -3,6 +3,7 @@ import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo } from '@tauri-apps/api/event'
 import { Activity, ChevronUp, HardDrive, Rocket, Search, Settings, X } from 'lucide-vue-next'
+import { updateAvailable, updateVersion } from '@/composables/useUpdater'
 
 const props = defineProps<{
   activeTab: string
@@ -85,16 +86,22 @@ function collapseToCapsule() {
     <button
       v-for="item in navItems"
       :key="item.value"
-      class="flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-200"
+      class="relative flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-200"
       :class="activeTab === item.value
         ? 'bg-primary/15 text-primary'
         : 'text-muted-foreground/60 hover:text-foreground/80 hover:bg-white/5'"
-      :title="item.label"
-      :aria-label="item.label"
+      :title="item.value === 'settings' && updateAvailable ? `${item.label}（有可用更新 ${updateVersion}）` : item.label"
+      :aria-label="item.value === 'settings' && updateAvailable ? `${item.label}（有可用更新）` : item.label"
       :aria-current="activeTab === item.value ? 'page' : undefined"
       @click="emit('update:activeTab', item.value)"
     >
       <component :is="item.icon" :size="16" />
+      <!-- 设置 tab 更新角标：检测到新版本时提示 -->
+      <span
+        v-if="item.value === 'settings' && updateAvailable"
+        class="absolute right-[3px] top-[3px] h-1.5 w-1.5 rounded-full bg-destructive ring-2 ring-background"
+        aria-hidden="true"
+      />
     </button>
 
     <div class="flex-1" />

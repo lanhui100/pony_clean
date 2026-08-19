@@ -6,11 +6,20 @@ import { Loader2, Plus, Save, Trash2, RefreshCw } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
 import OptionPicker from '../components/OptionPicker.vue'
 import { useMonitor } from '../composables/useMonitor'
+import {
+  autoUpdateEnabled,
+  checkingUpdate,
+  updateAvailable,
+  updateVersion,
+  markUpdateSeen,
+  checkForUpdate,
+} from '../composables/useUpdater'
 
 interface AppConfig {
   alert_cpu_pct: number
   alert_mem_pct: number
   autostart: boolean
+  auto_update: boolean
 }
 
 interface CustomTarget {
@@ -66,8 +75,7 @@ const saving = ref(false)
 const savedMsg = ref('')
 let savedTimer: ReturnType<typeof setTimeout> | null = null
 
-// 软件更新（tauri-plugin-updater）
-const updating = ref(false)
+// 软件更新（tauri-plugin-updater，状态集中在 useUpdater 单例）
 const updateMsg = ref('')
 let updateTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -78,22 +86,33 @@ function flashUpdateMsg(msg: string) {
 }
 
 async function handleCheckUpdate() {
-  if (updating.value) return
-  updating.value = true
-  updateMsg.value = ''
+  if (checkingUpdate.value) return
+  flashUpdateMsg('')
+  const version = await checkForUpdate(false)
+  if (version) {
+    flashUpdateMsg(`发现新版本 ${version}，可点击安装`)
+  } else {
+    flashUpdateMsg('✓ 已是最新版本')
+  }
+}
+
+async function installUpdate() {
+  if (checkingUpdate.value) return
+  checkingUpdate.value = true
+  flashUpdateMsg('')
   try {
     const update = await check()
     if (!update) {
       flashUpdateMsg('✓ 已是最新版本')
       return
     }
-    flashUpdateMsg(`发现新版本 ${update.version}，正在下载并安装…`)
+    flashUpdateMsg(`正在下载安装 v${update.version}…`)
     await update.downloadAndInstall()
     flashUpdateMsg('✓ 更新完成，应用将自动重启')
   } catch (e) {
-    flashUpdateMsg(`✗ 检查更新失败：${e}`)
+    flashUpdateMsg(`✗ 更新失败：${e}`)
   }
-  updating.value = false
+  checkingUpdate.value = false
 }
 
 // 自定义清理规则
@@ -107,11 +126,14 @@ const ruleMsg = ref('')
 let ruleTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(async () => {
+  // 进入设置页：清除设置 tab 的更新角标（用户已注意到）
+  markUpdateSeen()
   try {
     const cfg = await invoke<AppConfig>('get_config')
     cpuPct.value = cfg.alert_cpu_pct || 80
     memPct.value = cfg.alert_mem_pct || 85
     autostart.value = cfg.autostart ?? false
+    autoUpdateEnabled.value = cfg.auto_update ?? true
   } catch {
     // 使用默认值
   }
@@ -176,6 +198,7 @@ async function handleSave() {
         alert_cpu_pct: cpuPct.value,
         alert_mem_pct: memPct.value,
         autostart: autostart.value,
+        auto_update: autoUpdateEnabled.value,
       },
     })
     setAlertThresholds(cpuPct.value, memPct.value)
@@ -375,24 +398,65 @@ function categoryLabel(value: string) {
       <section class="space-y-2.5">
         <h3 class="text-[11px] font-semibold text-foreground/85">软件更新</h3>
         <p class="text-[10px] text-muted-foreground/70">
-          检查新版本并自动下载安装（更新完成后自动重启）
+          自动检查新版本并静默安装；也可手动检查下载安装
         </p>
+
+        <!-- 自动更新开关 -->
         <div class="flex items-center justify-between">
-          <span v-if="updateMsg" class="text-[11px]" :class="updateMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
+          <div>
+            <span class="text-xs text-foreground/90">自动更新</span>
+            <p class="mt-0.5 text-[10px] text-muted-foreground/70">每 6 小时自动检查，发现新版本自动下载安装</p>
+          </div>
+          <button
+            class="relative h-4 w-7 shrink-0 rounded-full transition-colors"
+            :class="autoUpdateEnabled ? 'bg-success/80' : 'bg-white/15'"
+            role="switch"
+            :aria-checked="autoUpdateEnabled"
+            @click="autoUpdateEnabled = !autoUpdateEnabled"
+          >
+            <span
+              class="absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all"
+              :class="autoUpdateEnabled ? 'left-[14px]' : 'left-0.5'"
+            />
+          </button>
+        </div>
+
+        <!-- 更新状态 + 操作 -->
+        <div class="flex items-center justify-between gap-2">
+          <span
+            v-if="updateAvailable && updateVersion"
+            class="text-[11px] text-warning"
+          >
+            有可用更新 v{{ updateVersion }}
+          </span>
+          <span v-else-if="updateMsg" class="text-[11px]" :class="updateMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
             {{ updateMsg }}
           </span>
           <span v-else class="text-[10px] text-muted-foreground/60">更新源：CNB Release</span>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            :disabled="updating"
-            title="检查更新"
-            aria-label="检查更新"
-            @click="handleCheckUpdate"
-          >
-            <RefreshCw v-if="!updating" class="h-3.5 w-3.5" />
-            <Loader2 v-else class="h-3.5 w-3.5 animate-spin" />
-          </Button>
+
+          <div class="flex shrink-0 items-center gap-1.5">
+            <Button
+              v-if="updateAvailable"
+              size="sm"
+              :disabled="checkingUpdate"
+              title="下载并安装更新"
+              @click="installUpdate"
+            >
+              <Loader2 v-if="checkingUpdate" class="h-3 w-3 animate-spin" />
+              <span v-else>立即安装</span>
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              :disabled="checkingUpdate"
+              title="检查更新"
+              aria-label="检查更新"
+              @click="handleCheckUpdate"
+            >
+              <RefreshCw v-if="!checkingUpdate" class="h-3.5 w-3.5" />
+              <Loader2 v-else class="h-3.5 w-3.5 animate-spin" />
+            </Button>
+          </div>
         </div>
       </section>
 
