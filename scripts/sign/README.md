@@ -25,10 +25,13 @@
 
 ```bash
 # 1. 生成自签名证书（CN 建议用你的组织/项目名）
+#    私钥密码：默认自动生成随机强密码并打印；也可用 PONY_SIGN_PFX_PASS 指定：
+#    PONY_SIGN_PFX_PASS='你的强密码' bash scripts/sign/gen-self-signed-cert.sh
 bash scripts/sign/gen-self-signed-cert.sh
 
-# 2. 对交叉编译出的安装包签名
-PONY_SIGN_PFX_PASS='PonyClean@SelfSigned' \
+# 2. 对交叉编译出的安装包签名（密码需与上一步一致）
+#    若上一步用环境变量指定了密码，这里传同一密码；若自动生成，用脚本输出的密码：
+PONY_SIGN_PFX_PASS='<上一步的密码>' \
   bash scripts/sign/sign-exe.sh \
     build/sign/ponyclean-selfsigned.pfx \
     target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_*_x64-setup.exe
@@ -48,7 +51,8 @@ PONY_SIGN_PFX_PASS='PonyClean@SelfSigned' \
 正式发版按 `docs/RELEASE_BUILD.md` 切换到**方案 B（Windows 自托管构建机）**并接入
 权威 OV/EV 证书。届时：
 
-- `sign-exe.sh` 仍可用，换成你的权威 `pfx` 即可（时间戳服务器建议
-  `http://timestamp.digicert.com`）；
+- `sign-exe.sh` 仍可用，换成你的权威 `pfx` 即可（时间戳服务器默认
+  `http://timestamp.digicert.com`，可用位置参数或 `PONY_TIMESTAMP_URL`
+  覆盖，如 `https://timestamp.digicert.com`，但 HTTPS 端点可用性需按环境确认）；
 - 或在 `tauri.conf.json` 配置 `bundle.windows.signCommand` 让打包阶段自动签名；
 - 也可在 `.cnb.yml` 流水线的 release 阶段接入签名（见 `docs/RELEASE_BUILD.md` 第 6 节）。

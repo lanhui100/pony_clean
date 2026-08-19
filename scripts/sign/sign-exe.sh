@@ -5,6 +5,13 @@
 # 用法：
 #   bash scripts/sign/sign-exe.sh <证书.pfx> <exe文件> [时间戳服务器URL]
 #
+# 时间戳服务器（优先级：位置参数 > PONY_TIMESTAMP_URL 环境变量 > 默认 HTTP 端点）：
+#   bash scripts/sign/sign-exe.sh cert.pfx app.exe                    # 默认
+#   bash scripts/sign/sign-exe.sh cert.pfx app.exe https://timestamp.digicert.com
+#   PONY_TIMESTAMP_URL=https://timestamp.digicert.com \
+#     bash scripts/sign/sign-exe.sh cert.pfx app.exe
+#   注：HTTPS 端点可用性取决于运行环境/网络，使用前请自行确认。
+#
 # 示例：
 #   # 自签名证书（密码在 gen-self-signed-cert.sh 输出，或用 PONY_SIGN_PFX_PASS）
 #   PONY_SIGN_PFX_PASS='PonyClean@SelfSigned' \
@@ -33,7 +40,10 @@ fi
 
 PFX="$1"
 EXE="$2"
-TS_URL="${3:-http://timestamp.digicert.com}"
+# 时间戳服务器优先级：命令行第 3 个位置参数 > PONY_TIMESTAMP_URL 环境变量 > 默认值。
+# 默认 HTTP 端点（已实测可达）；如需 HTTPS（如 https://timestamp.digicert.com）或
+# 其它端点，可用环境变量/参数覆盖，但其可用性取决于运行环境/网络，使用前请自行确认。
+TS_URL="${3:-${PONY_TIMESTAMP_URL:-http://timestamp.digicert.com}}"
 PFX_PASS="${PONY_SIGN_PFX_PASS:-}"
 
 if ! command -v osslsigncode >/dev/null 2>&1; then

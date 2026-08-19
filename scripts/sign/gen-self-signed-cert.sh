@@ -26,7 +26,14 @@ set -euo pipefail
 
 CN="${1:-PonyClean}"
 OUT_DIR="${2:-build/sign}"
-PFX_PASS="${PONY_SIGN_PFX_PASS:-PonyClean@SelfSigned}"
+
+# 私钥密码：优先取环境变量 PONY_SIGN_PFX_PASS；未设置则自动生成随机强密码。
+# 不再提供固定默认值，避免所有内测证书私钥密码相同导致解包滥用。
+if [ -n "${PONY_SIGN_PFX_PASS:-}" ]; then
+  PFX_PASS="$PONY_SIGN_PFX_PASS"
+else
+  PFX_PASS="$(openssl rand -base64 18 | tr -d '/+=' | head -c 20)"
+fi
 
 mkdir -p "$OUT_DIR"
 
@@ -36,6 +43,11 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -nodes \
   -out "$OUT_DIR/ponyclean-selfsigned.cer" \
   -subj "/CN=$CN/O=PonyClean/OU=Internal"
 
+# 用 trap 兜底清理中间私钥：即使 set -e 中途失败（如 openssl pkcs12 报错），
+# .key 也不会残留。
+cleanup_key() { rm -f "$OUT_DIR/ponyclean-selfsigned.key"; }
+trap cleanup_key EXIT
+
 echo "==> 打包为 PFX（导入证书库/签名用，密码：$PFX_PASS）"
 openssl pkcs12 -export \
   -out "$OUT_DIR/ponyclean-selfsigned.pfx" \
@@ -43,15 +55,12 @@ openssl pkcs12 -export \
   -in "$OUT_DIR/ponyclean-selfsigned.cer" \
   -passout "pass:$PFX_PASS"
 
-echo "==> 清理中间密钥文件"
-rm -f "$OUT_DIR/ponyclean-selfsigned.key"
-
 echo ""
 echo "✅ 完成，产物："
 echo "   PFX: $OUT_DIR/ponyclean-selfsigned.pfx（密码：$PFX_PASS）"
 echo "   CER: $OUT_DIR/ponyclean-selfsigned.cer"
 echo ""
 echo "下一步："
-echo "   1) 用 sign-exe.sh 对安装包签名："
+echo "   1) 用 sign-exe.sh 对安装包签名（自动生成密码时请用下方 PONY_SIGN_PFX_PASS 传入）："
 echo "        PONY_SIGN_PFX_PASS='$PFX_PASS' bash scripts/sign/sign-exe.sh $OUT_DIR/ponyclean-selfsigned.pfx <你的.exe>"
 echo "   2) 把 CER 提供给内测用户，让其信任（见 README 下载安装指引）。"

@@ -125,7 +125,7 @@ osslsigncode 可在 **Linux 上对交叉编译的 Windows .exe 直接签名**，
 ### 6.3 正式发版接入权威签名
 
 - 方案 B（Windows 自托管构建机）+ 权威 OV/EV 证书；
-- 用 `sign-exe.sh` 换成权威 `pfx`（时间戳建议 `http://timestamp.digicert.com`），或在 `tauri.conf.json` 配置 `bundle.windows.signCommand` 让打包阶段自动签名；
+- 用 `sign-exe.sh` 换成权威 `pfx`（时间戳默认 `http://timestamp.digicert.com`，可用位置参数或 `PONY_TIMESTAMP_URL` 覆盖为 HTTPS 等其它端点），或在 `tauri.conf.json` 配置 `bundle.windows.signCommand` 让打包阶段自动签名；
 - 也可在 `.cnb.yml` 流水线的 release 阶段接入签名。
 
 ## 7. 未来升级：方案 B 前提清单（备忘）
