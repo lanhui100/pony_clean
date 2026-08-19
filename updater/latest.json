@@ -1,0 +1,15 @@
+{
+  "version": "0.1.2",
+  "notes": "fix: ARM64 库路径探测精确匹配 aarch64（架构目录非 arm64），修正 CRT/UCRT 库搜索",
+  "pub_date": "2026-08-19T11:15:28Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVROE5ELzM5OXVobFFWdGtaMW9KeHd6bVFhUzJ1ckNpWWo2azc3R1pzK2xtQ0w4aGgrNTB0V3E3b2V1cndTWjJYNm01d2ZnSHRVOXY2aUxETm5NQy9iSEF6Tlc1RS95bUFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTM3OTg1CWZpbGU6UG9ueUNsZWFuXzAuMS4yX3g2NC1zZXR1cC5leGUKNFhWOEo5VWR3YjNBRnJwVE9WWGd0ZXdPVCt0czZHUmlPNHppMEdhRE5NeG9RL2xWRUlha0JiSFlIYzBmbmVvTlpSRGhteDU0NDVqNlVWbHVzMXVlRFE9PQo=",
+      "url": "https://cnb.cool/lanhui100/pony_clean/-/releases/download/v0.1.2/PonyClean_0.1.2_x64-setup.exe"
+    },
+    "windows-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVROE5ELzM5OXVobFVQcC9Ybkxsa0paZzc2Y0xtU1lYaHh1NTBXYzRXUGYwK28zMnI0VG1xbFU1WHRncWhKS3RTZG9jR0dHQlZlQ2FQLyt6SEVhK3JEaFU3WUM4bSt0MWdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTM4MTI0CWZpbGU6UG9ueUNsZWFuXzAuMS4yX2FybTY0LXNldHVwLmV4ZQoyaTJZNmVTNHZmaXZRL01tYUR1emZmTEUwTWM1QStIUFh4UVIrekpoZ2R2Y2xwMTlNemN6Mk5XUGQxUi8zSStNeDBpWXNlSldwMUpNMHNoMVAya0FEQT09Cg==",
+      "url": "https://cnb.cool/lanhui100/pony_clean/-/releases/download/v0.1.2/PonyClean_0.1.2_arm64-setup.exe"
+    }
+  }
+}
