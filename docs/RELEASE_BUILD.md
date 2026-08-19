@@ -14,8 +14,9 @@ Tauri 2 在 Windows 上打包产出两种安装包，均支持"直接下载安�
 
 | 格式 | 安装技术 | 产物文件名（以 0.1.0 为例） | 说明 |
 |------|---------|---------------------------|------|
-| **`.exe`（主推）** | NSIS | `PonyClean_0.1.0_x64-setup.exe` | 单文件安装器，双击即装 |
-| `.msi`（可选） | WiX / MSI | `PonyClean_0.1.0_x64_en-US.msi` | 企业分发常用 |
+| **`.exe`（主推，x64）** | NSIS | `PonyClean_0.1.0_x64-setup.exe` | 单文件安装器，双击即装 |
+| **`.exe`（ARM64）** | NSIS | `PonyClean_0.1.0_arm64-setup.exe` | Windows on ARM 设备（NSIS 本体经模拟运行，应用为原生 ARM64） |
+| `.msi`（可选） | WiX / MSI | `PonyClean_0.1.0_x64_en-US.msi` | 企业分发常用，仅 Windows 可构建 |
 
 > 参考：[Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)
 
@@ -56,23 +57,27 @@ Tauri 2 在 Windows 上打包产出两种安装包，均支持"直接下载安�
 - 数据卷缓存：`/root/.cargo`、`/root/.rustup`（加速工具链复用）
 - 工具链安装脚本（stage 1）：
   - `rustup`（stable，满足 workspace `rust-version = 1.85`）
-  - `rustup target add x86_64-pc-windows-msvc`
+  - `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc`
   - `cargo install cargo-xwin`（Tauri 的交叉编译 runner，自动下载 Windows SDK）
-  - `apt-get install nsis lld llvm`（NSIS 打包 + lld 链接器 + llvm-rc 资源编译）
+  - `apt-get install nsis lld llvm clang libayatana-appindicator3-dev`（NSIS 打包 + lld 链接器 + llvm-rc 资源编译 + clang-cl + tray 检查）
 
-### 5.2 构建命令（stage 2）
+### 5.2 构建命令（stage 2，双架构）
 
 ```bash
 npm ci --prefix frontend      # 安装前端依赖
 npm run build                 # 产出 frontend/dist
-cd frontend
-npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+# 必须在仓库根目录执行（tauri CLI 需在子目录中找到 src-tauri/tauri.conf.json）
+npx --prefix frontend tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-windows-msvc
 ```
 
-### 5.3 产物与分发
+### 5.3 产物与分发（双架构）
 
-- 产物路径：`target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_x64-setup.exe`
-  - 注意：因 workspace 共享 target（见 AGENTS.md），产物在仓库根 `target/`，**不是** `src-tauri/target/`
+- 产物路径（注意：因 workspace 共享 target（见 AGENTS.md），产物在仓库根 `target/`，**不是** `src-tauri/target/`）：
+  - x64：`target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_x64-setup.exe`
+  - ARM64：`target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_arm64-setup.exe`
+- ARM64 说明：NSIS 安装器本体为 x86（在 ARM 机器上经模拟运行），应用二进制为原生 ARM64，用户安装体验无差异
+- 命名规则：Tauri bundler 固定为 `{productName}_{version}_{arch}-setup.exe`，架构短名 `x64`/`arm64`/`x86`；`x64` = `x86_64`，为 Windows 生态通行叫法，无需改成 `x86_64`
 - 分发链路：
   1. `git:release` 内置任务为当前 tag 创建 Release；
   2. `cnbcool/attachments` 插件把 `.exe` 上传为 Release 附件（官方构建机有 Docker，可运行该插件）；
@@ -90,7 +95,8 @@ npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 ### 5.5 已知限制与优化方向
 
 - `apt install` 每次流水线重复执行：可改为 `docker.build` 自定义镜像预装工具链（见 [CNB 构建环境文档](https://docs.cnb.cool/zh/build/build-env.md)），并顺带解决缓存卷权限问题（把 rustup/cargo 装进镜像）。
-- 仅产出 `.exe`，无 `.msi`。
+- 仅产出 NSIS `.exe`（x64 + arm64），无 `.msi`。
+- 双架构构建比单架构多编译一次，流水线耗时约增加 2-3 分钟。
 
 ## 6. 未来升级：方案 B 前提清单（备忘）
 

@@ -2,8 +2,10 @@
 #
 # 触发方式：推送 vX.Y.Z tag（配合 `node scripts/bump-version.mjs <ver> --commit --tag`）
 # 构建环境：CNB 官方 Linux 构建机（Docker 容器，node:20-bookworm）
-# 产物：src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
-#       上传为 Release 附件，用户可在 Release 页面直接下载安装
+# 产物（双架构 NSIS）：
+#   x86_64 : target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
+#   aarch64: target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_arm64-setup.exe
+# 上传为 Release 附件，用户可在 Release 页面直接下载安装
 # 限制：仅产出 NSIS .exe；.msi 需要 Windows 构建环境
 # 升级：正式发版或交叉编译报错时，切换到 Windows 自托管构建机（方案 B）
 #       详见 docs/RELEASE_BUILD.md
@@ -29,7 +31,7 @@ $:
               curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
             fi
             export PATH="$CARGO_HOME/bin:$PATH"
-            rustup target add x86_64-pc-windows-msvc
+            rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc
             if [ ! -x "$CARGO_HOME/bin/cargo-xwin" ]; then
               cargo install cargo-xwin --locked
             fi
@@ -49,7 +51,9 @@ $:
             npm run build
             # 注意：必须保持 CWD 在仓库根目录（tauri CLI 需在子目录中找到 src-tauri/tauri.conf.json），
             # 通过 npx --prefix frontend 使用 frontend 下安装的 @tauri-apps/cli
+            # 双架构交叉编译：x86_64（x64）+ aarch64（ARM64，Windows on ARM 设备）
             npx --prefix frontend tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+            npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-windows-msvc
 
         - name: 创建 Release
           type: git:release
@@ -60,6 +64,8 @@ $:
           image: cnbcool/attachments:latest
           settings:
             # 产物在 workspace 共享 target（仓库根 target/），不在 src-tauri/target/
-            # 实际路径：target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
+            # glob 匹配双架构（x64 + arm64）：
+            #   target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
+            #   target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_arm64-setup.exe
             attachments:
               - "./target/**/bundle/nsis/*-setup.exe"
