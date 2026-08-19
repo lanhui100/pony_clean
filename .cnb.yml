@@ -15,11 +15,11 @@
 $:
   tag_push:
     - name: cross-build-windows-installer
+      # 注：不配置 /root/.cargo、/root/.rustup 的数据卷缓存——
+      # 实测缓存卷在跨构建机复用时挂载权限异常（settings.toml Permission denied）。
+      # 工具链每次重新安装（约 3-5 分钟），换取稳定性；未来可改为 docker.build 预装镜像。
       docker:
         image: node:20-bookworm
-        volumes:
-          - cargo-cache:/root/.cargo:rw
-          - rustup-cache:/root/.rustup:rw
       stages:
         - name: 安装交叉编译工具链
           timeout: 20m
