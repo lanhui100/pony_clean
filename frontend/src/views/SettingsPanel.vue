@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { Loader2, Plus, Save, Trash2 } from 'lucide-vue-next'
+import { check } from '@tauri-apps/plugin-updater'
+import { Loader2, Plus, Save, Trash2, RefreshCw } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
 import OptionPicker from '../components/OptionPicker.vue'
 import { useMonitor } from '../composables/useMonitor'
@@ -65,6 +66,36 @@ const saving = ref(false)
 const savedMsg = ref('')
 let savedTimer: ReturnType<typeof setTimeout> | null = null
 
+// 软件更新（tauri-plugin-updater）
+const updating = ref(false)
+const updateMsg = ref('')
+let updateTimer: ReturnType<typeof setTimeout> | null = null
+
+function flashUpdateMsg(msg: string) {
+  updateMsg.value = msg
+  if (updateTimer) clearTimeout(updateTimer)
+  updateTimer = setTimeout(() => { updateMsg.value = '' }, 6000)
+}
+
+async function handleCheckUpdate() {
+  if (updating.value) return
+  updating.value = true
+  updateMsg.value = ''
+  try {
+    const update = await check()
+    if (!update) {
+      flashUpdateMsg('✓ 已是最新版本')
+      return
+    }
+    flashUpdateMsg(`发现新版本 ${update.version}，正在下载并安装…`)
+    await update.downloadAndInstall()
+    flashUpdateMsg('✓ 更新完成，应用将自动重启')
+  } catch (e) {
+    flashUpdateMsg(`✗ 检查更新失败：${e}`)
+  }
+  updating.value = false
+}
+
 // 自定义清理规则
 const customTargets = ref<CustomTarget[]>([])
 const showAddForm = ref(false)
@@ -99,6 +130,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (savedTimer) clearTimeout(savedTimer)
   if (ruleTimer) clearTimeout(ruleTimer)
+  if (updateTimer) clearTimeout(updateTimer)
 })
 
 function flashRuleMsg(msg: string) {
@@ -337,6 +369,31 @@ function categoryLabel(value: string) {
         <p class="text-[10px] text-muted-foreground/60">
           大文件最小体积 · 目录占用分解层数（层数只影响目录分解粒度，不影响扫描范围）
         </p>
+      </section>
+
+      <!-- ═══ 软件更新 ═══ -->
+      <section class="space-y-2.5">
+        <h3 class="text-[11px] font-semibold text-foreground/85">软件更新</h3>
+        <p class="text-[10px] text-muted-foreground/70">
+          检查新版本并自动下载安装（更新完成后自动重启）
+        </p>
+        <div class="flex items-center justify-between">
+          <span v-if="updateMsg" class="text-[11px]" :class="updateMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
+            {{ updateMsg }}
+          </span>
+          <span v-else class="text-[10px] text-muted-foreground/60">更新源：CNB Release</span>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            :disabled="updating"
+            title="检查更新"
+            aria-label="检查更新"
+            @click="handleCheckUpdate"
+          >
+            <RefreshCw v-if="!updating" class="h-3.5 w-3.5" />
+            <Loader2 v-else class="h-3.5 w-3.5 animate-spin" />
+          </Button>
+        </div>
       </section>
 
       <!-- Save -->

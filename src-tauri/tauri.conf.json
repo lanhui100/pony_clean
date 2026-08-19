@@ -11,10 +11,22 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
+    "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
         "languages": ["SimpChinese", "English"],
         "displayLanguageSelector": true
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1QTFEQkY3RjczRjM0M0MKUldROE5ELzM5OXVobFhEb21JZFFHR0hLaWhKSlBxb1psV2duc2trR0lvKzZBdng5bTErNy82NCsK",
+      "endpoints": [
+        "https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   },

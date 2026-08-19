@@ -121,6 +121,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(EdgeCursorState::new())
         .setup(|app| {
             eprintln!("[PonyClean] Rust backend starting up...");
