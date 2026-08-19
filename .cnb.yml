@@ -1,0 +1,58 @@
+# Windows 安装包发布流水线（PonyClean）— 方案 A：官方构建机交叉编译
+#
+# 触发方式：推送 vX.Y.Z tag（配合 `node scripts/bump-version.mjs <ver> --commit --tag`）
+# 构建环境：CNB 官方 Linux 构建机（Docker 容器，node:20-bookworm）
+# 产物：src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
+#       上传为 Release 附件，用户可在 Release 页面直接下载安装
+# 限制：仅产出 NSIS .exe；.msi 需要 Windows 构建环境
+# 升级：正式发版或交叉编译报错时，切换到 Windows 自托管构建机（方案 B）
+#       详见 docs/RELEASE_BUILD.md
+#
+# 方案 B 切换要点（届时修改）：
+#   - 本文件增加 runner: { namespace: group, tags: [windows, x86_64] }
+#   - 构建命令去掉 --runner cargo-xwin --target x86_64-pc-windows-msvc
+
+$:
+  tag_push:
+    - name: cross-build-windows-installer
+      docker:
+        image: node:20-bookworm
+        volumes:
+          - cargo-cache:/root/.cargo:rw
+          - rustup-cache:/root/.rustup:rw
+      stages:
+        - name: 安装交叉编译工具链
+          timeout: 20m
+          script: |
+            export CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup
+            if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
+              curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+            fi
+            export PATH="$CARGO_HOME/bin:$PATH"
+            rustup target add x86_64-pc-windows-msvc
+            if [ ! -x "$CARGO_HOME/bin/cargo-xwin" ]; then
+              cargo install cargo-xwin --locked
+            fi
+            apt-get update
+            apt-get install -y nsis lld llvm
+
+        - name: 构建前端并交叉编译安装包
+          timeout: 60m
+          script: |
+            export CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup
+            export PATH="$CARGO_HOME/bin:$PATH"
+            npm ci --prefix frontend
+            npm run build
+            cd frontend
+            npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+
+        - name: 创建 Release
+          type: git:release
+          options:
+            tag: $CNB_BRANCH
+
+        - name: 上传安装包到 Release 附件
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "./src-tauri/target/**/bundle/nsis/*-setup.exe"
