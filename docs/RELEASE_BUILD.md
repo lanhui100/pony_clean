@@ -97,6 +97,14 @@ npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-window
 4. **tray-icon 特性检查**：应用启用 `tray-icon`，tauri-cli 打包阶段在 Linux 宿主机检测 appindicator 库并 panic，需 `apt install libayatana-appindicator3-dev`。
 5. **产物路径**：workspace 共享 target，安装包在仓库根 `target/`（`target/x86_64-pc-windows-msvc/release/bundle/nsis/`），**不在** `src-tauri/target/`；附件上传 glob 必须写 `./target/**/bundle/nsis/*-setup.exe`。
 6. **删除 tag 的限制**：tag 一旦创建 Release，CNB 禁止直接删除 tag 重建；需先用 `cnb releases delete-release` 删除 Release 再重建 tag。
+7. **ARM64 交叉编译（ring 依赖，重点坑）**：
+   - **cargo-xwin runner 只对 x64 可靠**。对 `aarch64-pc-windows-msvc`，`--runner cargo-xwin` 会强制注入 `CC=clang-cl` + MSVC 风格 `/imsvc` 参数，而 Linux 上 clang-cl 家族检测失败回退 GNU clang，GNU clang 不识别 `/imsvc`（clang 19 连 `-imsvc` 也不支持，必须用 `-isystem`）→ ring 0.17 编译失败。
+   - **解决方案**：ARM64 不用 cargo-xwin runner，改用普通 cargo + 手动环境变量：
+     - `CC_aarch64_pc_windows_msvc="clang"` + `CFLAGS_*` 用 `-isystem` 指向 `xwin/crt/include`、`xwin/sdk/include/{ucrt,um,shared,winrt}`
+     - `AR_aarch64_pc_windows_msvc` 指向 `llvm-lib-<ver>`（并 `ln -s` 成 `lib.exe` 供 cc-rs 查找）
+     - `CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=<um/aarch64> -Lnative=<crt/lib/aarch64> -Lnative=<ucrt/aarch64> -C linker-flavor=lld-link"`
+     - **架构目录是 `aarch64` 不是 `arm64`**；路径必须动态探测（`find /root/.cache/cargo-xwin -name kernel32.lib -path "*aarch64*"`），避免 x64 构建残留干扰。
+   - **CNB script 陷阱**：`$VAR` 在 RUSTFLAGS 变量值内不展开（字面保留），需用命令替换/写死路径。设置 target 专属 `CARGO_TARGET_*_RUSTFLAGS` 时**不能**再设全局 `RUSTFLAGS`（cargo 优先全局，导致 `-Lnative` 丢失）。
 
 ### 5.5 已知限制与优化方向
 
