@@ -73,20 +73,35 @@ $:
             #   - linker 用 lld-link
             export CC_aarch64_pc_windows_msvc="clang"
             export CXX_aarch64_pc_windows_msvc="clang++"
-            export XWIN_DIR="/root/.cache/cargo-xwin/xwin"
-            # 注意：CNB script 环境中 $XWIN_DIR 在 RUSTFLAGS 变量里未展开（实测字面保留），
-            # 因此 CFLAGS / RUSTFLAGS 全部使用写死的完整路径
+            # include 路径（已验证有效，编译已推进到链接阶段）
             export CFLAGS_aarch64_pc_windows_msvc="--target=aarch64-pc-windows-msvc -isystem /root/.cache/cargo-xwin/xwin/crt/include -isystem /root/.cache/cargo-xwin/xwin/sdk/include/ucrt -isystem /root/.cache/cargo-xwin/xwin/sdk/include/um -isystem /root/.cache/cargo-xwin/xwin/sdk/include/shared -isystem /root/.cache/cargo-xwin/xwin/sdk/include/winrt"
             # llvm 包带版本后缀（llvm-lib-19 等），cc-rs 找 lib.exe / llvm-lib：
             # 动态探测 llvm-lib 命令名，建符号链接满足 lib.exe 期望，并用其作为 AR
             LLVM_LIB="$(command -v llvm-lib-19 || command -v llvm-lib || command -v llvm-lib-18 || echo llvm-lib)"
             ln -sf "$LLVM_LIB" /usr/local/bin/lib.exe
             export AR_aarch64_pc_windows_msvc="$(basename "$LLVM_LIB")"
-            # 链接器 + 库搜索路径（参照 cargo-xwin 的 clang_cl.rs 逻辑）：
-            #   -Lnative 注入 target 专属 RUSTFLAGS；SDK 库路径为 crt/lib、sdk/lib/um、sdk/lib/ucrt
+            # ── 探测 xwin SDK 库真实路径（避免硬编码路径失效） ──
+            echo "=== xwin 目录探测 ==="
+            find /root/.cache/cargo-xwin -maxdepth 6 -name "kernel32.lib" 2>/dev/null | head -5
+            find /root/.cache/cargo-xwin -maxdepth 6 -type d -name "arm64" 2>/dev/null | head -10
+            echo "=== 探测结束 ==="
+            # 基于探测结果定位 SDK 库目录（um 系统库 / ucrt / crt）
+            K32="$(find /root/.cache/cargo-xwin -name "kernel32.lib" -path "*arm64*" 2>/dev/null | head -1)"
+            if [ -z "$K32" ]; then K32="$(find /root/.cache/cargo-xwin -name "kernel32.lib" 2>/dev/null | head -1)"; fi
+            SDK_UM_DIR="$(dirname "$K32")"
+            echo "kernel32.lib 位于: $SDK_UM_DIR"
+            SDK_ROOT="$(dirname "$(dirname "$SDK_UM_DIR")")"
+            CRT_LIB="$(find /root/.cache/cargo-xwin -type d -path "*crt/lib/arm64" 2>/dev/null | head -1)"
+            UCRT_LIB="$(find /root/.cache/cargo-xwin -type d -path "*sdk/lib/ucrt/arm64" 2>/dev/null | head -1)"
+            CFLAGS_EXTRA=""
+            RUSTFLAGS_LN="-Lnative=$SDK_UM_DIR"
+            [ -n "$CRT_LIB" ] && RUSTFLAGS_LN="$RUSTFLAGS_LN -Lnative=$CRT_LIB"
+            [ -n "$UCRT_LIB" ] && RUSTFLAGS_LN="$RUSTFLAGS_LN -Lnative=$UCRT_LIB"
+            # 链接器 + target 专属 RUSTFLAGS（参照 cargo-xwin 的 clang_cl.rs 逻辑）
             export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER="lld-link"
-            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=/root/.cache/cargo-xwin/xwin/crt/lib/arm64 -Lnative=/root/.cache/cargo-xwin/xwin/sdk/lib/um/arm64 -Lnative=/root/.cache/cargo-xwin/xwin/sdk/lib/ucrt/arm64 -C linker-flavor=lld-link"
-            # 注意：不要设置全局 RUSTFLAGS（cargo 优先全局而忽略 target 专属 flag，导致链接找不到系统库）
+            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="$RUSTFLAGS_LN -C linker-flavor=lld-link"
+            echo "RUSTFLAGS_LN=$RUSTFLAGS_LN"
+            # 注意：不要设置全局 RUSTFLAGS（cargo 优先全局而忽略 target 专属 flag）
             npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
             unset CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER AR_aarch64_pc_windows_msvc CC_aarch64_pc_windows_msvc CXX_aarch64_pc_windows_msvc CFLAGS_aarch64_pc_windows_msvc
 
