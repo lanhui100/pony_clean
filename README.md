@@ -12,6 +12,19 @@ Windows 极简桌面小组件。三大核心功能：
 - **灵动岛悬浮 UI** — 胶囊 / 贴边进度条双形态，SWCA Acrylic 毛玻璃、托盘图标、系统通知
 - **设置面板** — 告警阈值、自启开关、清理目标启停、自定义清理目标、磁盘分析参数配置
 
+## 下载与安装
+
+从 [Releases](https://cnb.cool/lanhui100/pony_clean/-/releases) 页面下载 `PonyClean_<版本>_<架构>-setup.exe`（x64 为 64 位，arm64 为 Windows on ARM），双击即可安装。
+
+> 当前为内测分发，安装包为**未权威签名**（自签名），浏览器/SmartScreen 可能拦截，请按下面步骤放行：
+>
+> 1. 浏览器下载 `.exe` 弹"保留/仍要保留"时，点**保留**（或右键属性 → 勾选"解除锁定"）
+> 2. SmartScreen 弹"Windows 已保护你的电脑"时，点**更多信息 → 仍要运行**
+> 3. 内测用户可双击 `ponyclean-selfsigned.cer` → 安装证书 → 选择"受信任的根证书颁发机构"，红色拦截即消失
+>
+> 这条黄色警告的根源是"安装包未签名"，正式发版将接入权威代码签名证书彻底消除。
+> 内测签名脚本见 `scripts/sign/`，详见 [docs/RELEASE_BUILD.md](docs/RELEASE_BUILD.md)。
+
 ## 技术栈
 
 | 层 | 选型 |

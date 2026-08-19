@@ -12,6 +12,18 @@ A minimal desktop widget for Windows. Three core features:
 - **Dynamic Island Floating UI** — Dual forms: capsule / edge-docked progress bar, SWCA Acrylic glass, tray icon, system notifications
 - **Settings Panel** — Alert thresholds, startup toggle, cleanup-target enable/disable, custom cleanup targets, disk-analysis parameters
 
+## Download & Install
+
+Download `PonyClean_<version>_<arch>-setup.exe` from the [Releases](https://cnb.cool/lanhui100/pony_clean/-/releases) page (`x64` for 64-bit, `arm64` for Windows on ARM), then double-click to install.
+
+> Current builds are **not CA-signed** (self-signed) for internal testing, so the browser / SmartScreen may warn. Follow these steps:
+>
+> 1. When the browser asks "Keep / Keep anyway" for the `.exe`, click **Keep** (or right-click → Properties → check "Unblock")
+> 2. When SmartScreen shows "Windows protected your PC", click **More info → Run anyway**
+> 3. Internal testers may double-click `ponyclean-selfsigned.cer` → Install Certificate → "Trusted Root Certification Authorities" to remove the red block
+>
+> The warning root cause is the unsigned installer; a CA code-signing certificate will be adopted for official releases. Signing scripts live in `scripts/sign/` — see [docs/RELEASE_BUILD.md](docs/RELEASE_BUILD.md).
+
 ## Tech Stack
 
 | Layer | Choice |

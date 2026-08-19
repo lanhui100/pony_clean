@@ -99,7 +99,36 @@ npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-window
 - 仅产出 NSIS `.exe`（x64 + arm64），无 `.msi`。
 - 双架构构建比单架构多编译一次，流水线耗时约增加 2-3 分钟。
 
-## 6. 未来升级：方案 B 前提清单（备忘）
+## 6. 代码签名（解决浏览器/SmartScreen 警告）
+
+> 背景：Issue #7 — `.exe` 安装包在浏览器下载/运行时弹警告。结论：**zip 无法绕开**，根源是"未签名"，正确解法是代码签名。
+
+### 6.1 签名方案分层
+
+| 阶段 | 方案 | 效果 | 成本 |
+|---|---|---|---|
+| **初期（已实施）** | 自签名证书 + 安装说明 | 消除本地"文件已损坏/发布者未知"红色拦截；SmartScreen 黄色警告仍在 | 0 |
+| 正式发版 | OV 代码签名证书 | 消除黄色警告，进入信任链 | 数百~上千/年 |
+| 最优 | EV 代码签名证书 | 首次下载即获 SmartScreen 信任 | 数千/年 |
+
+> 自签名证书**无法进入浏览器权威信任链**，因此浏览器下载 `.exe` 拦截与 SmartScreen 黄色警告依然存在，需配合 README 安装说明让用户放行。
+
+### 6.2 初期方案实现（已落地 `scripts/sign/`）
+
+| 脚本 | 作用 | 依赖 |
+|---|---|---|
+| `gen-self-signed-cert.sh` | 生成自签名证书（PFX + CER） | openssl |
+| `sign-exe.sh` | 对 `.exe` 打上数字签名 | osslsigncode |
+
+osslsigncode 可在 **Linux 上对交叉编译的 Windows .exe 直接签名**，无需 Windows 机器，适合方案 A（官方 Linux 构建机）内测分发。快速开始见 `scripts/sign/README.md`。
+
+### 6.3 正式发版接入权威签名
+
+- 方案 B（Windows 自托管构建机）+ 权威 OV/EV 证书；
+- 用 `sign-exe.sh` 换成权威 `pfx`（时间戳建议 `http://timestamp.digicert.com`），或在 `tauri.conf.json` 配置 `bundle.windows.signCommand` 让打包阶段自动签名；
+- 也可在 `.cnb.yml` 流水线的 release 阶段接入签名。
+
+## 7. 未来升级：方案 B 前提清单（备忘）
 
 接入 Windows 自托管构建机需要：
 
@@ -110,7 +139,7 @@ npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-window
 5. 若需流水线内自动上传附件（`cnbcool/attachments` 为 Docker 镜像插件），构建机需装 Docker Desktop；否则在 Release 页面手动上传 `.exe`；
 6. 切换时 `.cnb.yml` 增加 `runner.namespace: group` + `runner.tags` 调度段，构建命令去掉 `--runner cargo-xwin --target`。
 
-## 7. 参考
+## 8. 参考
 
 - [Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)
 - [Tauri Build Windows apps on Linux and macOS](https://v2.tauri.app/distribute/windows-installer/#build-windows-apps-on-linux-and-macos)
