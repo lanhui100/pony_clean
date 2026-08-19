@@ -1857,7 +1857,23 @@ pub fn empty_recycle_bin() -> Result<(), String> {
             if result.is_ok() {
                 Ok(())
             } else {
-                Err(format!("EmptyRecycleBin failed: {result:?}"))
+                // 解码 HRESULT 为可读错误，便于定位（E_ACCESSDENIED=文件被占用/权限不足等）
+                use windows::Win32::Foundation::E_ACCESSDENIED;
+                use windows::Win32::Foundation::E_FAIL;
+                let err = result.err().expect("result.is_ok() checked above");
+                let hr = err.code(); // HRESULT
+                let hr_hex = format!("0x{:08X}", hr.0);
+                let message = err.message();
+                let hint = if hr == E_ACCESSDENIED {
+                    "回收站中有文件正被其他程序占用（如云盘、杀毒软件或正在运行的应用），或当前权限不足，请关闭占用程序后重试"
+                } else if hr == E_FAIL {
+                    "回收站中部分文件无法删除，可能是系统文件被保护或目录结构异常"
+                } else {
+                    "清空回收站失败，请稍后重试或检查回收站目录"
+                };
+                Err(format!(
+                    "清空回收站失败 ({hr_hex}): {message}。{hint}"
+                ))
             }
         }
     }
