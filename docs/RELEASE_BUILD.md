@@ -55,12 +55,13 @@ Tauri 2 在 Windows 上打包产出两种安装包，均支持"直接下载安�
 ### 5.1 构建环境
 
 - 镜像：`node:20-bookworm`（Node 20 LTS，满足前端构建与 Tauri CLI）
-- 数据卷缓存：`/root/.cargo`、`/root/.rustup`（加速工具链复用）
+- 不配置 cargo/rustup 数据卷缓存（跨构建机复用权限异常，见 §5.4）
 - 工具链安装脚本（stage 1）：
   - `rustup`（stable，满足 workspace `rust-version = 1.85`）
   - `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc`
   - `cargo install cargo-xwin`（Tauri 的交叉编译 runner，自动下载 Windows SDK）
   - `apt-get install nsis lld llvm clang libayatana-appindicator3-dev`（NSIS 打包 + lld 链接器 + llvm-rc 资源编译 + clang-cl + tray 检查）
+- 签名密钥：`imports` 从 CNB 密钥仓库注入 `TAURI_SIGNING_PRIVATE_KEY`（见 §8）
 
 ### 5.2 构建命令（stage 2，双架构）
 
@@ -77,6 +78,10 @@ npx --prefix frontend tauri build --runner cargo-xwin --target aarch64-pc-window
 - 产物路径（注意：因 workspace 共享 target（见 AGENTS.md），产物在仓库根 `target/`，**不是** `src-tauri/target/`）：
   - x64：`target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_x64-setup.exe`
   - ARM64：`target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_arm64-setup.exe`
+- updater 产物（因 `createUpdaterArtifacts: true`）：
+  - `..._x64-setup.nsis.zip` + `.sig`（x64 更新包 + 签名）
+  - `..._arm64-setup.nsis.zip` + `.sig`（ARM64 更新包 + 签名）
+  - 均上传 Release 附件；`setup.exe` 安装器本身也带 `.sig` 签名
 - ARM64 说明：NSIS 安装器本体为 x86（在 ARM 机器上经模拟运行），应用二进制为原生 ARM64，用户安装体验无差异
 - 命名规则：Tauri bundler 固定为 `{productName}_{version}_{arch}-setup.exe`，架构短名 `x64`/`arm64`/`x86`；`x64` = `x86_64`，为 Windows 生态通行叫法，无需改成 `x86_64`
 - 分发链路：
@@ -143,5 +148,40 @@ osslsigncode 可在 **Linux 上对交叉编译的 Windows .exe 直接签名**，
 
 - [Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)
 - [Tauri Build Windows apps on Linux and macOS](https://v2.tauri.app/distribute/windows-installer/#build-windows-apps-on-linux-and-macos)
+- [Tauri Updater 插件](https://v2.tauri.app/plugin/updater/)
 - [CNB 自定义构建机（自托管 Runner）](https://docs.cnb.cool/zh/build/build-node.md)
 - [CNB 附件插件 cnbcool/attachments](https://cnb.cool/cnb/plugins/market)
+- [CNB 密钥仓库](https://docs.cnb.cool/zh/repo/secret.md)
+
+## 9. 自动更新（tauri-plugin-updater）
+
+应用内"设置 → 软件更新"可检查新版本并静默下载安装（Windows `installMode: passive`，小窗口进度条）。
+
+### 9.1 更新链路
+
+1. **发版**：推送 tag → 流水线交叉编译双架构 → 自动签名（`TAURI_SIGNING_PRIVATE_KEY`）→ 上传 `setup.exe` + `.nsis.zip` + `.sig` 到 Release 附件
+2. **清单**：流水线生成 `updater/latest.json` 并提交到 main（固定 URL：`https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json`）
+3. **客户端**：app 启动/手动检查时请求该 URL → 对比版本 → 下载 `.nsis.zip` → 校验签名 → 安装重启
+
+### 9.2 配置
+
+- `tauri.conf.json`：`bundle.createUpdaterArtifacts: true` + `plugins.updater.{pubkey,endpoints,windows.installMode}`
+- `capabilities/default.json`：`updater:default`、`updater:allow-check`、`updater:allow-download-and-install`
+- Rust：`tauri_plugin_updater::Builder::new().build()` 注册插件
+- 前端：`@tauri-apps/plugin-updater` 的 `check()` + `downloadAndInstall()`（SettingsPanel.vue）
+
+### 9.3 签名密钥管理（重要）
+
+- 密钥对：`npx tauri signer generate -w <path>` 生成（已生成 `/tmp/ponyclean_updater.key` + `.pub`，2026-08-19）
+- **公钥**：写入 `tauri.conf.json` 的 `plugins.updater.pubkey`
+- **私钥**：存放 CNB **密钥仓库** `lanhui100/pony_clean-secrets`（Web 创建：cnb.cool/new/repos → 选"密钥仓库"），文件 `updater.yml`：
+  ```yaml
+  TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5..."
+  ```
+- **私钥绝不可提交到业务仓库**（本仓库已通过 `.gitignore` 意识防护 + imports 机制隔离）
+- 密钥丢失 = 无法再签名更新包，需重新生成密钥对并更新 `pubkey`（会失效已装客户端的自动更新，直到用户重装）
+
+### 9.4 发版注意
+
+- 每次发版流水线会**自动提交 `updater/latest.json` 到 main**，因此 main 会比 tag 提交多 1 个 docs 提交（属正常，由 `CNB_TOKEN` 推送）
+- 若签名失败（私钥未配置），`tauri build` 会因 `createUpdaterArtifacts` 报错——需先完成密钥仓库配置
