@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { AppWindow, Loader2, RefreshCw } from 'lucide-vue-next'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { AppWindow, Check, Copy, Loader2, RefreshCw, X } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
 import { Switch } from '../components/ui/switch'
+import { humanizeInvokeError } from '../lib/humanizeError'
 
 interface StartupItem {
   name: string
@@ -29,10 +31,18 @@ const loading = ref(true)
 const errorMsg = ref('')
 const busyKey = ref('')
 const msg = ref('')
+/** 原始错误信息（复制按钮使用）；成功提示或首次操作前为空 */
+const rawError = ref('')
+const copied = ref(false)
 let msgTimer: ReturnType<typeof setTimeout> | null = null
+let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 function keyOf(item: StartupItem) {
   return `${item.source}:${item.name}`
+}
+
+function errText(e: unknown): string {
+  return typeof e === 'string' ? e : e instanceof Error ? e.message : String(e ?? '')
 }
 
 async function load() {
@@ -41,7 +51,9 @@ async function load() {
   try {
     items.value = await invoke<StartupItem[]>('list_startup_items')
   } catch (e) {
-    errorMsg.value = `加载失败：${e}`
+    const raw = errText(e)
+    rawError.value = raw
+    errorMsg.value = `加载失败：${humanizeInvokeError(raw)}`
   }
   loading.value = false
 }
@@ -58,17 +70,41 @@ async function toggle(item: StartupItem) {
     msg.value = enabling
       ? `✓ 已重新打开「${item.name}」的开机自启动`
       : `✓ 已关闭「${item.name}」的开机自启动`
+    rawError.value = ''
   } catch (e) {
-    msg.value = `✗ ${e}`
+    const raw = errText(e)
+    rawError.value = raw
+    msg.value = `✗ ${humanizeInvokeError(raw)}`
   }
   busyKey.value = ''
   if (msgTimer) clearTimeout(msgTimer)
-  msgTimer = setTimeout(() => { msg.value = '' }, 4000)
+  if (msg.value.startsWith('✓')) {
+    // 成功提示短暂展示后自动消失；错误提示保持，直到用户关闭或进行下一次操作
+    msgTimer = setTimeout(() => { msg.value = '' }, 4000)
+  }
+}
+
+/** 一键复制原始错误信息到剪贴板（优先 Tauri 插件，失败回退 Web API） */
+async function copyError() {
+  if (!rawError.value) return
+  try {
+    await writeText(rawError.value)
+  } catch {
+    try {
+      await navigator.clipboard.writeText(rawError.value)
+    } catch {
+      return
+    }
+  }
+  copied.value = true
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => { copied.value = false }, 1500)
 }
 
 onMounted(load)
 onUnmounted(() => {
   if (msgTimer) clearTimeout(msgTimer)
+  if (copyTimer) clearTimeout(copyTimer)
 })
 </script>
 
@@ -97,7 +133,19 @@ onUnmounted(() => {
           开机时自动启动的非 Windows 应用，可在此关闭或重新打开（系统启动项已自动过滤）
         </p>
 
-        <p v-if="errorMsg" class="py-1.5 text-[10px] text-destructive">{{ errorMsg }}</p>
+        <p v-if="errorMsg" class="flex items-center gap-1 py-1.5 text-[10px] text-destructive">
+          <span class="min-w-0 flex-1 truncate" :title="errorMsg">{{ errorMsg }}</span>
+          <button
+            v-if="rawError"
+            class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-destructive/20"
+            :title="copied ? '已复制' : '复制错误信息'"
+            :aria-label="copied ? '已复制' : '复制错误信息'"
+            @click="copyError"
+          >
+            <Check v-if="copied" class="h-2.5 w-2.5" />
+            <Copy v-else class="h-2.5 w-2.5" />
+          </button>
+        </p>
 
         <!-- 空状态 -->
         <p v-if="!errorMsg && items.length === 0" class="py-1.5 text-[10px] text-muted-foreground/70">
@@ -154,15 +202,34 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <!-- 操作反馈 toast：悬浮于面板底部，滚动时始终可见 -->
+      <!-- 操作反馈 toast：悬浮于面板底部，滚动时始终可见。
+           成功提示自动消失；错误提示提供「复制错误信息」与「关闭」，保持到用户处理完 -->
       <Transition name="toast-fade">
         <div
           v-if="msg"
-          class="absolute bottom-2 left-1/2 z-20 -translate-x-1/2 max-w-[90%] truncate rounded-md px-2.5 py-1.5 text-[11px] font-medium shadow-lg"
+          class="absolute bottom-2 left-1/2 z-20 flex max-w-[90%] -translate-x-1/2 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium shadow-lg"
           :class="msg.startsWith('✓') ? 'bg-success/80 text-white' : 'bg-destructive/80 text-white'"
-          :title="msg"
         >
-          {{ msg }}
+          <span class="min-w-0 truncate" :title="msg">{{ msg }}</span>
+          <template v-if="!msg.startsWith('✓') && rawError">
+            <button
+              class="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-white/20"
+              :title="copied ? '已复制' : '复制错误信息'"
+              :aria-label="copied ? '已复制' : '复制错误信息'"
+              @click.stop="copyError"
+            >
+              <Check v-if="copied" class="h-3 w-3" />
+              <Copy v-else class="h-3 w-3" />
+            </button>
+            <button
+              class="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-white/20"
+              title="关闭"
+              aria-label="关闭提示"
+              @click="msg = ''"
+            >
+              <X class="h-3 w-3" />
+            </button>
+          </template>
         </div>
       </Transition>
     </template>

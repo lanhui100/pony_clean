@@ -17,6 +17,7 @@ tracing = "0.1"
 raw-window-handle = "0.6"
 winreg = "0.52"
 tauri-plugin-notification = "2"
+tauri-plugin-clipboard-manager = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

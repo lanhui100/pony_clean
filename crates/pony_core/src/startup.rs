@@ -46,11 +46,14 @@ pub struct StartupItem {
     pub enabled: bool,
     /// 应用微缩图标（ICO data URL，如 data:image/x-icon;base64,...）
     pub icon: Option<String>,
-    /// 存储位置的实际名称（与 name 不同时才有值，如遗留的 `xxx_disabled` 值 / 完整文件名）
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// 存储位置的实际名称（与 name 不同时才有值，如遗留的 `xxx_disabled` 值 / 完整文件名）。
+    /// 序列化时省略 `None`；反序列化时缺失则视为 `None`（否则 list → invoke 回传会
+    /// 因缺字段报 `invalid args`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reg_name: Option<String>,
-    /// 原始值是否为 REG_EXPAND_SZ（恢复时保留类型，避免环境变量不展开）
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    /// 原始值是否为 REG_EXPAND_SZ（恢复时保留类型，避免环境变量不展开）。
+    /// 序列化时省略 `false`；反序列化时缺失则视为 `false`。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub expand_sz: bool,
 }
 
@@ -1175,6 +1178,57 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 修复回归：list → 前端 → invoke 回传链路。可选字段在序列化时被省略
+    /// （skip_serializing_if），反序列化必须容忍缺失，否则关闭启动项时报
+    /// `invalid args 'item' for command 'disable_startup_item'`。
+    #[test]
+    fn startup_item_serde_roundtrip_missing_optional() {
+        let src = StartupItem {
+            name: "WeChat".into(),
+            command: r#""C:\Program Files\Tencent\WeChat\WeChat.exe""#.into(),
+            exe_path: r"C:\Program Files\Tencent\WeChat\WeChat.exe".into(),
+            source: StartupSource::RegistryUser,
+            requires_admin: false,
+            enabled: true,
+            icon: Some("data:image/x-icon;base64,AAAA".into()),
+            reg_name: None,
+            expand_sz: false,
+        };
+        // 序列化契约：reg_name/expand_sz 必须被省略（前端拿到的是缺字段的对象）
+        let json = serde_json::to_string(&src).unwrap();
+        assert!(!json.contains("reg_name"), "reg_name=None 应被省略: {json}");
+        assert!(!json.contains("expand_sz"), "expand_sz=false 应被省略: {json}");
+        // 缺字段反序列化必须成功（修复 invalid args）
+        let back: StartupItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "WeChat");
+        assert_eq!(back.reg_name, None);
+        assert!(!back.expand_sz);
+        assert_eq!(back.source, StartupSource::RegistryUser);
+    }
+
+    /// 含全部字段时反序列化正常（reg_name / expand_sz 有值场景）
+    #[test]
+    fn startup_item_serde_roundtrip_full_fields() {
+        let src = StartupItem {
+            name: "Feishu".into(),
+            command: r#""C:\Apps\Feishu\Feishu.exe""#.into(),
+            exe_path: r"C:\Apps\Feishu\Feishu.exe".into(),
+            source: StartupSource::RegistryMachine,
+            requires_admin: true,
+            enabled: false,
+            icon: None,
+            reg_name: Some("Feishu_disabled".into()),
+            expand_sz: true,
+        };
+        let json = serde_json::to_string(&src).unwrap();
+        assert!(json.contains("reg_name"));
+        assert!(json.contains("expand_sz"));
+        let back: StartupItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.reg_name.as_deref(), Some("Feishu_disabled"));
+        assert!(back.expand_sz);
+        assert_eq!(back.source, StartupSource::RegistryMachine);
+    }
 
     #[test]
     fn parse_quoted_command() {

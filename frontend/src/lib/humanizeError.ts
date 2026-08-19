@@ -61,3 +61,28 @@ export function humanizeErrors(errors: string[], max = 5): string[] {
   }
   return out
 }
+
+/** Tauri invoke 调用错误 → 中文（启动项开关等操作反馈用）。
+ *
+ * invoke 抛出的错误有两类：后端 `Result<(), String>` 的 Err（多为中文，原样保留），
+ * 以及 Tauri IPC 层错误（英文，如 `invalid args ... for command ...`）。
+ * 匹配不到时截断保留原文，绝不吞掉信息。
+ */
+const INVOKE_RULES: Array<[RegExp, string]> = [
+  [/invalid args/i, '操作数据不完整，请刷新列表后重试'],
+  [/command .*not found/i, '内部命令不可用，请重启应用'],
+  [/not allowed/i, '没有权限执行该操作'],
+  [/未获得管理员授权/i, '未获得管理员授权，操作已取消'],
+  [/操作已取消/i, '操作已取消'],
+  [/当前平台不支持/i, '当前系统不支持该操作'],
+]
+
+export function humanizeInvokeError(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw : raw instanceof Error ? raw.message : String(raw ?? '')
+  const clean = stripPath(s.trim())
+  if (!clean) return '未知错误'
+  for (const [re, zh] of INVOKE_RULES) {
+    if (re.test(clean)) return zh
+  }
+  return clean.slice(0, 60)
+}
