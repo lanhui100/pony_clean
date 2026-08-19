@@ -405,7 +405,7 @@ function categoryLabel(value: string) {
         <div class="flex items-center justify-between">
           <div>
             <span class="text-xs text-foreground/90">自动更新</span>
-            <p class="mt-0.5 text-[10px] text-muted-foreground/70">每 6 小时自动检查，发现新版本自动下载安装</p>
+            <p class="mt-0.5 text-[10px] text-muted-foreground/70">每 1 小时自动检查，发现新版本自动下载安装</p>
           </div>
           <button
             class="relative h-4 w-7 shrink-0 rounded-full transition-colors"

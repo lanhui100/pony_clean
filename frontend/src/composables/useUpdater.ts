@@ -7,12 +7,13 @@ import { check } from '@tauri-apps/plugin-updater'
  *
  * 定时检查策略：
  *  - 应用启动后 3 秒首次检查（只提示角标，不自动装）
- *  - 之后每 6 小时检查一次，若用户开启了「自动更新」则发现新版本自动下载安装
+ *  - 之后每 1 小时检查一次（与 VS Code / Discord 等主流一致），若用户开启了
+ *    「自动更新」则发现新版本自动下载安装；检查仅拉取 latest.json，开销极低
  *
  * 更新可用状态 updateAvailable 暴露给 TitleBar：设置 tab 显示角标提醒。
  */
 
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 小时
+const CHECK_INTERVAL_MS = 60 * 60 * 1000 // 1 小时
 const FIRST_CHECK_DELAY_MS = 3000 // 启动后 3 秒
 
 export const updateAvailable = ref(false)
