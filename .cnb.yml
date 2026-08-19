@@ -43,8 +43,9 @@ $:
             export PATH="$CARGO_HOME/bin:$PATH"
             npm ci --prefix frontend
             npm run build
-            cd frontend
-            npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+            # 注意：必须保持 CWD 在仓库根目录（tauri CLI 需在子目录中找到 src-tauri/tauri.conf.json），
+            # 通过 npx --prefix frontend 使用 frontend 下安装的 @tauri-apps/cli
+            npx --prefix frontend tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 
         - name: 创建 Release
           type: git:release
