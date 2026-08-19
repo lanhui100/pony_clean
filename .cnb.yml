@@ -75,11 +75,16 @@ $:
             export CXX_aarch64_pc_windows_msvc="clang++"
             export XWIN_DIR="/root/.cache/cargo-xwin/xwin"
             export CFLAGS_aarch64_pc_windows_msvc="--target=aarch64-pc-windows-msvc -isystem $XWIN_DIR/crt/include -isystem $XWIN_DIR/sdk/include/ucrt -isystem $XWIN_DIR/sdk/include/um -isystem $XWIN_DIR/sdk/include/shared -isystem $XWIN_DIR/sdk/include/winrt"
+            # llvm 包带版本后缀（llvm-lib-19 等），cc-rs 找 lib.exe / llvm-lib：
+            # 动态探测 llvm-lib 命令名，建符号链接满足 lib.exe 期望，并用其作为 AR
+            LLVM_LIB="$(command -v llvm-lib-19 || command -v llvm-lib || command -v llvm-lib-18 || echo llvm-lib)"
+            ln -sf "$LLVM_LIB" /usr/local/bin/lib.exe
+            export AR_aarch64_pc_windows_msvc="$(basename "$LLVM_LIB")"
             export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER="lld-link"
             export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=$XWIN_DIR/crt/lib/arm64 -Lnative=$XWIN_DIR/sdk/lib/arm64"
             export RUSTFLAGS="-C link-arg=/LIBPATH:$XWIN_DIR/crt/lib/arm64 -C link-arg=/LIBPATH:$XWIN_DIR/sdk/lib/arm64"
             npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
-            unset RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER CC_aarch64_pc_windows_msvc CXX_aarch64_pc_windows_msvc CFLAGS_aarch64_pc_windows_msvc
+            unset RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER AR_aarch64_pc_windows_msvc CC_aarch64_pc_windows_msvc CXX_aarch64_pc_windows_msvc CFLAGS_aarch64_pc_windows_msvc
 
         - name: 创建 Release
           type: git:release
