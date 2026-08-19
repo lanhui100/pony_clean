@@ -80,11 +80,13 @@ $:
             LLVM_LIB="$(command -v llvm-lib-19 || command -v llvm-lib || command -v llvm-lib-18 || echo llvm-lib)"
             ln -sf "$LLVM_LIB" /usr/local/bin/lib.exe
             export AR_aarch64_pc_windows_msvc="$(basename "$LLVM_LIB")"
+            # 链接器 + 库搜索路径（参照 cargo-xwin 的 clang_cl.rs 逻辑）：
+            #   -Lnative 注入 target 专属 RUSTFLAGS；SDK 库路径为 crt/lib、sdk/lib/um、sdk/lib/ucrt
             export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER="lld-link"
-            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=$XWIN_DIR/crt/lib/arm64 -Lnative=$XWIN_DIR/sdk/lib/arm64"
-            export RUSTFLAGS="-C link-arg=/LIBPATH:$XWIN_DIR/crt/lib/arm64 -C link-arg=/LIBPATH:$XWIN_DIR/sdk/lib/arm64"
+            export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS="-Lnative=$XWIN_DIR/crt/lib/arm64 -Lnative=$XWIN_DIR/sdk/lib/um/arm64 -Lnative=$XWIN_DIR/sdk/lib/ucrt/arm64 -C linker-flavor=lld-link"
+            # 注意：不要设置全局 RUSTFLAGS（cargo 优先全局而忽略 target 专属 flag，导致链接找不到系统库）
             npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
-            unset RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER AR_aarch64_pc_windows_msvc CC_aarch64_pc_windows_msvc CXX_aarch64_pc_windows_msvc CFLAGS_aarch64_pc_windows_msvc
+            unset CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER AR_aarch64_pc_windows_msvc CC_aarch64_pc_windows_msvc CXX_aarch64_pc_windows_msvc CFLAGS_aarch64_pc_windows_msvc
 
         - name: 创建 Release
           type: git:release
