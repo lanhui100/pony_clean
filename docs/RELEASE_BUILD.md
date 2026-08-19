@@ -70,7 +70,8 @@ npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 
 ### 5.3 产物与分发
 
-- 产物路径：`src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_x64-setup.exe`
+- 产物路径：`target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<version>_x64-setup.exe`
+  - 注意：因 workspace 共享 target（见 AGENTS.md），产物在仓库根 `target/`，**不是** `src-tauri/target/`
 - 分发链路：
   1. `git:release` 内置任务为当前 tag 创建 Release；
   2. `cnbcool/attachments` 插件把 `.exe` 上传为 Release 附件（官方构建机有 Docker，可运行该插件）；

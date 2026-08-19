@@ -59,5 +59,7 @@ $:
         - name: 上传安装包到 Release 附件
           image: cnbcool/attachments:latest
           settings:
+            # 产物在 workspace 共享 target（仓库根 target/），不在 src-tauri/target/
+            # 实际路径：target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
             attachments:
-              - "./src-tauri/target/**/bundle/nsis/*-setup.exe"
+              - "./target/**/bundle/nsis/*-setup.exe"
