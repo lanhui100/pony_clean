@@ -1,7 +1,8 @@
 # CNB 构建 Windows 安装包方案
 
 > 调研日期：2026-08-19
-> 状态：已实施方案 A（官方构建机交叉编译 NSIS `.exe`）
+> 状态：已实施方案 A（官方构建机交叉编译 NSIS `.exe`）并**验证通过**（2026-08-19）
+> 首个产物：`PonyClean_0.1.0_x64-setup.exe`（1.9 MB），见 [v0.1.0 Release](https://cnb.cool/lanhui100/pony_clean/-/releases/tag/v0.1.0)
 
 ## 1. 背景
 
@@ -77,9 +78,18 @@ npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
   2. `cnbcool/attachments` 插件把 `.exe` 上传为 Release 附件（官方构建机有 Docker，可运行该插件）；
   3. 用户在 CNB Release 页面直接下载安装。
 
-### 5.4 已知限制与优化方向
+### 5.4 实施中踩过的坑（2026-08-19 测试）
 
-- `apt install` 每次流水线重复执行：可改为 `docker.build` 自定义镜像预装工具链（见 [CNB 构建环境文档](https://docs.cnb.cool/zh/build/build-env.md)）。
+1. **tauri CLI 目录识别**：必须在仓库根目录执行 `npx --prefix frontend tauri build`，不能 `cd frontend`（否则找不到 `src-tauri/tauri.conf.json`）。
+2. **数据卷缓存权限**：`/root/.cargo`、`/root/.rustup` 配数据卷缓存后，跨构建机复用时出现 `settings.toml: Permission denied`。**当前方案不加 volumes 缓存**，工具链每次重装（约 2-3 分钟）。
+3. **cc-rs 需 clang**：本项目依赖编译 C/C++，交叉编译报 `failed to find tool "clang-cl"`，需 `apt install clang`。
+4. **tray-icon 特性检查**：应用启用 `tray-icon`，tauri-cli 打包阶段在 Linux 宿主机检测 appindicator 库并 panic，需 `apt install libayatana-appindicator3-dev`。
+5. **产物路径**：workspace 共享 target，安装包在仓库根 `target/`（`target/x86_64-pc-windows-msvc/release/bundle/nsis/`），**不在** `src-tauri/target/`；附件上传 glob 必须写 `./target/**/bundle/nsis/*-setup.exe`。
+6. **删除 tag 的限制**：tag 一旦创建 Release，CNB 禁止直接删除 tag 重建；需先用 `cnb releases delete-release` 删除 Release 再重建 tag。
+
+### 5.5 已知限制与优化方向
+
+- `apt install` 每次流水线重复执行：可改为 `docker.build` 自定义镜像预装工具链（见 [CNB 构建环境文档](https://docs.cnb.cool/zh/build/build-env.md)），并顺带解决缓存卷权限问题（把 rustup/cargo 装进镜像）。
 - 仅产出 `.exe`，无 `.msi`。
 
 ## 6. 未来升级：方案 B 前提清单（备忘）
