@@ -8,6 +8,8 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+- Added: Windows NSIS 安装程序支持简体中文（安装界面语言选择器，默认随系统语言显示）
+
 ## [0.1.1] - 2026-08-19
 
 - Added: 版本管理体系建设 — bump/check 脚本（`scripts/bump-version.mjs` / `scripts/check-version.mjs`）、CHANGELOG、CI 版本一致性校验、docs/VERSIONING.md
