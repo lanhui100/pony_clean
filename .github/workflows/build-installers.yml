@@ -1,0 +1,133 @@
+# Windows 安装包发布流水线（PonyClean）— GitHub Actions 版
+#
+# 触发方式：
+#   - 推送 vX.Y.Z tag（配合 `node scripts/bump-version.mjs <ver> --commit --tag`）自动构建并创建 Release
+#   - workflow_dispatch 手动触发（仅构建 + 上传 artifact，不创建 Release）
+# 构建环境：windows-latest（Windows Server 2022 x64，预装 VS 2022 + LLVM + rustup）
+# 产物（双架构 NSIS，含 updater 支持）：
+#   x64    : target/x86_64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_x64-setup.exe
+#             + 同目录 .exe.sig（updater 签名，需配置 TAURI_SIGNING_PRIVATE_KEY）
+#   arm64  : target/aarch64-pc-windows-msvc/release/bundle/nsis/PonyClean_<ver>_arm64-setup.exe
+#             + 同目录 .exe.sig
+# 签名：tauri build 通过 TAURI_SIGNING_PRIVATE_KEY 环境变量自动签名（updater 产物必需）。
+#       私钥需配置到 GitHub Secrets（与 CNB 密钥仓库 lanhui100/pony_clean-secrets 同一把）。
+#       若密钥带密码，必须同时配置 TAURI_SIGNING_PRIVATE_KEY_PASSWORD。
+#       未配置密钥时自动用 --config 临时关闭 createUpdaterArtifacts，产物无 .sig（仅安装包）。
+# 分发：tag 触发时创建 GitHub Release 并上传 setup.exe + .sig；
+#       updater/latest.json 未在此流水线生成（当前 updater endpoint 仍指向 CNB，见 tauri.conf.json）
+
+name: Build Windows Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+          targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: frontend
+
+      - name: 构建前端
+        run: npm run build
+        working-directory: frontend
+
+      # tag 与 tauri.conf.json 版本一致性守卫（防止绕过 bump-version.mjs 手动打 tag 导致产物命名错误）
+      - name: 校验 tag 与配置版本一致
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($tag -ne "v$ver") { throw "tag $tag 与配置版本 v$ver 不一致，请用 scripts/bump-version.mjs 发版" }
+
+      # x64：原生构建（host target = x86_64-pc-windows-msvc），零交叉编译
+      # 未配置 TAURI_SIGNING_PRIVATE_KEY 时用 --config 临时关闭 createUpdaterArtifacts（产物无 .sig）
+      - name: 构建 x64 安装包（原生）
+        shell: pwsh
+        run: |
+          $config = $null
+          if ("$env:TAURI_SIGNING_PRIVATE_KEY" -eq "") { $config = '{"bundle":{"createUpdaterArtifacts":false}}' }
+          if ($config) { npx --prefix frontend tauri build --ci --config $config } else { npx --prefix frontend tauri build --ci }
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # arm64：MSVC amd64_arm64 交叉环境（VS 2022 自带 ARM64 工具集 + Windows SDK ARM64 库）
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: 构建 arm64 安装包（交叉编译）
+        shell: pwsh
+        run: |
+          # ring 0.17 在 aarch64-pc-windows-msvc 上用 clang 汇编，需 LLVM 在 PATH（探测兜底镜像路径漂移）
+          $llvmBin = "C:\Program Files\LLVM\bin"
+          if (-not (Test-Path "$llvmBin\clang.exe")) {
+            $clang = (Get-Command clang -ErrorAction SilentlyContinue).Source
+            if ($clang) { $llvmBin = Split-Path $clang }
+          }
+          $env:Path = "$llvmBin;$env:Path"
+          # NSIS 是 ARM64 唯一支持的 bundle（官方文档建议显式指定）
+          $config = $null
+          if ("$env:TAURI_SIGNING_PRIVATE_KEY" -eq "") { $config = '{"bundle":{"createUpdaterArtifacts":false}}' }
+          if ($config) {
+            npx --prefix frontend tauri build --ci --target aarch64-pc-windows-msvc --bundles nsis --config $config
+          } else {
+            npx --prefix frontend tauri build --ci --target aarch64-pc-windows-msvc --bundles nsis
+          }
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: 上传安装包 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponyclean-installers
+          if-no-files-found: error
+          path: |
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.sig
+            target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/aarch64-pc-windows-msvc/release/bundle/nsis/*.sig
+
+      - name: 创建 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.sig
+            target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/aarch64-pc-windows-msvc/release/bundle/nsis/*.sig
+          body: |
+            PonyClean ${{ github.ref_name }} 自动构建产物：
+            - x64 安装包（NSIS）
+            - arm64 安装包（NSIS，Windows on ARM）
+            未配置 TAURI_SIGNING_PRIVATE_KEY 时产物不含 updater 签名（.sig）。

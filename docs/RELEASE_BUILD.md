@@ -122,6 +122,40 @@ npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
 - 仅产出 NSIS `.exe`（x64 + arm64），无 `.msi`。
 - 双架构构建比单架构多编译一次，流水线耗时约增加 2-3 分钟。
 
+### 5.6 GitHub Actions 构建（windows-latest 原生 + ARM64 交叉）
+
+> 2026-08-20 新增。仓库同时提供 GitHub Actions 流水线（`.github/workflows/build-installers.yml`），
+> 与 CNB 方案 A 互为备份，产物一致（x64 + arm64 NSIS `.exe`）。
+
+| 维度 | CNB 方案 A | GitHub Actions |
+|------|-----------|----------------|
+| 构建机 | Linux 容器（node:20-bookworm） | windows-latest（Windows Server 2022 x64） |
+| x64 | cargo-xwin 交叉编译 | **原生构建**（MSVC，零交叉） |
+| arm64 | 手动 clang + lld-link + xwin SDK 探测 | **MSVC amd64_arm64 交叉环境**（VS 2022 自带 ARM64 工具集） |
+| 工具链 | 每次 apt 安装 rustup/nsis/llvm/clang | 预装 VS 2022 + LLVM + rustup，tauri 自动下载 NSIS |
+| 签名 | CNB 密钥仓库 imports | GitHub Secrets `TAURI_SIGNING_PRIVATE_KEY`（同一把密钥） |
+| 分发 | CNB Release + latest.json 提交 main | GitHub Release + workflow artifact（latest.json 未生成） |
+
+**触发方式**：推送 `vX.Y.Z` tag 自动构建并创建 GitHub Release；`workflow_dispatch` 手动触发（仅构建 + artifact）。
+
+**关键步骤**：
+1. `dtolnay/rust-toolchain` 安装 `x86_64-pc-windows-msvc` + `aarch64-pc-windows-msvc` 双 target；
+2. x64：`npx --prefix frontend tauri build --ci`（原生，host target）；
+3. arm64：`ilammy/msvc-dev-cmd@v1`（`arch: amd64_arm64`）设置 MSVC 交叉环境后
+   `npx --prefix frontend tauri build --ci --target aarch64-pc-windows-msvc --bundles nsis`；
+   - ring 0.17 在 aarch64 上用 clang 汇编，需 LLVM 在 PATH（windows-latest 预装）；
+   - `--bundles nsis`：NSIS 是 ARM64 唯一支持的 bundle（Tauri 官方建议显式指定）；
+4. 签名：`TAURI_SIGNING_PRIVATE_KEY`（+ 可选 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）注入 tauri build；
+   **未配置时 workflow 自动临时关闭 `createUpdaterArtifacts`**，产物仅安装包（无 `.sig`）；
+5. 分发：`softprops/action-gh-release` 上传 `setup.exe` + `.sig` 到 GitHub Release；`upload-artifact` 始终上传。
+
+**与 CNB 方案的差异与注意**：
+- Windows 原生构建质量更好、无需 cargo-xwin 与手动 NSIS 安装（tauri 自动下载）；
+- **updater/latest.json 未在 GitHub 流水线生成**：当前 `tauri.conf.json` 的 updater endpoint 仍指向 CNB
+  （`https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json`）。若改用 GitHub 分发自动更新，
+  需将 endpoint 改为 GitHub raw URL，并在流水线中生成提交 latest.json（URL 指向 GitHub Release 下载地址）。
+- 签名私钥需配置到 GitHub Secrets（与 CNB 密钥仓库 `lanhui100/pony_clean-secrets` 同一把，见 §9.3）。
+
 ## 6. 代码签名（解决浏览器/SmartScreen 警告）
 
 > 背景：Issue #7 — `.exe` 安装包在浏览器下载/运行时弹警告。结论：**zip 无法绕开**，根源是"未签名"，正确解法是代码签名。
@@ -202,4 +236,4 @@ osslsigncode 可在 **Linux 上对交叉编译的 Windows .exe 直接签名**，
 ### 9.4 发版注意
 
 - 每次发版流水线会**自动提交 `updater/latest.json` 到 main**，因此 main 会比 tag 提交多 1 个 docs 提交（属正常，由 `CNB_TOKEN` 推送）
-- 若签名失败（私钥未配置），`tauri build` 会因 `createUpdaterArtifacts` 报错——需先完成密钥仓库配置
+- 若签名失败（私钥未配置），**CNB 流水线**的 `tauri build` 会因 `createUpdaterArtifacts` 报错——需先完成密钥仓库配置；**GitHub 流水线**（§5.6）会自动用 `--config` 临时关闭 `createUpdaterArtifacts`，产物仅安装包（无 `.sig`），不报错
