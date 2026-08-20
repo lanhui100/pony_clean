@@ -43,6 +43,8 @@ let sharedTimer: ReturnType<typeof setInterval> | null = null
 let sharedRefCount = 0
 let hasData = false
 let currentInterval = 2000
+/** 固定进程列表：暂停轮询，保留当前快照（模块级，跨实例重挂载不丢） */
+const paused = ref(false)
 
 // 告警阈值（从后端配置加载，默认 80/85）
 let alertCpuPct = 80
@@ -141,6 +143,19 @@ export function useMonitor() {
     }
   }
 
+  /** 固定/恢复进程列表：固定时暂停轮询（保留当前快照），恢复时立即刷新并继续轮询 */
+  function setPaused(p: boolean) {
+    if (p === paused.value) return
+    paused.value = p
+    if (p) {
+      if (sharedTimer) clearInterval(sharedTimer)
+      sharedTimer = null
+    } else if (sharedRefCount > 0) {
+      fetch()
+      sharedTimer = setInterval(fetch, currentInterval)
+    }
+  }
+
   async function killProcess(pid: number, name: string): Promise<string> {
     try {
       await invoke('kill_process', { pid, name })
@@ -172,6 +187,7 @@ export function useMonitor() {
   function start() {
     if (sharedTimer) return
     loadConfig().finally(() => {
+      if (paused.value) return // 保持固定状态，不启动轮询
       fetch()
       sharedTimer = setInterval(fetch, currentInterval)
     })
@@ -197,6 +213,7 @@ export function useMonitor() {
     summary,
     loading,
     error,
+    paused,
     cpuPercent,
     memPercent,
     diskPct,
@@ -206,6 +223,7 @@ export function useMonitor() {
     trimMemory,
     getProcessIcon,
     setAlertThresholds,
+    setPaused,
     fetch,
     setPollInterval,
     start,

@@ -4,9 +4,9 @@ import {
   ScanSearch, RefreshCw, X, Check, AlertCircle, ChevronRight, Loader2, Trash2, TriangleAlert, Zap,
 } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
-import { Alert } from '../components/ui/alert'
 import { Checkbox } from '../components/ui/checkbox'
 import { ScrollArea } from '../components/ui/scroll-area'
+import { Toast } from '../components/ui/toast'
 import {
   Collapsible, CollapsibleTrigger, CollapsibleContent,
 } from '../components/ui/collapsible'
@@ -415,6 +415,17 @@ function formatBytes(bytes: number): string {
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 3)
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
+
+/** 清理结果 toast 摘要文案 */
+const cleanToastMsg = computed(() => {
+  const r = deleteResult.value
+  if (!r) return ''
+  let s = r.failed > 0 ? '✗ 清理完成' : '✓ 清理完成'
+  s += ` ${r.success} 项成功`
+  if (lastCleanBytes.value > 0) s += `，释放约 ${formatBytes(lastCleanBytes.value)}`
+  if (r.failed > 0) s += `，${r.failed} 项失败`
+  return s
+})
 
 function fmtDate(secs: number): string {
   if (!secs) return '—'
@@ -945,67 +956,30 @@ onUnmounted(() => {
     </Transition>
 
     <!-- ═══ 垃圾清理结果 toast ═══ -->
-    <Transition name="toast">
-      <div v-if="deleteResult" class="absolute bottom-0 left-0 right-0 z-10">
-        <Alert
-          :variant="deleteResult.failed > 0 ? 'destructive' : 'default'"
-          class="border-0 shadow-lg"
-        >
-          <div class="flex items-start gap-2">
-            <Check v-if="deleteResult.failed === 0" class="mt-0.5 h-4 w-4 shrink-0 text-success" />
-            <AlertCircle v-else class="mt-0.5 h-4 w-4 shrink-0" />
-            <div class="min-w-0 flex-1">
-              <p class="text-xs">
-                清理完成
-                <span class="font-medium text-success">{{ deleteResult.success }}</span> 项成功
-                <template v-if="lastCleanBytes > 0">
-                  ，释放约 <span class="font-medium text-success">{{ formatBytes(lastCleanBytes) }}</span>
-                </template>
-                <template v-if="deleteResult.failed > 0">
-                  ，<span class="font-medium text-destructive">{{ deleteResult.failed }}</span> 项失败
-                </template>
-              </p>
-              <template v-if="deleteResult.failed > 0 && deleteResult.errors.length > 0">
-                <div class="mt-1 space-y-0.5">
-                  <p
-                    v-for="(err, ei) in humanizeErrors(deleteResult.errors)"
-                    :key="ei"
-                    class="truncate text-[11px] text-destructive/80"
-                    :title="err"
-                  >
-                    {{ err }}
-                  </p>
-                </div>
-              </template>
-            </div>
-            <button
-              class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
-              @click="deleteResult = null"
-            >
-              <X class="h-3 w-3" />
-            </button>
-          </div>
-        </Alert>
-      </div>
-    </Transition>
+    <Toast
+      :show="!!deleteResult"
+      :message="cleanToastMsg"
+      :raw-error="deleteResult && deleteResult.failed > 0 ? deleteResult.errors.join('\n') : ''"
+      :variant="deleteResult && deleteResult.failed > 0 ? 'error' : 'success'"
+      @close="deleteResult = null"
+    >
+      <template v-if="deleteResult && deleteResult.failed > 0 && deleteResult.errors.length > 0">
+        <div class="space-y-0.5">
+          <p
+            v-for="(err, ei) in humanizeErrors(deleteResult.errors)"
+            :key="ei"
+            class="truncate text-[11px] text-white/80"
+            :title="err"
+          >
+            {{ err }}
+          </p>
+        </div>
+      </template>
+    </Toast>
   </div>
 </template>
 
 <style scoped>
-.toast-enter-active {
-  transition: all 0.3s ease-out;
-}
-.toast-leave-active {
-  transition: all 0.3s ease-in;
-}
-.toast-enter-from {
-  transform: translateY(20px);
-  opacity: 0;
-}
-.toast-leave-to {
-  transform: translateY(10px);
-  opacity: 0;
-}
 .overlay-enter-active,
 .overlay-leave-active {
   transition: opacity 0.2s ease;

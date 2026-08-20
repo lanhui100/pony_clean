@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { X, Droplets, Loader2 } from 'lucide-vue-next'
+import { X, Droplets, Loader2, Pin, PinOff } from 'lucide-vue-next'
+import { Toast } from '../components/ui/toast'
 import { useMonitor, type ProcessInfo } from '../composables/useMonitor'
 
-const { processes, summary, loading, error, killProcess, trimMemory, getProcessIcon } = useMonitor()
+const { processes, summary, loading, error, paused, killProcess, trimMemory, getProcessIcon, setPaused } = useMonitor()
 
 const props = defineProps<{
   search: string
@@ -36,6 +37,11 @@ const killingPids = ref<Record<number, boolean>>({})
 const trimMsg = ref('')
 const trimming = ref(false)
 let trimTimer: ReturnType<typeof setTimeout> | null = null
+
+// 固定进程列表：暂停轮询，保留当前快照，便于稳定操作（如终止进程）
+function togglePinned() {
+  setPaused(!paused.value)
+}
 
 async function handleTrim() {
   if (trimming.value) return
@@ -178,6 +184,10 @@ async function handleKill(p: ProcessRow) {
       return
     }
     killMsg.value = await killProcess(p.pid, p.name)
+    if (killMsg.value.startsWith('✓') && paused.value) {
+      // 终止成功后恢复列表刷新
+      setPaused(false)
+    }
     scheduleKillClear()
   } else {
     confirmPid.value = p.pid
@@ -225,6 +235,17 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- 固定进程列表按钮（右上角，仅图标） -->
+    <button
+      class="absolute right-8 top-2.5 flex h-7 w-7 items-center justify-center rounded-md transition-colors disabled:opacity-50"
+      :class="paused ? 'bg-primary/20 text-primary' : 'text-primary/70 hover:bg-primary/15 hover:text-primary'"
+      :title="paused ? '已固定列表，点击恢复刷新' : '固定列表（暂停刷新，便于操作）'"
+      @click="togglePinned"
+    >
+      <PinOff v-if="paused" class="h-4 w-4" />
+      <Pin v-else class="h-4 w-4" />
+    </button>
+
     <!-- Trim memory 按钮（右上角，仅图标） -->
     <button
       class="absolute right-0 top-2.5 flex h-7 w-7 items-center justify-center rounded-md text-primary/70 transition-colors hover:bg-primary/15 hover:text-primary disabled:opacity-50"
@@ -237,26 +258,22 @@ onUnmounted(() => {
     </button>
 
     <!-- Trim feedback toast -->
-    <Transition name="kill-fade">
-      <div
-        v-if="trimMsg"
-        class="absolute left-1/2 top-1/3 z-10 -translate-x-1/2 rounded px-2.5 py-1.5 text-xs font-medium"
-        :class="trimMsg.startsWith('✓') ? 'bg-success/30 text-success' : 'bg-destructive/30 text-destructive'"
-      >
-        {{ trimMsg }}
-      </div>
-    </Transition>
+    <Toast
+      :show="!!trimMsg"
+      :message="trimMsg"
+      :raw-error="trimMsg.startsWith('✓') ? '' : trimMsg"
+      :variant="trimMsg.startsWith('✓') ? 'success' : 'error'"
+      @close="trimMsg = ''"
+    />
 
     <!-- Kill feedback toast — bottom floating -->
-    <Transition name="kill-fade">
-      <div
-        v-if="killMsg"
-        class="absolute bottom-0 left-1/2 z-10 -translate-x-1/2 rounded px-2.5 py-1.5 text-xs font-medium"
-        :class="killMsg.startsWith('✓') ? 'bg-success/30 text-success' : 'bg-destructive/30 text-destructive'"
-      >
-        {{ killMsg }}
-      </div>
-    </Transition>
+    <Toast
+      :show="!!killMsg"
+      :message="killMsg"
+      :raw-error="killMsg.startsWith('✓') ? '' : killMsg"
+      :variant="killMsg.startsWith('✓') ? 'success' : 'error'"
+      @close="killMsg = ''"
+    />
 
     <!-- Loading skeleton -->
     <div v-if="loading" class="flex flex-1 flex-col gap-0.5">
@@ -303,7 +320,7 @@ onUnmounted(() => {
         <button class="flex-[8] text-left hover:text-foreground transition-colors" @click="toggleSort('name')">
           TOP {{ filtered.length }} {{ sortIcon('name') }}
         </button>
-        <button class="flex-[3] text-left hover:text-foreground transition-colors" @click="toggleSort('cpu')">
+        <button class="flex-[3] text-left whitespace-nowrap hover:text-foreground transition-colors" @click="toggleSort('cpu')">
           CPU {{ sortIcon('cpu') }}
         </button>
         <button class="flex-[4] text-left whitespace-nowrap hover:text-foreground transition-colors" @click="toggleSort('mem_mb')">
@@ -366,15 +383,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.kill-fade-enter-active,
-.kill-fade-leave-active {
-  transition: opacity 0.25s ease;
-}
-.kill-fade-enter-from,
-.kill-fade-leave-to {
-  opacity: 0;
-}
-
 .btn-swap-enter-active,
 .btn-swap-leave-active {
   transition: opacity 0.15s ease, transform 0.15s ease;
