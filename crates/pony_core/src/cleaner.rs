@@ -2157,37 +2157,36 @@ mod tests {
     #[serial_test::serial]
     #[test]
     fn test_resolve_targets_excludes_forbidden() {
-        let targets = vec![
-            ScanTarget::new(
-                "temp".into(),
-                "%TEMP%",
-                SafetyLevel::Safe,
-                Category::Temp,
-                "".into(),
-            ),
-            ScanTarget::new(
-                "sys32".into(),
-                "C:\\Windows\\System32",
-                SafetyLevel::Forbidden,
-                Category::Temp,
-                "".into(),
-            ),
-        ];
-        let resolved = resolve_targets(&targets);
-        // 应包含指向 TEMP 的路径（Safe）
-        assert!(
-            !resolved.is_empty(),
-            "should include TEMP (TEMP={:?}, TMP={:?})",
-            std::env::var("TEMP").unwrap_or_default(),
-            std::env::var("TMP").unwrap_or_default()
-        );
-        // 应排除 System32（Forbidden）
-        assert!(
-            !resolved
-                .iter()
-                .any(|(p, _)| p.to_string_lossy().to_lowercase().contains("system32")),
-            "should NOT include System32"
-        );
+        // 固定 TEMP 为完整路径：GitHub runner 的 TEMP 是 8.3 短名（RUNNER~1），
+        // canonicalize 展开后与原始值不匹配会导致 verify_env_path_inner 失败
+        temp_env::with_var("TEMP", Some("C:\\TestTemp"), || {
+            let targets = vec![
+                ScanTarget::new(
+                    "temp".into(),
+                    "%TEMP%",
+                    SafetyLevel::Safe,
+                    Category::Temp,
+                    "".into(),
+                ),
+                ScanTarget::new(
+                    "sys32".into(),
+                    "C:\\Windows\\System32",
+                    SafetyLevel::Forbidden,
+                    Category::Temp,
+                    "".into(),
+                ),
+            ];
+            let resolved = resolve_targets(&targets);
+            // 应包含指向 TEMP 的路径（Safe）
+            assert!(!resolved.is_empty(), "should include TEMP");
+            // 应排除 System32（Forbidden）
+            assert!(
+                !resolved
+                    .iter()
+                    .any(|(p, _)| p.to_string_lossy().to_lowercase().contains("system32")),
+                "should NOT include System32"
+            );
+        });
     }
 
     #[test]
