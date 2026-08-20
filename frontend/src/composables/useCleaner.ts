@@ -253,13 +253,13 @@ async function executeClean(paths: string[]): Promise<DeleteResult> {
   }
 }
 
-/** 清空回收站（TASK-028）：成功返回 null，失败返回中文化错误信息 */
-async function emptyRecycleBin(): Promise<string | null> {
+/** 清空回收站（TASK-028）：成功返回 null，失败返回中文化错误信息 + 原始错误（供 toast 复制） */
+async function emptyRecycleBin(): Promise<{ message: string; raw: string } | null> {
   try {
     await invoke('empty_recycle_bin')
     return null
   } catch (e: any) {
-    return humanizeError(String(e))
+    return { message: humanizeError(String(e)), raw: String(e) }
   }
 }
 

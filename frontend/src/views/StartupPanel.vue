@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { AppWindow, Check, Copy, Loader2, RefreshCw } from 'lucide-vue-next'
+import { AppWindow, Loader2, RefreshCw } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
 import { Switch } from '../components/ui/switch'
 import { Toast } from '../components/ui/toast'
@@ -30,12 +29,12 @@ const SOURCE_LABELS: Record<StartupItem['source'], string> = {
 const items = ref<StartupItem[]>([])
 const loading = ref(true)
 const errorMsg = ref('')
+/** 加载失败标志（toast 关闭后列表区域仍显示失败占位，避免误显示空状态） */
+const loadFailed = ref(false)
 const busyKey = ref('')
 const msg = ref('')
 /** 原始错误信息（复制按钮使用）；成功提示或首次操作前为空 */
 const rawError = ref('')
-const copied = ref(false)
-let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 function keyOf(item: StartupItem) {
   return `${item.source}:${item.name}`
@@ -48,12 +47,14 @@ function errText(e: unknown): string {
 async function load() {
   loading.value = true
   errorMsg.value = ''
+  loadFailed.value = false
   try {
     items.value = await invoke<StartupItem[]>('list_startup_items')
   } catch (e) {
     const raw = errText(e)
     rawError.value = raw
     errorMsg.value = `加载失败：${humanizeInvokeError(raw)}`
+    loadFailed.value = true
   }
   loading.value = false
 }
@@ -79,27 +80,8 @@ async function toggle(item: StartupItem) {
   busyKey.value = ''
 }
 
-/** 一键复制原始错误信息到剪贴板（优先 Tauri 插件，失败回退 Web API） */
-async function copyError() {
-  if (!rawError.value) return
-  try {
-    await writeText(rawError.value)
-  } catch {
-    try {
-      await navigator.clipboard.writeText(rawError.value)
-    } catch {
-      return
-    }
-  }
-  copied.value = true
-  if (copyTimer) clearTimeout(copyTimer)
-  copyTimer = setTimeout(() => { copied.value = false }, 1500)
-}
-
 onMounted(load)
-onUnmounted(() => {
-  if (copyTimer) clearTimeout(copyTimer)
-})
+onUnmounted(() => {})
 </script>
 
 <template>
@@ -127,27 +109,18 @@ onUnmounted(() => {
           开机时自动启动的非 Windows 应用，可在此关闭或重新打开（系统启动项已自动过滤）
         </p>
 
-        <p v-if="errorMsg" class="flex items-center gap-1 py-1.5 text-[10px] text-destructive">
-          <span class="min-w-0 flex-1 truncate" :title="errorMsg">{{ errorMsg }}</span>
-          <button
-            v-if="rawError"
-            class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-destructive/20"
-            :title="copied ? '已复制' : '复制错误信息'"
-            :aria-label="copied ? '已复制' : '复制错误信息'"
-            @click="copyError"
-          >
-            <Check v-if="copied" class="h-2.5 w-2.5" />
-            <Copy v-else class="h-2.5 w-2.5" />
-          </button>
+        <!-- 加载失败占位（错误详情在 toast 展示） -->
+        <p v-if="loadFailed" class="py-1.5 text-[10px] text-muted-foreground/70">
+          加载失败，请点击右上角刷新重试
         </p>
 
         <!-- 空状态 -->
-        <p v-if="!errorMsg && items.length === 0" class="py-1.5 text-[10px] text-muted-foreground/70">
+        <p v-else-if="items.length === 0" class="py-1.5 text-[10px] text-muted-foreground/70">
           没有发现第三方开机自启动项
         </p>
 
         <!-- 列表 -->
-        <div v-else-if="!errorMsg" class="space-y-0.5 pt-0.5">
+        <div v-else class="space-y-0.5 pt-0.5">
           <div
             v-for="item in items"
             :key="keyOf(item)"
@@ -204,6 +177,15 @@ onUnmounted(() => {
         :raw-error="msg.startsWith('✓') ? '' : rawError"
         :variant="msg.startsWith('✓') ? 'success' : 'error'"
         @close="msg = ''"
+      />
+
+      <!-- 加载失败 toast：错误详情 + 复制原始错误 -->
+      <Toast
+        :show="!!errorMsg"
+        :message="errorMsg"
+        :raw-error="rawError"
+        variant="error"
+        @close="errorMsg = ''"
       />
     </template>
   </div>

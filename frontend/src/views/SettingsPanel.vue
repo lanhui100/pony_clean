@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check } from '@tauri-apps/plugin-updater'
 import { Loader2, Plus, Save, Trash2, RefreshCw } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
+import { Toast } from '../components/ui/toast'
 import OptionPicker from '../components/OptionPicker.vue'
 import { useMonitor } from '../composables/useMonitor'
 import {
@@ -73,10 +74,14 @@ const autostart = ref(false)
 const loading = ref(true)
 const saving = ref(false)
 const savedMsg = ref('')
+/** 保存失败原始错误（toast 复制按钮使用） */
+const saveError = ref('')
 let savedTimer: ReturnType<typeof setTimeout> | null = null
 
 // 软件更新（tauri-plugin-updater，状态集中在 useUpdater 单例）
 const updateMsg = ref('')
+/** 更新失败原始错误（toast 复制按钮使用） */
+const updateError = ref('')
 let updateTimer: ReturnType<typeof setTimeout> | null = null
 
 function flashUpdateMsg(msg: string) {
@@ -110,7 +115,8 @@ async function installUpdate() {
     await update.downloadAndInstall()
     flashUpdateMsg('✓ 更新完成，应用将自动重启')
   } catch (e) {
-    flashUpdateMsg(`✗ 更新失败：${e}`)
+    updateMsg.value = ''
+    updateError.value = String(e)
   }
   checkingUpdate.value = false
 }
@@ -213,7 +219,8 @@ async function handleSave() {
     if (savedTimer) clearTimeout(savedTimer)
     savedTimer = setTimeout(() => { savedMsg.value = '' }, 2500)
   } catch (e) {
-    savedMsg.value = `✗ ${e}`
+    savedMsg.value = ''
+    saveError.value = String(e)
   }
   saving.value = false
 }
@@ -479,5 +486,23 @@ function categoryLabel(value: string) {
         </Button>
       </div>
     </template>
+
+    <!-- ═══ 保存失败 toast ═══ -->
+    <Toast
+      :show="!!saveError"
+      :message="`保存失败：${saveError}`"
+      :raw-error="saveError"
+      variant="error"
+      @close="saveError = ''"
+    />
+
+    <!-- ═══ 更新失败 toast ═══ -->
+    <Toast
+      :show="!!updateError"
+      :message="`更新失败：${updateError}`"
+      :raw-error="updateError"
+      variant="error"
+      @close="updateError = ''"
+    />
   </div>
 </template>

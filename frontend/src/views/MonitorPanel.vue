@@ -275,6 +275,15 @@ onUnmounted(() => {
       @close="killMsg = ''"
     />
 
+    <!-- 进程加载失败 toast -->
+    <Toast
+      :show="!!error"
+      :message="error"
+      :raw-error="error"
+      variant="error"
+      @close="error = ''"
+    />
+
     <!-- Loading skeleton -->
     <div v-if="loading" class="flex flex-1 flex-col gap-0.5">
       <div v-for="i in 8" :key="i" class="flex h-6 items-center gap-3 rounded px-2">
@@ -285,12 +294,12 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Error state -->
+    <!-- Error state（详情在 toast 展示） -->
     <div
       v-else-if="error"
-      class="flex flex-1 items-center justify-center rounded bg-destructive/10 px-3 py-2 text-xs text-destructive"
+      class="flex flex-1 items-center justify-center text-xs text-muted-foreground"
     >
-      {{ error }}
+      进程数据加载失败
     </div>
 
     <!-- Empty states -->

@@ -245,14 +245,14 @@ async function confirmClean() {
 
 const showRecycleDialog = ref(false)
 const recycleMsg = ref('')
-let recycleMsgTimer: ReturnType<typeof setTimeout> | null = null
+/** 清空回收站原始错误信息（toast 复制按钮使用） */
+const rawRecycleError = ref('')
 
 async function confirmRecycleBin() {
   showRecycleDialog.value = false
   const err = await emptyRecycleBin()
-  recycleMsg.value = err === null ? '✓ 回收站已清空' : `✗ ${err}`
-  if (recycleMsgTimer) clearTimeout(recycleMsgTimer)
-  recycleMsgTimer = setTimeout(() => { recycleMsg.value = '' }, 4000)
+  recycleMsg.value = err === null ? '✓ 回收站已清空' : `✗ ${err.message}`
+  rawRecycleError.value = err === null ? '' : err.raw
 }
 
 /* ═══════════ 空间分析（useDisk：大文件 + 目录占用） ═══════════ */
@@ -292,7 +292,8 @@ const KIND_LABELS: Record<string, string> = {
 const largeSelected = ref(new Set<string>())
 const deletingLarge = ref(false)
 const deleteMsg = ref('')
-let deleteMsgTimer: ReturnType<typeof setTimeout> | null = null
+/** 删除大文件原始错误信息（toast 复制按钮使用） */
+const rawDeleteError = ref('')
 
 function toggleLargeSelect(path: string) {
   const next = new Set(largeSelected.value)
@@ -339,11 +340,11 @@ async function confirmDeleteLarge() {
   if (result.failed > 0) {
     const reasons = humanizeErrors(result.errors, 1)
     deleteMsg.value = `✗ 成功 ${result.success} / 失败 ${result.failed}${reasons.length > 0 ? ` · ${reasons[0]}` : ''}`
+    rawDeleteError.value = result.errors.join('\n')
   } else {
     deleteMsg.value = `✓ 已删除 ${result.success} 个文件`
+    rawDeleteError.value = ''
   }
-  if (deleteMsgTimer) clearTimeout(deleteMsgTimer)
-  deleteMsgTimer = setTimeout(() => { deleteMsg.value = '' }, 4000)
   largeSelected.value = new Set()
 }
 
@@ -445,10 +446,7 @@ function truncatePath(path: string, maxLen = 38): string {
 
 /* ═══════════ 定时器清理 ═══════════ */
 
-onUnmounted(() => {
-  if (deleteMsgTimer) clearTimeout(deleteMsgTimer)
-  if (recycleMsgTimer) clearTimeout(recycleMsgTimer)
-})
+onUnmounted(() => {})
 </script>
 
 <template>
@@ -530,10 +528,6 @@ onUnmounted(() => {
         <div>
           <h3 class="text-[11px] font-semibold text-foreground/85">一键清理</h3>
 
-          <p v-if="recycleMsg" class="py-1 text-[10px]" :class="recycleMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
-            {{ recycleMsg }}
-          </p>
-
           <!-- 扫描中 -->
           <div v-if="garbageState === 'scanning'" class="flex items-center gap-1.5 py-1.5">
             <Loader2 class="h-3 w-3 shrink-0 animate-spin text-primary" />
@@ -551,9 +545,9 @@ onUnmounted(() => {
             </span>
           </div>
 
-          <!-- 错误 -->
-          <p v-else-if="garbageState === 'error'" class="py-1.5 text-[10px] text-destructive">
-            扫描失败：{{ errorMessage || '未知错误' }}
+          <!-- 错误（详情在 toast 展示） -->
+          <p v-else-if="garbageState === 'error'" class="py-1.5 text-[10px] text-muted-foreground">
+            扫描失败，请重新扫描
           </p>
 
           <!-- 已取消 -->
@@ -738,9 +732,9 @@ onUnmounted(() => {
                   <span class="min-w-0 flex-1 truncate text-right text-[10px] text-muted-foreground/50">{{ diskCurrent }}</span>
                 </div>
 
-                <!-- 错误 -->
-                <p v-else-if="diskState === 'error'" class="py-1 text-[10px] text-destructive">
-                  分析失败：{{ diskError }}
+                <!-- 错误（详情在 toast 展示） -->
+                <p v-else-if="diskState === 'error'" class="py-1 text-[10px] text-muted-foreground">
+                  分析失败，请重新扫描
                 </p>
 
                 <!-- 大文件 -->
@@ -792,10 +786,7 @@ onUnmounted(() => {
 
                   <!-- 底部栏 -->
                   <div class="mt-1.5 flex items-center justify-between pt-1">
-                    <span v-if="deleteMsg" class="text-[10px]" :class="deleteMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
-                      {{ deleteMsg }}
-                    </span>
-                    <span v-else-if="deletingLarge" class="flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <span v-if="deletingLarge" class="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Loader2 class="h-3 w-3 animate-spin" /> 删除中...
                     </span>
                     <span v-else class="text-[9px] text-muted-foreground/50">勾选后统一删除，安装包类需确认</span>
@@ -954,6 +945,42 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
+
+    <!-- ═══ 清空回收站结果 toast ═══ -->
+    <Toast
+      :show="!!recycleMsg"
+      :message="recycleMsg"
+      :raw-error="rawRecycleError"
+      :variant="recycleMsg.startsWith('✓') ? 'success' : 'error'"
+      @close="recycleMsg = ''"
+    />
+
+    <!-- ═══ 删除大文件结果 toast ═══ -->
+    <Toast
+      :show="!!deleteMsg"
+      :message="deleteMsg"
+      :raw-error="rawDeleteError"
+      :variant="deleteMsg.startsWith('✓') ? 'success' : 'error'"
+      @close="deleteMsg = ''"
+    />
+
+    <!-- ═══ 扫描失败 toast ═══ -->
+    <Toast
+      :show="garbageState === 'error' && !!errorMessage"
+      :message="errorMessage || '扫描失败'"
+      :raw-error="errorMessage"
+      variant="error"
+      @close="errorMessage = ''"
+    />
+
+    <!-- ═══ 空间分析失败 toast ═══ -->
+    <Toast
+      :show="diskState === 'error' && !!diskError"
+      :message="diskError || '分析失败'"
+      :raw-error="diskError"
+      variant="error"
+      @close="diskError = ''"
+    />
 
     <!-- ═══ 垃圾清理结果 toast ═══ -->
     <Toast

@@ -10,6 +10,8 @@
 
 - Added: 应用图标设计 — 抽象简笔马头（黑色线条 + 红色马鬃 + 点状眼睛）+ 米白底色，与 pony-agent 同系列；全套 Tauri 图标规格（icon.ico 多尺寸 + 各尺寸 PNG）已导出并集成（桌面图标 + 托盘图标）
 - Added: GitHub Actions 构建流水线（`.github/workflows/build-installers.yml`）— windows-latest 原生构建 x64 + MSVC 交叉编译 arm64 NSIS 安装包，推 tag 自动创建 GitHub Release（与 CNB 方案 A 互为备份）
+- Changed: 全部错误提示统一为 Toast 显示（带一键复制原始错误）— 覆盖启动项加载失败、进程加载失败、垃圾扫描失败、空间分析失败、删除大文件失败、清空回收站失败、设置保存失败、软件更新失败；内联错误文本移除（保留轻量占位），成功/信息状态维持内联
+- Changed: 清空回收站结果改用统一 Toast 显示（错误提示带一键复制原始错误按钮），替代原内联文本
 - Changed: 发版文档更新 — VERSIONING.md 新增「双平台发版」（GitHub + CNB 并行构建、tag 指向/版本守卫/签名密钥/tag 冲突注意事项），RELEASE_CHECKLIST.md 增加双平台构建验证步骤，RELEASE_BUILD.md 新增 §5.7 GitHub 发版流程
 - Changed: 监控面板进程列表支持固定（暂停刷新，便于稳定终止进程，kill 成功后自动恢复）
 - Changed: 统一操作反馈 toast — 公共组件（fixed 定位不随滚动、毛玻璃背景、错误可一键复制），监控/空间/启动三处面板统一
