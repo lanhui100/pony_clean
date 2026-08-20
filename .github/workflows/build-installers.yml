@@ -111,8 +111,9 @@ jobs:
           name: ponyclean-installers
           if-no-files-found: error
           path: |
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.sig
+            # x64 为 host target 构建，产物在 target/release/（无架构子目录）
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/nsis/*.sig
             target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
             target/aarch64-pc-windows-msvc/release/bundle/nsis/*.sig
 
@@ -121,8 +122,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.sig
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/nsis/*.sig
             target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
             target/aarch64-pc-windows-msvc/release/bundle/nsis/*.sig
           body: |
