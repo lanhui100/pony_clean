@@ -3,9 +3,7 @@
 //! 使用 `ExtractIconExW` 获取 HICON，通过 GDI GetDIBits 提取 RGBA 像素，
 //! 用 `image` crate 编码 PNG，最终输出 `data:image/png;base64,...` 格式。
 //!
-//! 仅 Windows 平台可用，非 Windows 返回空桩。
-
-#![cfg(windows)]
+//! 仅 Windows 平台可用，由 lib.rs 的 `#[cfg(windows)] mod icon;` 控制编译。
 
 use base64::Engine;
 use std::os::windows::ffi::OsStrExt;
