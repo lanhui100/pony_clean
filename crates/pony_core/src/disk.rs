@@ -221,7 +221,7 @@ pub fn scan_large_files(
             kind,
         });
         // 分批推送（每 50 个）
-        if files.len() % 50 == 0 {
+        if files.len().is_multiple_of(50) {
             let batch = files.split_off(files.len() - 50);
             let _ = tx.send(DiskEvent::LargeFiles { files: batch });
         }
@@ -340,7 +340,7 @@ pub fn scan_user_dir(
             kind,
         });
         // 分批推送（每 50 个）
-        if files.len() % 50 == 0 {
+        if files.len().is_multiple_of(50) {
             let batch = files.split_off(files.len() - 50);
             let _ = tx.send(DiskEvent::LargeFiles { files: batch });
         }

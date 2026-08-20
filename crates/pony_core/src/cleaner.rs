@@ -1115,10 +1115,10 @@ pub fn migrate_v1_to_v2(mut config: PonyConfig) -> PonyConfig {
     ]
     .into();
     for old_path in &config.disabled_targets {
-        if let Some(id) = path_to_id.get(old_path.as_str()) {
-            if !config.disabled_target_ids.contains(&id.to_string()) {
-                config.disabled_target_ids.push(id.to_string());
-            }
+        if let Some(id) = path_to_id.get(old_path.as_str())
+            && !config.disabled_target_ids.contains(&id.to_string())
+        {
+            config.disabled_target_ids.push(id.to_string());
         }
     }
     config.disabled_targets.clear();
@@ -1384,14 +1384,12 @@ fn scan_target_block(
         }
 
         // mtime 过滤（logs 类别）
-        if let Some(cutoff) = mtime_cutoff {
-            if let Ok(mtime) = meta.modified() {
-                if let Ok(secs) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                    if secs.as_secs() as i64 > cutoff {
-                        continue;
-                    }
-                }
-            }
+        if let Some(cutoff) = mtime_cutoff
+            && let Ok(mtime) = meta.modified()
+            && let Ok(secs) = mtime.duration_since(std::time::UNIX_EPOCH)
+            && secs.as_secs() as i64 > cutoff
+        {
+            continue;
         }
 
         // glob_include 过滤：支持 `*.ext`（后缀）, `*WER*`（包含）, `prefix*`（前缀）
@@ -1442,7 +1440,7 @@ fn scan_target_block(
                 batch_complete: false,
             });
         }
-        if n % 100 == 0 {
+        if n.is_multiple_of(100) {
             let _ = tx.send(ScanEvent::Progress {
                 scanned: n,
                 current: target_path.to_string_lossy().to_string(),
@@ -1641,7 +1639,7 @@ fn delete_files_with_targets(
             }
         }
         done += 1;
-        if done % 10 == 0 || done == total {
+        if done.is_multiple_of(10) || done == total {
             send_progress(&progress_tx, done, total, path);
         }
     }
@@ -1860,7 +1858,7 @@ pub fn empty_recycle_bin() -> Result<(), String> {
                 // 解码 HRESULT 为可读错误，便于定位（E_ACCESSDENIED=文件被占用/权限不足等）
                 use windows::Win32::Foundation::E_ACCESSDENIED;
                 use windows::Win32::Foundation::E_FAIL;
-                let err = result.err().expect("result.is_ok() checked above");
+                let err = result.expect_err("result.is_ok() checked above");
                 let hr = err.code(); // HRESULT
                 let hr_hex = format!("0x{:08X}", hr.0);
                 let message = err.message();
@@ -2105,12 +2103,14 @@ mod tests {
         )));
     }
 
+    #[serial_test::serial]
     #[test]
     fn test_is_path_not_protected() {
         let temp = std::env::var("TEMP").unwrap_or_else(|_| r"C:\Temp".to_string());
         assert!(!is_path_protected(Path::new(&temp)));
     }
 
+    #[serial_test::serial]
     #[test]
     fn test_is_path_allowed_valid() {
         let targets = vec![ScanTarget::new(
@@ -2154,6 +2154,7 @@ mod tests {
         assert!(is_path_allowed(&test_path, &targets));
     }
 
+    #[serial_test::serial]
     #[test]
     fn test_resolve_targets_excludes_forbidden() {
         let targets = vec![
@@ -2434,6 +2435,7 @@ mod tests {
         )));
     }
 
+    #[serial_test::serial]
     #[test]
     fn test_is_path_allowed_trailing_slash() {
         let targets = vec![ScanTarget::new(
