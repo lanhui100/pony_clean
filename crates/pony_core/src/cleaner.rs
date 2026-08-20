@@ -2175,7 +2175,12 @@ mod tests {
         ];
         let resolved = resolve_targets(&targets);
         // 应包含指向 TEMP 的路径（Safe）
-        assert!(!resolved.is_empty(), "should include TEMP");
+        assert!(
+            !resolved.is_empty(),
+            "should include TEMP (TEMP={:?}, TMP={:?})",
+            std::env::var("TEMP").unwrap_or_default(),
+            std::env::var("TMP").unwrap_or_default()
+        );
         // 应排除 System32（Forbidden）
         assert!(
             !resolved
