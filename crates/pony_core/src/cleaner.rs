@@ -2734,6 +2734,7 @@ mod tests {
         }
     }
 
+    #[serial_test::serial]
     #[test]
     fn test_expand_case_insensitive() {
         temp_env::with_var("TEMP", Some("C:\\TestTemp"), || {
@@ -2742,6 +2743,7 @@ mod tests {
         });
     }
 
+    #[serial_test::serial]
     #[test]
     fn test_expand_trailing_backslash_fixed() {
         temp_env::with_var("TEMP", Some("C:\\TestTemp"), || {
@@ -2783,6 +2785,7 @@ mod tests {
         )));
     }
 
+    #[serial_test::serial]
     #[test]
     fn test_allowed_separator_reject_adjacent() {
         temp_env::with_var("TEMP", Some("C:\\Temp"), || {
