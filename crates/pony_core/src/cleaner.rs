@@ -960,7 +960,16 @@ pub fn verify_env_path(expanded: &Path, raw_pattern: &str) -> bool {
 }
 
 fn verify_env_path_inner(canon: &Path, raw_pattern: &str) -> bool {
-    let expected = expand_env(raw_pattern).to_lowercase();
+    // 两边都 canonicalize 规范化（存在时）：GitHub runner 等环境的 TEMP 是 8.3 短名
+    // （如 RUNNER~1），canonicalize 展开后与原始值不一致会导致误拒绝
+    let expanded = expand_env(raw_pattern);
+    let expected = std::fs::canonicalize(&expanded)
+        .map(|p| p.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|_| expanded.to_lowercase());
+    let expected = expected
+        .trim_start_matches("\\\\?\\")
+        .trim_start_matches("\\\\.\\")
+        .trim_start_matches("//?/");
     let raw = canon.to_string_lossy();
     let raw = raw.trim_start_matches("\\\\?\\");
     let raw = raw.trim_start_matches("\\\\.\\");
