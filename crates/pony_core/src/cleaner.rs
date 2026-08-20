@@ -1871,9 +1871,7 @@ pub fn empty_recycle_bin() -> Result<(), String> {
                 } else {
                     "清空回收站失败，请稍后重试或检查回收站目录"
                 };
-                Err(format!(
-                    "清空回收站失败 ({hr_hex}): {message}。{hint}"
-                ))
+                Err(format!("清空回收站失败 ({hr_hex}): {message}。{hint}"))
             }
         }
     }

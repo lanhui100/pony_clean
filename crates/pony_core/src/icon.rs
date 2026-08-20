@@ -58,90 +58,95 @@ pub fn extract_exe_icon_png(exe_path: &str) -> Option<String> {
 
 /// 将 HICON 转换为 RGBA 像素，编码为 PNG base64。
 unsafe fn hicon_to_png_base64(hicon: HICON) -> Option<String> {
-    let mut icon_info = ICONINFO::default();
-    if GetIconInfo(hicon, &mut icon_info).is_err() {
-        return None;
-    }
+    unsafe {
+        let mut icon_info = ICONINFO::default();
+        if GetIconInfo(hicon, &mut icon_info).is_err() {
+            return None;
+        }
 
-    // 获取彩色位图信息
-    let mut bmp = BITMAP::default();
-    if GetObjectW(
-        icon_info.hbmColor,
-        std::mem::size_of::<BITMAP>() as i32,
-        Some(&mut bmp as *mut _ as *mut std::ffi::c_void),
-    ) == 0
-    {
+        // 获取彩色位图信息
+        let mut bmp = BITMAP::default();
+        if GetObjectW(
+            icon_info.hbmColor,
+            std::mem::size_of::<BITMAP>() as i32,
+            Some(&mut bmp as *mut _ as *mut std::ffi::c_void),
+        ) == 0
+        {
+            let _ = DeleteObject(icon_info.hbmColor);
+            let _ = DeleteObject(icon_info.hbmMask);
+            return None;
+        }
+
+        let w = bmp.bmWidth as u32;
+        let h = bmp.bmHeight as u32;
+
+        if w == 0 || h == 0 {
+            let _ = DeleteObject(icon_info.hbmColor);
+            let _ = DeleteObject(icon_info.hbmMask);
+            return None;
+        }
+
+        // 创建兼容 DC 并选择位图
+        let hdc = CreateCompatibleDC(None);
+        if hdc.is_invalid() {
+            let _ = DeleteObject(icon_info.hbmColor);
+            let _ = DeleteObject(icon_info.hbmMask);
+            return None;
+        }
+
+        let _old = SelectObject(hdc, icon_info.hbmColor);
+
+        // 准备 BITMAPINFO（32-bit top-down DIB）
+        let mut bmi = BITMAPINFO::default();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = w as i32;
+        bmi.bmiHeader.biHeight = -(h as i32); // top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB.0;
+
+        let row_size = w as usize * 4;
+        let pixel_size = row_size * h as usize;
+        let mut pixels_bgra = vec![0u8; pixel_size];
+
+        let result = GetDIBits(
+            hdc,
+            icon_info.hbmColor,
+            0,
+            h,
+            Some(pixels_bgra.as_mut_ptr() as *mut std::ffi::c_void),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+
+        // 清理 GDI 对象
+        let _ = DeleteDC(hdc);
         let _ = DeleteObject(icon_info.hbmColor);
         let _ = DeleteObject(icon_info.hbmMask);
-        return None;
-    }
 
-    let w = bmp.bmWidth as u32;
-    let h = bmp.bmHeight as u32;
+        if result == 0 {
+            return None;
+        }
 
-    if w == 0 || h == 0 {
-        let _ = DeleteObject(icon_info.hbmColor);
-        let _ = DeleteObject(icon_info.hbmMask);
-        return None;
-    }
+        // BGRA → RGBA 转换
+        let mut pixels_rgba = Vec::with_capacity(pixel_size);
+        for chunk in pixels_bgra.chunks_exact(4) {
+            pixels_rgba.push(chunk[2]); // R
+            pixels_rgba.push(chunk[1]); // G
+            pixels_rgba.push(chunk[0]); // B
+            pixels_rgba.push(chunk[3]); // A
+        }
 
-    // 创建兼容 DC 并选择位图
-    let hdc = CreateCompatibleDC(None);
-    if hdc.is_invalid() {
-        let _ = DeleteObject(icon_info.hbmColor);
-        let _ = DeleteObject(icon_info.hbmMask);
-        return None;
-    }
-
-    let _old = SelectObject(hdc, icon_info.hbmColor);
-
-    // 准备 BITMAPINFO（32-bit top-down DIB）
-    let mut bmi = BITMAPINFO::default();
-    bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-    bmi.bmiHeader.biWidth = w as i32;
-    bmi.bmiHeader.biHeight = -(h as i32); // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB.0;
-
-    let row_size = w as usize * 4;
-    let pixel_size = row_size * h as usize;
-    let mut pixels_bgra = vec![0u8; pixel_size];
-
-    let result = GetDIBits(
-        hdc,
-        icon_info.hbmColor,
-        0,
-        h,
-        Some(pixels_bgra.as_mut_ptr() as *mut std::ffi::c_void),
-        &mut bmi,
-        DIB_RGB_COLORS,
-    );
-
-    // 清理 GDI 对象
-    let _ = DeleteDC(hdc);
-    let _ = DeleteObject(icon_info.hbmColor);
-    let _ = DeleteObject(icon_info.hbmMask);
-
-    if result == 0 {
-        return None;
-    }
-
-    // BGRA → RGBA 转换
-    let mut pixels_rgba = Vec::with_capacity(pixel_size);
-    for chunk in pixels_bgra.chunks_exact(4) {
-        pixels_rgba.push(chunk[2]); // R
-        pixels_rgba.push(chunk[1]); // G
-        pixels_rgba.push(chunk[0]); // B
-        pixels_rgba.push(chunk[3]); // A
-    }
-
-    // 用 image crate 编码 PNG
-    let img = image::RgbaImage::from_raw(w, h, pixels_rgba)?;
-    let mut png_buf = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut png_buf), image::ImageFormat::Png)
+        // 用 image crate 编码 PNG
+        let img = image::RgbaImage::from_raw(w, h, pixels_rgba)?;
+        let mut png_buf = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut png_buf),
+            image::ImageFormat::Png,
+        )
         .ok()?;
 
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&png_buf);
-    Some(format!("data:image/png;base64,{b64}"))
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_buf);
+        Some(format!("data:image/png;base64,{b64}"))
+    }
 }

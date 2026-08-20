@@ -1198,7 +1198,10 @@ mod tests {
         // 序列化契约：reg_name/expand_sz 必须被省略（前端拿到的是缺字段的对象）
         let json = serde_json::to_string(&src).unwrap();
         assert!(!json.contains("reg_name"), "reg_name=None 应被省略: {json}");
-        assert!(!json.contains("expand_sz"), "expand_sz=false 应被省略: {json}");
+        assert!(
+            !json.contains("expand_sz"),
+            "expand_sz=false 应被省略: {json}"
+        );
         // 缺字段反序列化必须成功（修复 invalid args）
         let back: StartupItem = serde_json::from_str(&json).unwrap();
         assert_eq!(back.name, "WeChat");
