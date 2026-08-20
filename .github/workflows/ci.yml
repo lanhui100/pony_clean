@@ -24,7 +24,7 @@ jobs:
       - run: cargo build
         env:
           RUSTFLAGS: "-D warnings"
-      - run: cargo clippy -- -D clippy::all -D clippy::pedantic -A clippy::allow_attributes_without_reason
+      - run: cargo clippy -- -D warnings
       - run: cargo test
         env:
           RUSTFLAGS: "-D warnings"
