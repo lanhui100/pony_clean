@@ -8,6 +8,7 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+- Added: 应用图标设计 — 抽象简笔马头（黑色线条 + 红色马鬃 + 点状眼睛）+ 米白底色，与 pony-agent 同系列；全套 Tauri 图标规格（icon.ico 多尺寸 + 各尺寸 PNG）已导出并集成（桌面图标 + 托盘图标）
 - Added: GitHub Actions 构建流水线（`.github/workflows/build-installers.yml`）— windows-latest 原生构建 x64 + MSVC 交叉编译 arm64 NSIS 安装包，推 tag 自动创建 GitHub Release（与 CNB 方案 A 互为备份）
 - Changed: 监控面板进程列表支持固定（暂停刷新，便于稳定终止进程，kill 成功后自动恢复）
 - Changed: 统一操作反馈 toast — 公共组件（fixed 定位不随滚动、毛玻璃背景、错误可一键复制），监控/空间/启动三处面板统一
