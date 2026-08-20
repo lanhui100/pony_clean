@@ -56,6 +56,10 @@ node scripts/bump-version.mjs 0.2.0 --tag      # 幂等：只打 annotated tag v
 # 6. 推送（tag 随提交推送，勿漏）
 git push --follow-tags
 git ls-remote --tags origin | findstr v0.2.0   # 验证 tag 已推（可选）
+
+# 7. 流水线自动构建与发布（推送后自动触发，无需手动操作）
+#    - GitHub Actions：推 v* tag 自动构建 x64 + arm64 安装包 → 创建 GitHub Release
+#    - CNB 流水线：同样推 tag 触发，产出到 CNB Release + 更新 updater/latest.json
 ```
 
 > **QA 后需要代码修复**：先 `git commit` 代码修复（单独提交），再执行上面第 5 步 b) 的幂等收尾。
@@ -63,6 +67,24 @@ git ls-remote --tags origin | findstr v0.2.0   # 验证 tag 已推（可选）
 >
 > **首次使用提示**：`--commit` 要求工作树除版本文件外无任何改动（含未跟踪文件）。
 > 若版本管理功能本身（scripts/、CHANGELOG.md 等）尚未提交，先提交它；有 WIP 用 `git stash -u` 暂存。
+
+## 双平台发版（GitHub + CNB）
+
+推送 tag 后两条流水线**并行自动构建**，无需手动上传产物：
+
+| 平台 | 触发 | 产物 | Release | updater 清单 |
+|---|---|---|---|---|
+| **GitHub Actions**（`.github/workflows/build-installers.yml`） | push `v*` tag | x64 + arm64 NSIS `.exe` + `.sig` | GitHub Release（自动创建并上传附件） | 不生成 `latest.json`（endpoint 仍指向 CNB） |
+| **CNB**（`.cnb.yml`） | tag_push | x64 + arm64 NSIS `.exe` + `.sig` | CNB Release（自动创建并上传附件） | 生成 `latest.json` 并提交 main |
+
+### 注意事项
+
+1. **tag 必须指向包含 workflow 文件的提交**：GitHub 流水线文件是 `.github/workflows/build-installers.yml`，tag 指向的提交若不含它则不会触发构建（v0.1.2 曾踩坑：cnb 旧 tag 指向无 workflow 的提交，需 `git tag -f v0.1.2 main` 重指向后推送）。
+2. **版本守卫**：GitHub 流水线校验 tag 与 `tauri.conf.json` version 一致（`vX.Y.Z` == `X.Y.Z`），不一致直接失败——必须用 `bump-version.mjs` 发版，禁止手动打 tag。
+3. **签名密钥**：GitHub 需在仓库 Secrets 配置 `TAURI_SIGNING_PRIVATE_KEY`（与 CNB 密钥仓库 `lanhui100/pony_clean-secrets` 同一把，密钥带密码时还需 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。未配置时：GitHub 流水线自动关闭 updater 产物（仅安装包，无 `.sig`，不报错）；CNB 流水线直接报错。
+4. **tag 冲突**：同一 tag 在两个平台指向不同提交时，后续 push 会冲突（v0.1.2 本地 tag 已重指向 GitHub main，与 cnb 指向不同；如需 `git push cnb` 同步需先处理）。
+5. **updater 分发**：当前 `latest.json` 由 CNB 流水线维护，app 内自动更新走 CNB。GitHub Release 产物暂不参与自动更新；如需切换见 [RELEASE_BUILD.md §5.6](RELEASE_BUILD.md#56-github-actions-构建windows-latest-原生--arm64-交叉)。
+6. **构建验证**：推送后到 GitHub Actions 页面确认 `Build Windows Installers` 全绿，Release 附件含双架构 `setup.exe` + `.sig`（约 8 分钟，缓存生效后）。
 
 ## bump-version.mjs 行为与守卫
 

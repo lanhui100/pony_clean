@@ -156,6 +156,19 @@ npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
   需将 endpoint 改为 GitHub raw URL，并在流水线中生成提交 latest.json（URL 指向 GitHub Release 下载地址）。
 - 签名私钥需配置到 GitHub Secrets（与 CNB 密钥仓库 `lanhui100/pony_clean-secrets` 同一把，见 §9.3）。
 
+### 5.7 GitHub 发版流程（与 CNB 并行）
+
+推送 `vX.Y.Z` tag 后，GitHub Actions 与 CNB 流水线**并行自动构建**，无需手动上传：
+
+```bash
+node scripts/bump-version.mjs 0.2.0 --commit --tag   # 同步版本 + 提交 + 打 tag
+git push origin main --follow-tags                    # 推送 main 与 tag（触发两条流水线）
+```
+
+- GitHub 侧：`Build Windows Installers` 自动构建双架构 → 创建 GitHub Release（附件 = `setup.exe` + `.sig`）；
+- CNB 侧：自动构建 → CNB Release + `updater/latest.json` 提交 main（app 自动更新走 CNB）；
+- 完整发版流程与注意事项（tag 指向、版本守卫、签名密钥、tag 冲突）见 [VERSIONING.md「双平台发版」](VERSIONING.md#双平台发版github--cnb)。
+
 ## 6. 代码签名（解决浏览器/SmartScreen 警告）
 
 > 背景：Issue #7 — `.exe` 安装包在浏览器下载/运行时弹警告。结论：**zip 无法绕开**，根源是"未签名"，正确解法是代码签名。
