@@ -8,6 +8,13 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+## [0.2.1] - 2026-08-21
+
+<!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
+
+- Added: 自动更新源增加 GitHub（主）+ CNB（备）双源冗余 — `tauri.conf.json` endpoints 新增 `https://github.com/lanhui100/pony_clean/releases/latest/download/latest.json`
+- Changed: 构建流水线生成 updater 清单 `latest.json`（双架构签名 + GitHub Release 下载 URL）并随 Release 上传，使 GitHub 自动更新链路闭环
+
 ## [0.2.0] - 2026-08-21
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
