@@ -8,6 +8,10 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+## [0.2.0] - 2026-08-21
+
+<!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
+
 - Added: 应用图标设计 — 抽象简笔马头（黑色线条 + 红色马鬃 + 点状眼睛）+ 米白底色，与 pony-agent 同系列；全套 Tauri 图标规格（icon.ico 多尺寸 + 各尺寸 PNG）已导出并集成（桌面图标 + 托盘图标）
 - Added: GitHub Actions 构建流水线（`.github/workflows/build-installers.yml`）— windows-latest 原生构建 x64 + MSVC 交叉编译 arm64 NSIS 安装包，推 tag 自动创建 GitHub Release（与 CNB 方案 A 互为备份）
 - Changed: 全部错误提示统一为 Toast 显示（带一键复制原始错误）— 覆盖启动项加载失败、进程加载失败、垃圾扫描失败、空间分析失败、删除大文件失败、清空回收站失败、设置保存失败、软件更新失败；内联错误文本移除（保留轻量占位），成功/信息状态维持内联

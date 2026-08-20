@@ -2831,7 +2831,7 @@ dependencies = [
 
 [[package]]
 name = "pony_clean"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "pony_core",
  "raw-window-handle",
@@ -2850,7 +2850,7 @@ dependencies = [
 
 [[package]]
 name = "pony_core"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "image",
