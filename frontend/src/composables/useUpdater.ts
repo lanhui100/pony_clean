@@ -5,10 +5,11 @@ import { check } from '@tauri-apps/plugin-updater'
 /**
  * 自动更新全局状态（单例模式，供 TitleBar 角标 / SettingsPanel 开关共用）。
  *
- * 定时检查策略：
- *  - 应用启动后 3 秒首次检查（只提示角标，不自动装）
- *  - 之后每 1 小时检查一次（与 VS Code / Discord 等主流一致），若用户开启了
- *    「自动更新」则发现新版本自动下载安装；检查仅拉取 latest.json，开销极低
+ * 定时检查策略（VS Code 模式：只提醒，不代用户做主）：
+ *  - 应用启动后 3 秒首次检查（只提示角标）
+ *  - 之后每 1 小时检查一次，发现新版本置角标提醒；是否安装由用户在设置页
+ *    点击「立即安装」确认触发——不在使用中静默强杀进程（Tauri Windows 安装器
+ *    在 passive 模式下会直接 kill 运行中的应用，可能打断正在执行的清理任务）
  *
  * 更新可用状态 updateAvailable 暴露给 TitleBar：设置 tab 显示角标提醒。
  */
@@ -39,12 +40,10 @@ export function markUpdateSeen() {
 }
 
 /**
- * 检查更新。autoInstall 由调用方决定：
- *  - 定时器自动检查：按 autoUpdateEnabled 决定是否自动安装
- *  - 设置页手动点击：仅提示（installMode 由用户交互驱动）
+ * 检查更新。发现新版本仅置角标提醒，安装一律由用户在设置页手动触发。
  * @returns 更新版本号（有更新）/ null（无更新或失败）
  */
-export async function checkForUpdate(autoInstall = false): Promise<string | null> {
+export async function checkForUpdate(): Promise<string | null> {
   if (checkingUpdate.value) return null
   checkingUpdate.value = true
   try {
@@ -53,13 +52,6 @@ export async function checkForUpdate(autoInstall = false): Promise<string | null
       return null
     }
     updateVersion.value = update.version
-    if (autoInstall && autoUpdateEnabled.value) {
-      // 自动更新：下载并安装（passive 模式，完成后自动重启）
-      await update.downloadAndInstall()
-      updateAvailable.value = false
-      return update.version
-    }
-    // 仅提醒：设置 tab 显示角标
     updateAvailable.value = true
     return update.version
   } catch (e) {
@@ -71,8 +63,9 @@ export async function checkForUpdate(autoInstall = false): Promise<string | null
 }
 
 async function runScheduledCheck() {
-  // 定时自动检查：若开启自动更新则直接安装，否则仅置角标
-  await checkForUpdate(true)
+  // 开关只控制「自动检查」；发现更新仅提醒，是否安装由用户决定
+  if (!autoUpdateEnabled.value) return
+  await checkForUpdate()
 }
 
 export function initUpdater() {

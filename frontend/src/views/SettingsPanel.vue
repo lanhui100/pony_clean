@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { relaunch } from '@tauri-apps/api/process'
 import { check } from '@tauri-apps/plugin-updater'
 import { Loader2, Plus, Save, Trash2, RefreshCw } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
@@ -113,7 +114,9 @@ async function installUpdate() {
     }
     flashUpdateMsg(`正在下载安装 v${update.version}…`)
     await update.downloadAndInstall()
-    flashUpdateMsg('✓ 更新完成，应用将自动重启')
+    // Windows：passive 安装器会接管进程（/R 自动重启），走不到这里；
+    // macOS/Linux 需显式重启完成替换
+    await relaunch()
   } catch (e) {
     updateMsg.value = ''
     updateError.value = String(e)
@@ -405,14 +408,14 @@ function categoryLabel(value: string) {
       <section class="space-y-2.5">
         <h3 class="text-[11px] font-semibold text-foreground/85">软件更新</h3>
         <p class="text-[10px] text-muted-foreground/70">
-          自动检查新版本并静默安装；也可手动检查下载安装
+          自动检查新版本并提醒；安装由你确认，安装后自动重启应用
         </p>
 
         <!-- 自动更新开关 -->
         <div class="flex items-center justify-between">
           <div>
-            <span class="text-xs text-foreground/90">自动更新</span>
-            <p class="mt-0.5 text-[10px] text-muted-foreground/70">每 1 小时自动检查，发现新版本自动下载安装</p>
+            <span class="text-xs text-foreground/90">自动检查更新</span>
+            <p class="mt-0.5 text-[10px] text-muted-foreground/70">每 1 小时自动检查，发现新版本提醒，不自动安装</p>
           </div>
           <button
             class="relative h-4 w-7 shrink-0 rounded-full transition-colors"

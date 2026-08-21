@@ -27,7 +27,7 @@
     "windows": {
       "nsis": {
         "languages": ["SimpChinese", "English"],
-        "displayLanguageSelector": true
+        "displayLanguageSelector": false
       }
     }
   },
@@ -39,7 +39,8 @@
         "https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json"
       ],
       "windows": {
-        "installMode": "passive"
+        "installMode": "passive",
+        "installerArgs": ["/R"]
       }
     }
   },
