@@ -1,20 +1,24 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getVersion } from '@tauri-apps/api/app'
 import { relaunch } from '@tauri-apps/plugin-process'
-import { check } from '@tauri-apps/plugin-updater'
 import { Loader2, Plus, Save, Trash2, RefreshCw } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
+import { Progress } from '../components/ui/progress'
 import { Toast } from '../components/ui/toast'
 import OptionPicker from '../components/OptionPicker.vue'
 import { useMonitor } from '../composables/useMonitor'
 import {
   autoUpdateEnabled,
   checkingUpdate,
+  downloadingUpdate,
+  downloadProgress,
   updateAvailable,
   updateVersion,
   markUpdateSeen,
   checkForUpdate,
+  installUpdate,
 } from '../composables/useUpdater'
 
 interface AppConfig {
@@ -80,6 +84,7 @@ const saveError = ref('')
 let savedTimer: ReturnType<typeof setTimeout> | null = null
 
 // 软件更新（tauri-plugin-updater，状态集中在 useUpdater 单例）
+const appVersion = ref('')
 const updateMsg = ref('')
 /** 更新失败原始错误（toast 复制按钮使用） */
 const updateError = ref('')
@@ -92,9 +97,9 @@ function flashUpdateMsg(msg: string) {
 }
 
 async function handleCheckUpdate() {
-  if (checkingUpdate.value) return
+  if (checkingUpdate.value || downloadingUpdate.value) return
   flashUpdateMsg('')
-  const version = await checkForUpdate(false)
+  const version = await checkForUpdate()
   if (version) {
     flashUpdateMsg(`发现新版本 ${version}，可点击安装`)
   } else {
@@ -102,18 +107,15 @@ async function handleCheckUpdate() {
   }
 }
 
-async function installUpdate() {
-  if (checkingUpdate.value) return
-  checkingUpdate.value = true
+async function handleInstallUpdate() {
+  if (downloadingUpdate.value) return
   flashUpdateMsg('')
   try {
-    const update = await check()
-    if (!update) {
+    const found = await installUpdate()
+    if (!found) {
       flashUpdateMsg('✓ 已是最新版本')
       return
     }
-    flashUpdateMsg(`正在下载安装 v${update.version}…`)
-    await update.downloadAndInstall()
     // Windows：passive 安装器会接管进程（/R 自动重启），走不到这里；
     // macOS/Linux 需显式重启完成替换
     await relaunch()
@@ -121,7 +123,6 @@ async function installUpdate() {
     updateMsg.value = ''
     updateError.value = String(e)
   }
-  checkingUpdate.value = false
 }
 
 // 自定义清理规则
@@ -137,6 +138,11 @@ let ruleTimer: ReturnType<typeof setTimeout> | null = null
 onMounted(async () => {
   // 进入设置页：清除设置 tab 的更新角标（用户已注意到）
   markUpdateSeen()
+  try {
+    appVersion.value = await getVersion()
+  } catch {
+    // 版本获取失败不阻塞设置页
+  }
   try {
     const cfg = await invoke<AppConfig>('get_config')
     cpuPct.value = cfg.alert_cpu_pct || 80
@@ -406,7 +412,10 @@ function categoryLabel(value: string) {
 
       <!-- ═══ 软件更新 ═══ -->
       <section class="space-y-2.5">
-        <h3 class="text-[11px] font-semibold text-foreground/85">软件更新</h3>
+        <div class="flex items-baseline justify-between">
+          <h3 class="text-[11px] font-semibold text-foreground/85">软件更新</h3>
+          <span v-if="appVersion" class="text-[10px] tabular-nums text-muted-foreground/60">当前版本 v{{ appVersion }}</span>
+        </div>
         <p class="text-[10px] text-muted-foreground/70">
           自动检查新版本并提醒；安装由你确认，安装后自动重启应用
         </p>
@@ -433,32 +442,40 @@ function categoryLabel(value: string) {
 
         <!-- 更新状态 + 操作 -->
         <div class="flex items-center justify-between gap-2">
-          <span
-            v-if="updateAvailable && updateVersion"
-            class="text-[11px] text-warning"
-          >
-            有可用更新 v{{ updateVersion }}
-          </span>
-          <span v-else-if="updateMsg" class="text-[11px]" :class="updateMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
-            {{ updateMsg }}
-          </span>
-          <span v-else class="text-[10px] text-muted-foreground/60">更新源：CNB Release</span>
+          <div class="min-w-0 flex-1">
+            <!-- 下载中：进度条 + 单个 loading，隐藏安装按钮 -->
+            <div v-if="downloadingUpdate" class="flex items-center gap-2">
+              <Loader2 class="h-3 w-3 shrink-0 animate-spin text-primary" />
+              <Progress :model-value="downloadProgress" class="h-1.5 min-w-0 flex-1" />
+              <span class="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                {{ downloadProgress === null ? '准备中…' : `${downloadProgress}%` }}
+              </span>
+            </div>
+            <span
+              v-else-if="updateAvailable && updateVersion"
+              class="text-[11px] text-warning"
+            >
+              有可用更新 v{{ updateVersion }}
+            </span>
+            <span v-else-if="updateMsg" class="text-[11px]" :class="updateMsg.startsWith('✓') ? 'text-success' : 'text-destructive'">
+              {{ updateMsg }}
+            </span>
+          </div>
 
           <div class="flex shrink-0 items-center gap-1.5">
             <Button
-              v-if="updateAvailable"
+              v-if="updateAvailable && !downloadingUpdate"
               size="sm"
               :disabled="checkingUpdate"
               title="下载并安装更新"
-              @click="installUpdate"
+              @click="handleInstallUpdate"
             >
-              <Loader2 v-if="checkingUpdate" class="h-3 w-3 animate-spin" />
-              <span v-else>立即安装</span>
+              立即安装
             </Button>
             <Button
               size="icon-sm"
               variant="ghost"
-              :disabled="checkingUpdate"
+              :disabled="checkingUpdate || downloadingUpdate"
               title="检查更新"
               aria-label="检查更新"
               @click="handleCheckUpdate"

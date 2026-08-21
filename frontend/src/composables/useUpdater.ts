@@ -11,7 +11,8 @@ import { check } from '@tauri-apps/plugin-updater'
  *    点击「立即安装」确认触发——不在使用中静默强杀进程（Tauri Windows 安装器
  *    在 passive 模式下会直接 kill 运行中的应用，可能打断正在执行的清理任务）
  *
- * 更新可用状态 updateAvailable 暴露给 TitleBar：设置 tab 显示角标提醒。
+ * 角标状态 updateBadgeVisible 暴露给 TitleBar：设置 tab 显示角标提醒；
+ * 更新可用状态 updateAvailable 供 SettingsPanel 展示，两者独立互不影响。
  */
 
 const CHECK_INTERVAL_MS = 60 * 60 * 1000 // 1 小时
@@ -19,7 +20,13 @@ const FIRST_CHECK_DELAY_MS = 3000 // 启动后 3 秒
 
 export const updateAvailable = ref(false)
 export const updateVersion = ref('')
+/** 设置 tab 角标是否显示（进入设置页后由 markUpdateSeen 清除，不影响 updateAvailable） */
+export const updateBadgeVisible = ref(false)
 export const checkingUpdate = ref(false)
+/** 正在下载安装更新（与 checkingUpdate 分离，避免双 loading） */
+export const downloadingUpdate = ref(false)
+/** 下载进度百分比（0-100），null 表示尚未开始接收数据 */
+export const downloadProgress = ref<number | null>(null)
 export const autoUpdateEnabled = ref(true)
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -34,9 +41,9 @@ export async function loadAutoUpdateConfig() {
   }
 }
 
-/** 清除设置 tab 角标（用户进入设置页后调用） */
+/** 清除设置 tab 角标（用户进入设置页后调用），不影响面板内的更新可用状态 */
 export function markUpdateSeen() {
-  updateAvailable.value = false
+  updateBadgeVisible.value = false
 }
 
 /**
@@ -44,7 +51,7 @@ export function markUpdateSeen() {
  * @returns 更新版本号（有更新）/ null（无更新或失败）
  */
 export async function checkForUpdate(): Promise<string | null> {
-  if (checkingUpdate.value) return null
+  if (checkingUpdate.value || downloadingUpdate.value) return null
   checkingUpdate.value = true
   try {
     const update = await check()
@@ -53,12 +60,52 @@ export async function checkForUpdate(): Promise<string | null> {
     }
     updateVersion.value = update.version
     updateAvailable.value = true
+    updateBadgeVisible.value = true
     return update.version
   } catch (e) {
     console.warn('check update failed:', e)
     return null
   } finally {
     checkingUpdate.value = false
+  }
+}
+
+/**
+ * 下载并安装更新，通过回调实时上报下载进度到 downloadProgress。
+ * @returns true（已开始/完成下载安装）/ false（无可用更新）
+ * @throws 下载或安装失败时抛出原始错误
+ */
+export async function installUpdate(): Promise<boolean> {
+  if (downloadingUpdate.value) return false
+  downloadingUpdate.value = true
+  downloadProgress.value = null
+  try {
+    const update = await check()
+    if (!update) {
+      updateAvailable.value = false
+      updateVersion.value = ''
+      return false
+    }
+    updateVersion.value = update.version
+    updateAvailable.value = true
+    let downloaded = 0
+    let total = 0
+    await update.downloadAndInstall((event) => {
+      if (event.event === 'Started') {
+        total = event.data.contentLength ?? 0
+        downloadProgress.value = 0
+      } else if (event.event === 'Progress') {
+        downloaded += event.data.chunkLength
+        if (total > 0) {
+          downloadProgress.value = Math.min(100, Math.round((downloaded / total) * 100))
+        }
+      } else if (event.event === 'Finished') {
+        downloadProgress.value = 100
+      }
+    })
+    return true
+  } finally {
+    downloadingUpdate.value = false
   }
 }
 
@@ -75,7 +122,7 @@ export function initUpdater() {
   loadAutoUpdateConfig()
   // 启动后 3 秒首次检查（不自动安装，只提示角标）
   setTimeout(() => {
-    checkForUpdate(false)
+    checkForUpdate()
   }, FIRST_CHECK_DELAY_MS)
 
   // 周期检查（自动安装与否由配置决定）
