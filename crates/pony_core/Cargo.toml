@@ -9,6 +9,7 @@ authors.workspace = true
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 sysinfo = "0.30"
 jwalk = "0.8"
+rayon = "1"
 tracing = "0.1"
 tokio-util = "0.7"
 thiserror = "2"
@@ -30,6 +31,7 @@ windows = { version = "0.54", features = [
     "Win32_System_Com",
     "Win32_System_Time",
     "Win32_System_Services",
+    "Win32_System_WindowsProgramming",
     "Win32_Security",
 ] }
 winreg = "0.52"

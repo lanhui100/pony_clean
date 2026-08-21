@@ -118,6 +118,16 @@ fn main() {
         }
     }
 
+    // 诊断日志：RUST_LOG 控制（如 RUST_LOG=pony_core=debug 可见 per-target 扫描统计），
+    // 默认 info；无 subscriber 时 tracing 宏为 no-op，这是此前漏扫诊断日志不可见的原因
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .try_init();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())

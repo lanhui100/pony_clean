@@ -153,6 +153,7 @@ pub fn scan_large_files(
 
     let walker = jwalk::WalkDir::new(root)
         .follow_links(false)
+        .parallelism(crate::walk::walk_parallelism())
         .process_read_dir(|_depth, _path, _state, children| {
             let is_local_temp = _path
                 .to_string_lossy()
@@ -259,6 +260,7 @@ pub fn scan_user_dir(
 
     let walker = jwalk::WalkDir::new(root)
         .follow_links(false)
+        .parallelism(crate::walk::walk_parallelism())
         .process_read_dir(|_depth, _path, _state, children| {
             let is_local_temp = _path
                 .to_string_lossy()
@@ -386,6 +388,7 @@ pub fn scan_dir_usage(
     let walker = jwalk::WalkDir::new(root)
         .follow_links(false)
         .max_depth(max_depth)
+        .parallelism(crate::walk::walk_parallelism())
         .process_read_dir(|_depth, _path, _state, children| {
             children.retain(|e| {
                 e.as_ref().ok().is_none_or(|entry| {

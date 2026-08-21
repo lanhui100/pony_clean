@@ -1231,7 +1231,7 @@ pub fn start_scan(
                         cancelled = cancel.is_cancelled();
                         break;
                     }
-                    let (b, s) = scan_target_block(
+                    let (b, s, errs, first_err) = scan_target_block(
                         &targets[target_idx],
                         &target_path,
                         &cancel,
@@ -1239,6 +1239,16 @@ pub fn start_scan(
                         &global_hit,
                         &mut batch,
                         &agg_tx,
+                    );
+                    // per-target 扫描统计（RUST_LOG=pony_core=debug 可见，用于漏扫诊断）
+                    tracing::debug!(
+                        target_id = %targets[target_idx].id,
+                        path = %target_path.display(),
+                        bytes = b,
+                        items_skipped_small = s,
+                        enum_errors = errs,
+                        first_error = ?first_err,
+                        "target scanned"
                     );
                     total_bytes += b;
                     skipped += s;
@@ -1341,7 +1351,7 @@ fn scan_target_block(
     global_hit: &AtomicBool,
     batch: &mut Vec<CleanItem>,
     tx: &mpsc::Sender<ScanEvent>,
-) -> (u64, u64) {
+) -> (u64, u64, u64, Option<String>) {
     let mut total_bytes = 0u64;
     let mut skipped_small = 0u64;
     let cat_min_size = target_def.min_size;
@@ -1356,11 +1366,15 @@ fn scan_target_block(
         None
     };
     let mut target_count = 0u64;
-
+    // 枚举错误统计（诊断漏扫）：jwalk 静默丢弃的 read_dir/entry 错误计数 + 首个错误码
+    let err_count = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let first_err = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let (ec, fe) = (err_count.clone(), first_err.clone());
     let walk_dir = jwalk::WalkDir::new(target_path)
         .follow_links(false)
         .max_depth(target_def.max_depth)
-        .process_read_dir(|depth, _path, _state, children| {
+        .parallelism(crate::walk::walk_parallelism())
+        .process_read_dir(move |depth, _path, _state, children| {
             if depth.unwrap_or(0) > 5 {
                 children.retain(|e| {
                     e.as_ref().ok().is_none_or(|entry| {
@@ -1372,12 +1386,35 @@ fn scan_target_block(
                     })
                 });
             }
+            for e in children.iter() {
+                if e.is_err() {
+                    ec.fetch_add(1, Ordering::Relaxed);
+                    let mut first = fe.lock().unwrap();
+                    if first.is_none() {
+                        *first = Some(format!("{}", e.as_ref().unwrap_err()));
+                    }
+                }
+            }
             children.retain(|e| e.is_ok());
         });
 
-    for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
+    for entry in walk_dir.into_iter() {
+        let Ok(entry) = entry else {
+            // 迭代器级错误（如根目录 read_dir 失败）
+            err_count.fetch_add(1, Ordering::Relaxed);
+            let mut first = first_err.lock().unwrap();
+            if first.is_none() {
+                *first = Some(format!("{entry:?}"));
+            }
+            continue;
+        };
         if cancel_token.is_cancelled() || global_hit.load(Ordering::Relaxed) {
-            return (total_bytes, skipped_small);
+            return (
+                total_bytes,
+                skipped_small,
+                err_count.load(Ordering::Relaxed),
+                first_err.lock().unwrap().clone(),
+            );
         }
         if !entry.file_type().is_file() {
             continue;
@@ -1431,7 +1468,12 @@ fn scan_target_block(
         let n = global_count.fetch_add(1, Ordering::Relaxed) + 1;
         if n > MAX_SCAN_ITEMS {
             global_hit.store(true, Ordering::Relaxed);
-            return (total_bytes, skipped_small);
+            return (
+                total_bytes,
+                skipped_small,
+                err_count.load(Ordering::Relaxed),
+                first_err.lock().unwrap().clone(),
+            );
         }
 
         total_bytes += size;
@@ -1456,7 +1498,12 @@ fn scan_target_block(
             });
         }
     }
-    (total_bytes, skipped_small)
+    (
+        total_bytes,
+        skipped_small,
+        err_count.load(Ordering::Relaxed),
+        first_err.lock().unwrap().clone(),
+    )
 }
 
 fn chrono_placeholder_now() -> i64 {
@@ -1833,19 +1880,34 @@ fn delete_file_delayed_windows(path: &Path) -> Result<(), String> {
 }
 
 /// 清空回收站（需在 COM 初始化的线程上调用）
+///
+/// 逐盘清空策略（修复全局调用 E_UNEXPECTED 全盘连坐问题）：
+/// 1. 枚举本地驱动器，逐盘 `SHQueryRecycleBinW` 查询项目数，空盘直接跳过；
+/// 2. 非空盘逐个 `SHEmptyRecycleBinW(root)`，单盘失败不影响其他盘；
+/// 3. 存在失败盘时报错，信息指明具体盘符与 HRESULT，并按错误类型给出针对性提示。
 pub fn empty_recycle_bin() -> Result<(), String> {
     #[cfg(not(windows))]
     return Err("Recycle bin is only supported on Windows".into());
 
     #[cfg(windows)]
     {
+        use std::mem::size_of;
         use windows::Win32::Foundation::{S_FALSE, S_OK};
+        use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDriveStringsW};
         use windows::Win32::System::Com::{
             COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
         };
+        use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
         use windows::Win32::UI::Shell::{
-            SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHEmptyRecycleBinW,
+            SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHEmptyRecycleBinW, SHQUERYRBINFO,
+            SHQueryRecycleBinW,
         };
+        use windows::core::PCWSTR;
+
+        /// UTF-16 编码并以 NUL 结尾（Win32 宽字符 API 要求）
+        fn to_wide(s: &str) -> Vec<u16> {
+            s.encode_utf16().chain(std::iter::once(0)).collect()
+        }
 
         unsafe {
             let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -1854,31 +1916,87 @@ pub fn empty_recycle_bin() -> Result<(), String> {
             if hr != S_OK && hr != S_FALSE {
                 return Err(format!("COM init failed with unexpected HRESULT: {hr:?}"));
             }
+            // 仅当本线程本次初始化成功（S_OK）时才需要平衡引用计数
+            let com_initialized_here = hr == S_OK;
 
-            let result = SHEmptyRecycleBinW(None, None, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI);
+            // ── 1. 枚举本地驱动器根路径（"C:\" 形式，固定盘 + 可移动盘）──
+            let mut roots: Vec<String> = Vec::new();
+            let mut buf = [0u16; 512];
+            let len = GetLogicalDriveStringsW(Some(&mut buf)) as usize;
+            if len > 0 && len <= buf.len() {
+                let mut start = 0usize;
+                while start < len && buf[start] != 0 {
+                    let Some(end) = buf[start..len]
+                        .iter()
+                        .position(|&c| c == 0)
+                        .map(|p| start + p)
+                    else {
+                        break;
+                    };
+                    let drive = String::from_utf16_lossy(&buf[start..end]);
+                    if matches!(
+                        GetDriveTypeW(PCWSTR(to_wide(&drive).as_ptr())),
+                        DRIVE_FIXED | DRIVE_REMOVABLE
+                    ) {
+                        roots.push(drive);
+                    }
+                    start = end + 1;
+                }
+            }
 
-            if hr == S_OK {
+            // ── 2. 逐盘查询非空后清空（空盘短路，规避空态下的 API 怪异行为）──
+            let mut failures: Vec<(String, String)> = Vec::new(); // (盘符描述, HRESULT 十六进制)
+            for root in &roots {
+                let mut info = SHQUERYRBINFO {
+                    // cbSize 必须先于调用赋值（SHQueryRecycleBinW 的契约）
+                    cbSize: size_of::<SHQUERYRBINFO>() as u32,
+                    ..Default::default()
+                };
+                let root_wide = to_wide(root);
+                let query = SHQueryRecycleBinW(PCWSTR(root_wide.as_ptr()), &mut info);
+
+                // 查询失败的盘（无回收站/卷未就绪）跳过，不视为错误
+                let num_items = match query {
+                    Ok(()) => info.i64NumItems,
+                    Err(_) => continue,
+                };
+                if num_items <= 0 {
+                    continue;
+                }
+
+                let result = SHEmptyRecycleBinW(
+                    None,
+                    PCWSTR(root_wide.as_ptr()),
+                    SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI,
+                );
+                if let Err(e) = result {
+                    let drive_letter = root.chars().next().unwrap_or('?').to_ascii_uppercase();
+                    let hex = format!("0x{:08X}", e.code().0);
+                    failures.push((format!("{drive_letter} 盘 ({hex}: {})", e.message()), hex));
+                }
+            }
+
+            if com_initialized_here {
                 CoUninitialize();
             }
 
-            if result.is_ok() {
+            if failures.is_empty() {
                 Ok(())
             } else {
-                // 解码 HRESULT 为可读错误，便于定位（E_ACCESSDENIED=文件被占用/权限不足等）
-                use windows::Win32::Foundation::E_ACCESSDENIED;
-                use windows::Win32::Foundation::E_FAIL;
-                let err = result.expect_err("result.is_ok() checked above");
-                let hr = err.code(); // HRESULT
-                let hr_hex = format!("0x{:08X}", hr.0);
-                let message = err.message();
-                let hint = if hr == E_ACCESSDENIED {
+                let codes: Vec<&str> = failures.iter().map(|(_, hex)| hex.as_str()).collect();
+                let hint = if codes.contains(&"0x80070005") {
                     "回收站中有文件正被其他程序占用（如云盘、杀毒软件或正在运行的应用），或当前权限不足，请关闭占用程序后重试"
-                } else if hr == E_FAIL {
-                    "回收站中部分文件无法删除，可能是系统文件被保护或目录结构异常"
+                } else if codes.contains(&"0x8000FFFF") {
+                    "该盘回收站元数据可能已损坏：可在资源管理器中右键「回收站」→「清空」验证，或重启系统后重试"
                 } else {
-                    "清空回收站失败，请稍后重试或检查回收站目录"
+                    "请稍后重试或检查对应磁盘的回收站目录"
                 };
-                Err(format!("清空回收站失败 ({hr_hex}): {message}。{hint}"))
+                let detail = failures
+                    .iter()
+                    .map(|(desc, _)| desc.as_str())
+                    .collect::<Vec<_>>()
+                    .join("；");
+                Err(format!("清空回收站失败：{detail}。{hint}"))
             }
         }
     }
@@ -2838,7 +2956,7 @@ mod tests {
         let count = AtomicU64::new(0);
         let hit = AtomicBool::new(false);
         let mut batch = Vec::new();
-        let (bytes, skipped) =
+        let (bytes, skipped, _, _) =
             scan_target_block(&target, dir.path(), &cancel, &count, &hit, &mut batch, &tx);
 
         assert_eq!(batch.len(), 1, "only big.log should match");

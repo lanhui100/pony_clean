@@ -6,3 +6,4 @@ pub mod icon;
 pub mod memory;
 pub mod monitor;
 pub mod startup;
+pub mod walk;
