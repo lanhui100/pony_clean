@@ -128,7 +128,7 @@ unsafe fn hicon_to_png_base64(hicon: HICON) -> Option<String> {
 
         // BGRA → RGBA 转换
         let mut pixels_rgba = Vec::with_capacity(pixel_size);
-        for chunk in pixels_bgra.chunks_exact(4) {
+        for chunk in pixels_bgra.as_chunks::<4>().0 {
             pixels_rgba.push(chunk[2]); // R
             pixels_rgba.push(chunk[1]); // G
             pixels_rgba.push(chunk[0]); // B
