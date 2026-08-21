@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { relaunch } from '@tauri-apps/api/process'
+import { relaunch } from '@tauri-apps/plugin-process'
 import { check } from '@tauri-apps/plugin-updater'
 import { Loader2, Plus, Save, Trash2, RefreshCw } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'

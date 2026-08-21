@@ -8,6 +8,14 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+## [0.3.0] - 2026-08-21
+
+<!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
+
+- Changed: 应用图标全面改版 — 米白色圆角背景 + 马头 logo 居中构图，全套 Tauri 图标重新生成（icon.ico 七尺寸 + 各尺寸 PNG + MSIX 资源），托盘与桌面图标同步更新
+- Added: 应用自动重启能力 — 集成 tauri-plugin-process（Rust 插件注册 + `process:allow-restart` 权限 + 前端 `@tauri-apps/plugin-process`），更新安装后自动重启生效
+- Fixed: dev 启动失败两处根因 — 残留 vite 进程占用 5183 端口；`relaunch` 误从 `@tauri-apps/api/process` 导入（Tauri 2 中已迁移至独立插件）
+
 ## [0.2.1] - 2026-08-21
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->

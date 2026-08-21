@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- PonyClean icon v15a: v13 geometry, all-red monochrome, transparent background -->
+  <g transform="translate(-44,0)">
+    <!-- mane: three tapered red locks sweeping down-left -->
+    <g fill="#D0342C">
+      <path d="M 566 232
+               C 448 244, 318 318, 214 452
+               C 330 380, 452 322, 588 296
+               C 584 272, 576 250, 566 232 Z"/>
+      <path d="M 548 330
+               C 436 356, 322 442, 236 588
+               C 352 496, 462 434, 574 402
+               C 568 376, 558 352, 548 330 Z"/>
+      <path d="M 528 436
+               C 436 476, 344 560, 276 700
+               C 380 616, 470 556, 556 520
+               C 548 490, 538 462, 528 436 Z"/>
+    </g>
+    <!-- head: single confident stroke, forehead -> nose bridge -> lip hook -->
+    <path d="M 560 296
+             C 690 318, 798 424, 840 540
+             C 858 590, 852 634, 820 664"
+          fill="none" stroke="#D0342C" stroke-width="56" stroke-linecap="round"/>
+    <!-- jaw / cheek -->
+    <path d="M 512 424
+             C 550 538, 630 606, 746 628"
+          fill="none" stroke="#D0342C" stroke-width="56" stroke-linecap="round"/>
+    <!-- neck / chest: one grand arc -->
+    <path d="M 498 486
+             C 560 620, 592 752, 566 908"
+          fill="none" stroke="#D0342C" stroke-width="56" stroke-linecap="round"/>
+    <!-- ears: two bold pointed strokes -->
+    <path d="M 552 272
+             C 558 204, 574 148, 600 106
+             C 624 156, 636 212, 640 264"
+          fill="none" stroke="#D0342C" stroke-width="50" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 668 260
+             C 672 198, 686 142, 714 102
+             C 736 152, 742 210, 738 260"
+          fill="none" stroke="#D0342C" stroke-width="50" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- eye: single dot -->
+    <circle cx="652" cy="398" r="18" fill="#D0342C"/>
+  </g>
+</svg>

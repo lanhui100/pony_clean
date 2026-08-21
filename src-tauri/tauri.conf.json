@@ -1,6 +1,6 @@
 {
   "productName": "PonyClean",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "identifier": "com.pony.ponyclean",
   "build": {
     "beforeDevCommand": "npm run dev",

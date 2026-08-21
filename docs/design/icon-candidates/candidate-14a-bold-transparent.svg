@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- PonyClean icon v14a: bold abstract line-art, transparent background -->
+  <g transform="translate(-44,0)">
+    <!-- mane: three tapered locks, varied length, sweeping down-left -->
+    <g fill="#D0342C">
+      <path d="M 584 256
+               C 462 292, 340 368, 244 474
+               C 368 398, 486 340, 606 312
+               C 600 292, 592 274, 584 256 Z"/>
+      <path d="M 566 350
+               C 470 392, 372 470, 296 592
+               C 396 512, 490 454, 590 420
+               C 582 396, 574 372, 566 350 Z"/>
+      <path d="M 548 446
+               C 462 498, 382 578, 322 716
+               C 416 634, 492 576, 570 528
+               C 562 500, 556 472, 548 446 Z"/>
+    </g>
+    <!-- face profile: poll -> convex forehead -> LONG STRAIGHT nose -> small lip hook -->
+    <path d="M 566 286
+             C 620 296, 668 330, 700 360
+             C 770 440, 830 520, 854 572
+             C 856 588, 850 614, 828 618"
+          fill="none" stroke="#181818" stroke-width="54" stroke-linecap="round"/>
+    <!-- jaw / cheek bulge: short, ends under the eye -->
+    <path d="M 556 428
+             C 580 506, 624 556, 688 578"
+          fill="none" stroke="#181818" stroke-width="54" stroke-linecap="round"/>
+    <!-- neck / chest: grand arc, open throat gap -->
+    <path d="M 500 492
+             C 546 626, 568 756, 552 908"
+          fill="none" stroke="#181818" stroke-width="56" stroke-linecap="round"/>
+    <!-- ears: solid leaves, leaning right -->
+    <path d="M 554 278
+             C 552 216, 570 164, 610 138
+             C 630 182, 632 234, 622 272 Z"
+          fill="#181818"/>
+    <path d="M 650 264
+             C 652 204, 668 154, 706 128
+             C 728 168, 736 220, 730 258 Z"
+          fill="#181818"/>
+    <!-- eye -->
+    <circle cx="658" cy="408" r="20" fill="#181818"/>
+  </g>
+</svg>

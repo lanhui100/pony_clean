@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- PonyClean icon v13: bold abstract line-art, transparent background -->
+  <g transform="translate(-44,0)">
+    <!-- mane: three tapered red locks anchored on poll/neck, sweeping down-left -->
+    <g fill="#D0342C">
+      <path d="M 584 258
+               C 470 292, 350 366, 240 470
+               C 360 396, 480 338, 606 312
+               C 600 292, 592 274, 584 258 Z"/>
+      <path d="M 566 352
+               C 462 394, 356 474, 248 600
+               C 372 516, 478 454, 590 420
+               C 582 396, 574 374, 566 352 Z"/>
+      <path d="M 546 448
+               C 452 502, 362 586, 270 740
+               C 384 650, 480 584, 570 528
+               C 562 500, 554 474, 546 448 Z"/>
+    </g>
+    <!-- face profile: poll -> forehead -> straight nose bridge -> small lip curl -->
+    <path d="M 566 292
+             C 640 300, 724 348, 782 430
+             C 826 492, 852 548, 856 592
+             C 858 618, 846 636, 822 644"
+          fill="none" stroke="#181818" stroke-width="54" stroke-linecap="round"/>
+    <!-- jaw / jowl -->
+    <path d="M 540 420
+             C 570 520, 634 588, 726 612"
+          fill="none" stroke="#181818" stroke-width="54" stroke-linecap="round"/>
+    <!-- neck / chest: one grand arc -->
+    <path d="M 512 470
+             C 556 600, 576 730, 560 905"
+          fill="none" stroke="#181818" stroke-width="56" stroke-linecap="round"/>
+    <!-- ears: short, splayed, pointed -->
+    <path d="M 556 278
+             C 550 218, 560 162, 588 124
+             C 612 166, 620 220, 618 272"
+          fill="none" stroke="#181818" stroke-width="48" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 668 266
+             C 672 206, 686 152, 714 116
+             C 738 158, 744 214, 738 262"
+          fill="none" stroke="#181818" stroke-width="48" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- eye: single dot -->
+    <circle cx="672" cy="398" r="19" fill="#181818"/>
+  </g>
+</svg>
