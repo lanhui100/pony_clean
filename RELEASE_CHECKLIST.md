@@ -13,9 +13,10 @@
      `node scripts/bump-version.mjs <新版本> --commit --tag` — 生成 `chore(release): vX.Y.Z` 提交 + `vX.Y.Z` tag
 7. [ ] `git push --follow-tags` — 推送提交与 tag（勿漏）；`git ls-remote --tags origin` 验证 tag 已推
 8. [ ] 推送后确认**双平台流水线**自动构建成功（无需手动上传产物）：
-     - GitHub Actions：Actions 页面 `Build Windows Installers` 全绿；[GitHub Release](https://github.com/lanhui100/pony_clean/releases) 附件含 `x64-setup.exe` + `arm64-setup.exe` + 各自 `.sig`（约 8 分钟）
+     - GitHub Actions：Actions 页面 `Build Windows Installers` 全绿；[GitHub Release](https://github.com/lanhui100/pony_clean/releases) 附件含 `x64-setup.exe` + `arm64-setup.exe` + 各自 `.sig` + `latest.json`（约 8 分钟）
      - CNB：流水线构建成功；CNB Release 附件齐全 + `updater/latest.json` 已更新提交 main
-9. [ ] 若 GitHub Release 附件缺失/构建失败，按 [docs/VERSIONING.md](docs/VERSIONING.md)「双平台发版」注意事项排查（tag 指向、版本守卫、签名密钥）
+9. [ ] 验证 GitHub 更新端点可达：`https://github.com/lanhui100/pony_clean/releases/latest/download/latest.json` 返回正确清单（version = 本次版本、双架构 url + signature、pub_date 为 RFC 3339）
+10. [ ] 若 GitHub Release 附件缺失/构建失败，按 [docs/VERSIONING.md](docs/VERSIONING.md)「双平台发版」注意事项排查（tag 指向、版本守卫、签名密钥）
 
 ## Pre-release Manual Verification
 

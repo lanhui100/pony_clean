@@ -4,7 +4,9 @@
 > 状态：已实施方案 A（官方构建机交叉编译 NSIS `.exe`）并**验证通过**（2026-08-19）
 > 双架构验证通过（2026-08-19）：x64 + ARM64 双安装包已上线
 > 自动更新（tauri-plugin-updater）验证通过（2026-08-19）：v0.1.2 含签名 + latest.json 全链路
-> 最新产物：`PonyClean_0.1.2_x64-setup.exe` + `PonyClean_0.1.2_arm64-setup.exe`，见 [v0.1.2 Release](https://cnb.cool/lanhui100/pony_clean/-/releases/tag/v0.1.2)
+> GitHub Actions 流水线上线（2026-08-20）：与 CNB 并行构建，见 §5.6/§5.7
+> 更新源双端点（2026-08-21，v0.2.1 起）：GitHub（主）+ CNB（备），GitHub Release 附带流水线生成的 `latest.json`
+> 最新产物：`PonyClean_0.2.1_x64-setup.exe` + `PonyClean_0.2.1_arm64-setup.exe` + `latest.json`，见 [v0.2.1 Release](https://github.com/lanhui100/pony_clean/releases/tag/v0.2.1)
 
 ## 1. 背景
 
@@ -134,7 +136,7 @@ npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
 | arm64 | 手动 clang + lld-link + xwin SDK 探测 | **MSVC amd64_arm64 交叉环境**（VS 2022 自带 ARM64 工具集） |
 | 工具链 | 每次 apt 安装 rustup/nsis/llvm/clang | 预装 VS 2022 + LLVM + rustup，tauri 自动下载 NSIS |
 | 签名 | CNB 密钥仓库 imports | GitHub Secrets `TAURI_SIGNING_PRIVATE_KEY`（同一把密钥） |
-| 分发 | CNB Release + latest.json 提交 main | GitHub Release + workflow artifact（latest.json 未生成） |
+| 分发 | CNB Release + latest.json 提交 main | GitHub Release（含流水线生成的 `latest.json` 附件）+ workflow artifact |
 
 **触发方式**：推送 `vX.Y.Z` tag 自动构建并创建 GitHub Release；`workflow_dispatch` 手动触发（仅构建 + artifact）。
 
@@ -147,13 +149,16 @@ npx --prefix frontend tauri build --target aarch64-pc-windows-msvc
    - `--bundles nsis`：NSIS 是 ARM64 唯一支持的 bundle（Tauri 官方建议显式指定）；
 4. 签名：`TAURI_SIGNING_PRIVATE_KEY`（+ 可选 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）注入 tauri build；
    **未配置时 workflow 自动临时关闭 `createUpdaterArtifacts`**，产物仅安装包（无 `.sig`）；
-5. 分发：`softprops/action-gh-release` 上传 `setup.exe` + `.sig` 到 GitHub Release；`upload-artifact` 始终上传。
+5. 生成 updater 清单：用双架构 `.sig` 生成 `latest.json`（`version`/`pub_date`(RFC 3339)/
+   `platforms.{windows-x86_64,windows-aarch64}.{signature,url}`，url 指向 GitHub Release 下载地址）；
+6. 分发：`softprops/action-gh-release` 上传 `setup.exe` + `.sig` + `latest.json` 到 GitHub Release；`upload-artifact` 始终上传。
 
 **与 CNB 方案的差异与注意**：
 - Windows 原生构建质量更好、无需 cargo-xwin 与手动 NSIS 安装（tauri 自动下载）；
-- **updater/latest.json 未在 GitHub 流水线生成**：当前 `tauri.conf.json` 的 updater endpoint 仍指向 CNB
-  （`https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json`）。若改用 GitHub 分发自动更新，
-  需将 endpoint 改为 GitHub raw URL，并在流水线中生成提交 latest.json（URL 指向 GitHub Release 下载地址）。
+- **updater/latest.json 由本流水线生成并作为 Release 附件上传**（2026-08-21 起，v0.2.1）：app 内更新源为
+  GitHub（主）+ CNB（备），固定 URL `https://github.com/lanhui100/pony_clean/releases/latest/download/latest.json`
+  （`latest` 自动指向最新正式 Release）。清单用 PowerShell `ConvertTo-Json` 生成——**勿用 heredoc 手写 JSON**
+  （YAML 块标量与 `@"..."@` 冲突曾致工作流 0s 失败）；`pub_date` 用 `(Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")`；
 - 签名私钥需配置到 GitHub Secrets（与 CNB 密钥仓库 `lanhui100/pony_clean-secrets` 同一把，见 §9.3）。
 
 ### 5.7 GitHub 发版流程（与 CNB 并行）
@@ -165,8 +170,8 @@ node scripts/bump-version.mjs 0.2.0 --commit --tag   # 同步版本 + 提交 + �
 git push origin main --follow-tags                    # 推送 main 与 tag（触发两条流水线）
 ```
 
-- GitHub 侧：`Build Windows Installers` 自动构建双架构 → 创建 GitHub Release（附件 = `setup.exe` + `.sig`）；
-- CNB 侧：自动构建 → CNB Release + `updater/latest.json` 提交 main（app 自动更新走 CNB）；
+- GitHub 侧：`Build Windows Installers` 自动构建双架构 → 创建 GitHub Release（附件 = `setup.exe` + `.sig` + `latest.json`）；
+- CNB 侧：自动构建 → CNB Release + `updater/latest.json` 提交 main（备用更新源）；
 - 完整发版流程与注意事项（tag 指向、版本守卫、签名密钥、tag 冲突）见 [VERSIONING.md「双平台发版」](VERSIONING.md#双平台发版github--cnb)。
 
 ## 6. 代码签名（解决浏览器/SmartScreen 警告）
@@ -224,9 +229,14 @@ osslsigncode 可在 **Linux 上对交叉编译的 Windows .exe 直接签名**，
 
 ### 9.1 更新链路
 
-1. **发版**：推送 tag → 流水线交叉编译双架构 → 自动签名（`TAURI_SIGNING_PRIVATE_KEY`）→ 上传 `setup.exe` + `.exe.sig` 到 Release 附件
-2. **清单**：流水线生成 `updater/latest.json` 并提交到 main（固定 URL：`https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json`），`url` 指向对应架构的 `setup.exe`
-3. **客户端**：app 启动/手动检查时请求该 URL → 对比版本 → 下载对应架构 `setup.exe` → 校验签名 → 被动安装（`installMode: passive`）→ 重启
+1. **发版**：推送 tag → 流水线构建双架构 → 自动签名（`TAURI_SIGNING_PRIVATE_KEY`）→ 上传 `setup.exe` + `.exe.sig` 到 Release 附件
+2. **清单**（双端点，客户端按序尝试）：
+   - **GitHub（主）**：GitHub 流水线生成 `latest.json` 并作为 Release 附件上传，固定 URL：
+     `https://github.com/lanhui100/pony_clean/releases/latest/download/latest.json`（`latest` 自动指向最新正式 Release）
+   - **CNB（备）**：CNB 流水线生成 `updater/latest.json` 提交到 main，固定 URL：
+     `https://cnb.cool/lanhui100/pony_clean/-/git/raw/main/updater/latest.json`
+   两份清单的 `url` 分别指向各自平台的 `setup.exe` 下载地址
+3. **客户端**：app 启动/手动检查时按端点顺序请求 → 对比版本 → 下载对应架构 `setup.exe` → 校验签名 → 被动安装（`installMode: passive`）→ 重启
 
 ### 9.2 配置
 
@@ -248,5 +258,6 @@ osslsigncode 可在 **Linux 上对交叉编译的 Windows .exe 直接签名**，
 
 ### 9.4 发版注意
 
-- 每次发版流水线会**自动提交 `updater/latest.json` 到 main**，因此 main 会比 tag 提交多 1 个 docs 提交（属正常，由 `CNB_TOKEN` 推送）
+- CNB 每次发版会**自动提交 `updater/latest.json` 到 main**，因此 CNB 侧 main 会比 tag 提交多 1 个 docs 提交（属正常，由 `CNB_TOKEN` 推送）；GitHub 侧无此行为（清单是 Release 附件，不进 git）
 - 若签名失败（私钥未配置），**CNB 流水线**的 `tauri build` 会因 `createUpdaterArtifacts` 报错——需先完成密钥仓库配置；**GitHub 流水线**（§5.6）会自动用 `--config` 临时关闭 `createUpdaterArtifacts`，产物仅安装包（无 `.sig`），不报错
+- **endpoint 编译进二进制**：修改 `tauri.conf.json` 的 `plugins.updater.endpoints` 只影响之后的构建；已装旧版客户端仍用编译时的端点，直到升级到含新端点的版本

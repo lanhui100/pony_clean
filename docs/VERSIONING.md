@@ -58,7 +58,7 @@ git push --follow-tags
 git ls-remote --tags origin | findstr v0.2.0   # 验证 tag 已推（可选）
 
 # 7. 流水线自动构建与发布（推送后自动触发，无需手动操作）
-#    - GitHub Actions：推 v* tag 自动构建 x64 + arm64 安装包 → 创建 GitHub Release
+#    - GitHub Actions：推 v* tag 自动构建 x64 + arm64 安装包 → 创建 GitHub Release（含 latest.json 更新清单）
 #    - CNB 流水线：同样推 tag 触发，产出到 CNB Release + 更新 updater/latest.json
 ```
 
@@ -74,7 +74,7 @@ git ls-remote --tags origin | findstr v0.2.0   # 验证 tag 已推（可选）
 
 | 平台 | 触发 | 产物 | Release | updater 清单 |
 |---|---|---|---|---|
-| **GitHub Actions**（`.github/workflows/build-installers.yml`） | push `v*` tag | x64 + arm64 NSIS `.exe` + `.sig` | GitHub Release（自动创建并上传附件） | 不生成 `latest.json`（endpoint 仍指向 CNB） |
+| **GitHub Actions**（`.github/workflows/build-installers.yml`） | push `v*` tag | x64 + arm64 NSIS `.exe` + `.sig` + `latest.json` | GitHub Release（自动创建并上传附件） | 流水线生成 `latest.json`（url 指向 GitHub Release 下载地址）并随 Release 上传 |
 | **CNB**（`.cnb.yml`） | tag_push | x64 + arm64 NSIS `.exe` + `.sig` | CNB Release（自动创建并上传附件） | 生成 `latest.json` 并提交 main |
 
 ### 注意事项
@@ -83,7 +83,7 @@ git ls-remote --tags origin | findstr v0.2.0   # 验证 tag 已推（可选）
 2. **版本守卫**：GitHub 流水线校验 tag 与 `tauri.conf.json` version 一致（`vX.Y.Z` == `X.Y.Z`），不一致直接失败——必须用 `bump-version.mjs` 发版，禁止手动打 tag。
 3. **签名密钥**：GitHub 需在仓库 Secrets 配置 `TAURI_SIGNING_PRIVATE_KEY`（与 CNB 密钥仓库 `lanhui100/pony_clean-secrets` 同一把，密钥带密码时还需 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。未配置时：GitHub 流水线自动关闭 updater 产物（仅安装包，无 `.sig`，不报错）；CNB 流水线直接报错。
 4. **tag 冲突**：同一 tag 在两个平台指向不同提交时，后续 push 会冲突（v0.1.2 本地 tag 已重指向 GitHub main，与 cnb 指向不同；如需 `git push cnb` 同步需先处理）。
-5. **updater 分发**：当前 `latest.json` 由 CNB 流水线维护，app 内自动更新走 CNB。GitHub Release 产物暂不参与自动更新；如需切换见 [RELEASE_BUILD.md §5.6](RELEASE_BUILD.md#56-github-actions-构建windows-latest-原生--arm64-交叉)。
+5. **updater 分发**：v0.2.1 起 app 内更新源为 **GitHub（主）+ CNB（备）** 双端点。GitHub 的 `latest.json` 由流水线生成并作为 Release 附件上传（固定 URL：`https://github.com/lanhui100/pony_clean/releases/latest/download/latest.json`）；CNB 继续维护 git raw 清单作备用。注意 endpoint 编译进二进制——v0.2.0 及更早的已装客户端仍只走 CNB，升级到 v0.2.1+ 后才启用 GitHub 源。
 6. **构建验证**：推送后到 GitHub Actions 页面确认 `Build Windows Installers` 全绿，Release 附件含双架构 `setup.exe` + `.sig`（约 8 分钟，缓存生效后）。
 
 ## bump-version.mjs 行为与守卫
