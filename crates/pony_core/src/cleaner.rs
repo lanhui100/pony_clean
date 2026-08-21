@@ -116,6 +116,13 @@ pub enum ScanWarning {
         target_id: String,
         path: String,
     },
+    /// 目录枚举受限（jwalk 层错误被静默丢弃的可见化）：count 为丢弃数，
+    /// first_error 为首个错误（已排除 os error 2/3 的良性消失竞态）
+    EnumErrors {
+        target_id: String,
+        count: u64,
+        first_error: String,
+    },
 }
 
 /// 扫描进度事件
@@ -1250,6 +1257,19 @@ pub fn start_scan(
                         first_error = ?first_err,
                         "target scanned"
                     );
+                    // 枚举受限告警：jwalk 层错误默认静默丢弃，这里可见化到前端。
+                    // os error 2/3（目录消失/不存在）为良性竞态，不告警
+                    if errs > 0
+                        && first_err.as_deref().is_none_or(|e| {
+                            !e.contains("os error 2") && !e.contains("os error 3")
+                        })
+                    {
+                        let _ = agg_tx.send(ScanEvent::Warning(ScanWarning::EnumErrors {
+                            target_id: targets[target_idx].id.clone(),
+                            count: errs,
+                            first_error: first_err.unwrap_or_default(),
+                        }));
+                    }
                     total_bytes += b;
                     skipped += s;
                 }

@@ -107,6 +107,14 @@ pub async fn start_scan(app: AppHandle, state: State<'_, CleanerState>) -> Resul
                                         "type": "env_injection_detected", "target_id": target_id, "path": path
                                     })
                                 }
+                                ScanWarning::EnumErrors {
+                                    target_id,
+                                    count,
+                                    first_error,
+                                } => serde_json::json!({
+                                    "type": "enum_errors", "target_id": target_id,
+                                    "count": count, "first_error": first_error
+                                }),
                             };
                             tracing::warn!("Scan warning: {w:?}");
                             let _ = app_handle.emit("scan-warning", payload);

@@ -50,6 +50,8 @@ export interface ScanWarningPayload {
   pattern?: string
   service?: string
   reason?: string
+  count?: number
+  first_error?: string
 }
 
 export type ScanState = 'idle' | 'scanning' | 'done' | 'cancelled' | 'error' | 'deleting'
@@ -74,6 +76,8 @@ const deleteResult = ref<DeleteResult | null>(null)
 const errorMessage = ref('')
 const deleteProgress = ref({ done: 0, total: 0, current: '' })
 const cleanLogs = ref<CleanLogEntry[]>([])
+/** 本次扫描中枚举受限的目标数（enum_errors 告警去重按 target_id），驱动 UI 提示"结果可能偏少" */
+const enumWarningTargets = ref<Set<string>>(new Set())
 
 const progress = ref<ScanProgress>(EMPTY_SCAN_PROGRESS)
 const scanned = computed(() => progress.value.scanned)
@@ -150,6 +154,11 @@ function ensureListeners(): Promise<void> {
       }),
       listen<ScanWarningPayload>('scan-warning', (e) => {
         console.warn('Scan warning:', e.payload.type, e.payload)
+        if (e.payload.type === 'enum_errors' && e.payload.target_id) {
+          const next = new Set(enumWarningTargets.value)
+          next.add(e.payload.target_id)
+          enumWarningTargets.value = next
+        }
       }),
     ]).then(() => {
       // 监听器注册完成
@@ -186,6 +195,7 @@ async function startScan() {
   deleteResult.value = null
   errorMessage.value = ''
   progress.value = EMPTY_SCAN_PROGRESS
+  enumWarningTargets.value = new Set()
   justCleaned.value = false
   markScanActive()
   try {
@@ -272,6 +282,7 @@ function reset() {
   deleteProgress.value = { done: 0, total: 0, current: '' }
   deleteResult.value = null
   errorMessage.value = ''
+  enumWarningTargets.value = new Set()
 }
 
 /** SpacePanel 专用 composable：返回模块级单例状态，实例仅负责挂载时确保监听器就绪 */
@@ -293,6 +304,7 @@ export function useCleaner() {
     errorMessage,
     lastCleanBytes,
     justCleaned,
+    enumWarningTargets,
     startScan,
     cancelScan,
     executeClean,

@@ -60,6 +60,7 @@ const {
   errorMessage,
   lastCleanBytes,
   justCleaned,
+  enumWarningTargets,
   startScan,
   cancelScan,
   executeClean,
@@ -600,6 +601,14 @@ onUnmounted(() => {})
                 <span v-if="skippedSmall > 0" class="ml-auto text-[9px] text-muted-foreground/50">
                   已忽略 {{ skippedSmall }} 个小文件
                 </span>
+              </div>
+              <!-- 枚举受限提示：部分目录扫描时读取失败，结果可能偏少（漏扫可见化） -->
+              <div
+                v-if="enumWarningTargets.size > 0"
+                class="mt-1 rounded bg-warning/10 px-2 py-1 text-[9px] text-warning"
+                :title="`枚举受限目标：${[...enumWarningTargets].join('、')}`"
+              >
+                {{ enumWarningTargets.size }} 个目录枚举受限，结果可能偏少
               </div>
 
               <!-- 分类明细 -->
