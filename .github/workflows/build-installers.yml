@@ -116,25 +116,17 @@ jobs:
           $sigX64 = (Get-Content target/release/bundle/nsis/*x64-setup.exe.sig -Raw).Trim()
           $sigArm = (Get-Content target/aarch64-pc-windows-msvc/release/bundle/nsis/*arm64-setup.exe.sig -Raw).Trim()
           $pubDate = (Get-Date -AsUTC -UFormat "%Y-%m-%dT%H:%M:%SZ")
-          $notes = (git log -1 --format=%s).Trim().Replace('"', '\"')
-          $json = @"
-          {
-            "version": "$ver",
-            "notes": "$notes",
-            "pub_date": "$pubDate",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "$sigX64",
-                "url": "$base/PonyClean_${ver}_x64-setup.exe"
-              },
-              "windows-aarch64": {
-                "signature": "$sigArm",
-                "url": "$base/PonyClean_${ver}_arm64-setup.exe"
-              }
+          $notes = (git log -1 --format=%s).Trim()
+          $manifest = [ordered]@{
+            version = $ver
+            notes = $notes
+            pub_date = $pubDate
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{ signature = $sigX64; url = "$base/PonyClean_${ver}_x64-setup.exe" }
+              "windows-aarch64" = [ordered]@{ signature = $sigArm; url = "$base/PonyClean_${ver}_arm64-setup.exe" }
             }
           }
-"@
-          $json | Set-Content -NoNewline -Encoding utf8 latest.json
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -NoNewline -Encoding utf8 latest.json
           Write-Host "generated latest.json for v$ver"
 
       - name: 上传安装包 artifact
