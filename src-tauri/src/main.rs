@@ -129,6 +129,15 @@ fn main() {
         .try_init();
 
     tauri::Builder::default()
+        // 单实例守卫（唤起式，非 kill）：第二实例启动时回调此处并自行退出，
+        // 已有实例的胶囊窗口置前获焦。必须是第一个注册的插件。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            eprintln!("[PonyClean] Second instance detected, activating existing window");
+            if let Some(capsule) = app.get_webview_window("capsule") {
+                let _ = capsule.show();
+                let _ = capsule.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
