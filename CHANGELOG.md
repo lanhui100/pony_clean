@@ -8,6 +8,13 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+## [0.3.1] - 2026-08-22
+
+<!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
+
+- Added: 设置页「软件更新」区块显示当前版本号（`getVersion()` 读取，随发版自动更新）
+- Fixed: 托盘图标模糊 — 新增 DPI 对齐的专用托盘图（16/20/24/32px 预渲染，编译期嵌入），按主屏缩放比例选择最优尺寸，替代大图 GDI 缩小
+
 ## [0.3.0] - 2026-08-21
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->

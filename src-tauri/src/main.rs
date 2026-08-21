@@ -68,6 +68,28 @@ fn apply_island_vibrancy(app: &tauri::AppHandle) {
     }
 }
 
+/// 托盘专用图标：按主屏 DPI 缩放选择最合适的预渲染尺寸，
+/// 避免 default_window_icon 大图被 GDI 缩小导致的模糊。
+fn load_tray_icon(app: &tauri::App) -> tauri::Result<tauri::image::Image<'static>> {
+    const CANDIDATES: &[(u32, &[u8])] = &[
+        (16, include_bytes!("../icons/tray/tray-16.png")),
+        (20, include_bytes!("../icons/tray/tray-20.png")),
+        (24, include_bytes!("../icons/tray/tray-24.png")),
+        (32, include_bytes!("../icons/tray/tray-32.png")),
+    ];
+    // 托盘基准 16px × 主屏缩放（100%→16 / 125%→20 / 150%→24 / 200%→32）
+    let scale = app
+        .primary_monitor()?
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    let target = (16.0 * scale).round() as u32;
+    let (_, bytes) = CANDIDATES
+        .iter()
+        .find(|(size, _)| *size >= target)
+        .unwrap_or(&CANDIDATES[CANDIDATES.len() - 1]);
+    Ok(tauri::image::Image::from_bytes(bytes)?.to_owned())
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let reset_pos = MenuItem::with_id(app, "reset_pos", "重置胶囊位置", true, None::<&str>)?;
     let show_hide = MenuItem::with_id(app, "toggle", "显示/隐藏", true, None::<&str>)?;
@@ -75,7 +97,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&reset_pos, &show_hide, &quit])?;
 
     let tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(load_tray_icon(app)?)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
