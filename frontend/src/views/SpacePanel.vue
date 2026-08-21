@@ -147,6 +147,12 @@ function toggleAllCategories() {
   selectedCategories.value = allChecked ? new Set() : new Set(all)
 }
 
+/** 是否全部 Safe 分类已勾选（驱动标题行「全选/取消全选」文案） */
+const allSafeSelected = computed(() =>
+  safeGroups.value.length > 0
+  && safeGroups.value.every((g) => selectedCategories.value.has(g.category)),
+)
+
 /** 一键清理的待删路径 = 勾选分类中的全部 Safe 项 */
 const oneClickPaths = computed(() =>
   items.value
@@ -188,6 +194,11 @@ function toggleConfirmCategory(category: string) {
 }
 
 const selectedConfirmCount = computed(() => selectedConfirmPaths.value.size)
+
+/** Confirm 级项目总数（折叠头未勾选时显示） */
+const confirmTotalCount = computed(() =>
+  confirmGroups.value.reduce((n, g) => n + g.items.length, 0),
+)
 
 /* ── 清理确认弹窗（Safe 一键 / Confirm 高级共用） ── */
 
@@ -357,6 +368,13 @@ const maxDirSize = computed(() => {
   return top ? top.size_bytes : 1
 })
 
+/** 空间分析折叠头摘要：大文件数量与合计体积（收起时也不黑盒） */
+const largeSummary = computed(() => {
+  if (diskState.value !== 'done' || largeFiles.value.length === 0) return ''
+  const total = largeFiles.value.reduce((s, f) => s + f.size_bytes, 0)
+  return `${largeFiles.value.length} 个大文件 · ${formatBytes(total)}`
+})
+
 /* ═══════════ 统一扫描编排 ═══════════ */
 
 function startAllScan() {
@@ -524,9 +542,19 @@ onUnmounted(() => {})
     <!-- ═══ 区块（无背景框，超出隐藏滚动条） ═══ -->
     <ScrollArea class="scrollbar-none mt-5 flex-1">
       <div class="space-y-8 px-1 pb-2">
-        <!-- ─── 区块 1：一键清理（边距分区，无分隔线） ─── -->
+        <!-- ─── 区块 1：垃圾清理（总 → 分 → 动：结论先行，明细居中，操作收尾） ─── -->
         <div>
-          <h3 class="text-[11px] font-semibold text-foreground/85">一键清理</h3>
+          <!-- 标题行：区块标题 + 全选（操作贴近语境，不再沉到列表底部） -->
+          <div class="flex h-5 items-center justify-between">
+            <h3 class="text-[11px] font-semibold text-foreground/85">垃圾清理</h3>
+            <button
+              v-if="garbageState === 'done' && safeGroups.length > 0"
+              class="text-[10px] text-primary hover:underline"
+              @click="toggleAllCategories"
+            >
+              {{ allSafeSelected ? '取消全选' : '全选' }}
+            </button>
+          </div>
 
           <!-- 扫描中 -->
           <div v-if="garbageState === 'scanning'" class="flex items-center gap-1.5 py-1.5">
@@ -561,11 +589,20 @@ onUnmounted(() => {})
             {{ justCleaned ? '已清理完毕，点击右上角重新扫描查看剩余空间' : '没有发现可清理垃圾' }}
           </div>
 
-          <!-- 完成（有结果）：Safe 分类行 → 「高级」折叠区 → 一键清理主按钮
+          <!-- 完成（有结果）：结论行 → 分类明细 → 高级折叠区
                （SPEC-029：高级菜单在一键清理按钮上方） -->
           <template v-else-if="garbageState === 'done' && items.length > 0">
-            <!-- Safe 分类行 -->
             <template v-if="safeGroups.length > 0">
+              <!-- 结论行：可释放体积为区块视觉锚点（15px，介于页面级 20px 与标题 11px 之间） -->
+              <div class="mt-1.5 flex items-baseline gap-1.5">
+                <span class="text-[10px] text-muted-foreground">可释放</span>
+                <span class="text-[15px] font-bold leading-none tabular-nums text-foreground">{{ formatBytes(safeTotalBytes) }}</span>
+                <span v-if="skippedSmall > 0" class="ml-auto text-[9px] text-muted-foreground/50">
+                  已忽略 {{ skippedSmall }} 个小文件
+                </span>
+              </div>
+
+              <!-- 分类明细 -->
               <div class="mt-1.5 space-y-0.5">
                 <div
                   v-for="group in safeGroups"
@@ -583,9 +620,15 @@ onUnmounted(() => {})
                 </div>
               </div>
             </template>
+            <!-- Safe 项已清空 -->
+            <div v-else class="flex items-center gap-1.5 py-1.5 text-[10px] text-muted-foreground">
+              <Check class="h-3 w-3 text-success" />
+              安全项已清理完毕，点击右上角重新扫描查看剩余空间
+            </div>
 
-            <!-- ── 「高级」折叠区：Confirm 级项目（位于一键清理按钮上方） ──
-                 轻背景无边框表面，与功能区划（纯边距）区分开，保持入口可辨识 -->
+            <!-- ── 「高级」折叠区：Confirm 级项目
+                 轻背景表面保持入口可辨识（SPEC-029），内容缩进 + 左引导线体现从属层级；
+                 折叠头常显「已选 N / 共 M 项」，收起不黑盒 -->
             <Collapsible
               v-if="confirmGroups.length > 0"
               v-slot="{ open }"
@@ -594,18 +637,19 @@ onUnmounted(() => {})
               class="mt-1.5"
             >
               <div class="overflow-hidden rounded-md bg-white/[0.03]">
-                <CollapsibleTrigger class="flex w-full items-center gap-1.5 px-1.5 py-1 text-[10px] font-medium text-muted-foreground hover:bg-muted/20 transition-colors">
+                <CollapsibleTrigger class="flex w-full items-center gap-1.5 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/20">
                   <ChevronRight
                     class="h-3 w-3 shrink-0 transition-transform duration-200"
                     :class="open ? 'rotate-90' : ''"
                   />
                   <TriangleAlert class="h-3 w-3 shrink-0 text-warning" />
-                  <span class="flex-1">高级（需确认的项目）</span>
-                  <span class="tabular-nums">{{ confirmGroups.reduce((n, g) => n + g.items.length, 0) }} 项</span>
+                  <span class="flex-1 text-left">高级 · 需谨慎确认的项目</span>
+                  <span v-if="selectedConfirmCount > 0" class="tabular-nums text-warning">已选 {{ selectedConfirmCount }}</span>
+                  <span v-else class="tabular-nums">{{ confirmTotalCount }} 项</span>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div class="space-y-0.5 px-1.5 pb-1">
-                    <p class="text-[9px] text-muted-foreground/60">
+                  <div class="ml-2 space-y-0.5 border-l border-white/[0.08] pb-1 pl-2 pr-1.5">
+                    <p class="py-0.5 text-[9px] text-muted-foreground/60">
                       旧下载文件等需谨慎确认的项目，默认不清理
                     </p>
                     <div v-for="group in confirmGroups" :key="group.category" class="py-px">
@@ -652,27 +696,6 @@ onUnmounted(() => {})
                 </CollapsibleContent>
               </div>
             </Collapsible>
-
-            <!-- Safe 汇总 -->
-            <template v-if="safeGroups.length > 0">
-              <div class="mt-2 flex items-center justify-between pt-1">
-                <span class="text-[10px] text-muted-foreground">
-                  可释放 <span class="font-bold tabular-nums text-foreground/90">{{ formatBytes(safeTotalBytes) }}</span>
-                </span>
-                <span v-if="skippedSmall > 0" class="text-[9px] text-muted-foreground/50">
-                  已忽略 {{ skippedSmall }} 个小文件
-                </span>
-                <button class="text-[10px] text-primary hover:underline" @click="toggleAllCategories">
-                  {{ safeGroups.every(g => selectedCategories.has(g.category)) ? '取消全选' : '全选' }}
-                </button>
-              </div>
-            </template>
-
-            <!-- 清理后无可清理 Safe 项 -->
-            <div v-else class="flex items-center gap-1.5 py-1.5 text-[10px] text-muted-foreground">
-              <Check class="h-3 w-3 text-success" />
-              安全项已清理完毕，点击右上角重新扫描查看剩余空间
-            </div>
           </template>
 
           <!-- 空闲占位 -->
@@ -680,8 +703,8 @@ onUnmounted(() => {})
             点击右上角扫描，开始分析垃圾文件与空间占用
           </p>
 
-          <!-- 底部操作行：一键清理 + 清空回收站，平分一行 -->
-          <div class="mt-2 flex items-stretch gap-2">
+          <!-- 主操作行：一键清理 + 清空回收站，平分一行 -->
+          <div class="mt-2.5 flex items-stretch gap-2">
             <Button
               class="flex-1"
               size="sm"
@@ -706,26 +729,29 @@ onUnmounted(() => {})
           </div>
         </div>
 
-        <!-- ─── 区块 2：空间分析（默认折叠） ─── -->
+        <!-- ─── 区块 2：空间分析（折叠头常显结果摘要，收起不黑盒；内容随 chevron 缩进） ─── -->
         <div>
           <Collapsible v-slot="{ open }" :open="analysisOpen" @update:open="(v) => { analysisOpen = v }">
-            <div>
-              <CollapsibleTrigger class="flex w-full items-center gap-1.5">
-                <ChevronRight
-                  class="h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-200"
-                  :class="open ? 'rotate-90' : ''"
-                />
-                <h3 class="text-[11px] font-semibold text-foreground/85">空间分析</h3>
-                <span v-if="diskState === 'scanning'" class="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <Loader2 class="h-3 w-3 animate-spin text-primary" />
-                  分析中
-                </span>
-                <span v-else class="text-[9px] text-muted-foreground/50">
-                  大文件 · 目录占用
-                </span>
-              </CollapsibleTrigger>
+            <CollapsibleTrigger class="flex w-full items-center gap-1.5">
+              <ChevronRight
+                class="h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-200"
+                :class="open ? 'rotate-90' : ''"
+              />
+              <h3 class="text-[11px] font-semibold text-foreground/85">空间分析</h3>
+              <span v-if="diskState === 'scanning'" class="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Loader2 class="h-3 w-3 animate-spin text-primary" />
+                分析中
+              </span>
+              <span v-else-if="largeSummary" class="min-w-0 flex-1 truncate text-left text-[9px] text-muted-foreground/60">
+                {{ largeSummary }}
+              </span>
+              <span v-else class="text-[9px] text-muted-foreground/50">
+                大文件 · 目录占用
+              </span>
+            </CollapsibleTrigger>
 
-              <CollapsibleContent>
+            <CollapsibleContent>
+              <div class="space-y-0.5 pl-[18px]">
                 <!-- 扫描中 -->
                 <div v-if="diskState === 'scanning'" class="flex items-center gap-1.5 py-1">
                   <span class="text-[10px] text-muted-foreground">已扫描 <span class="tabular-nums">{{ diskScanned }}</span> 个文件</span>
@@ -806,9 +832,9 @@ onUnmounted(() => {})
                   未发现大文件
                 </p>
 
-                <!-- 目录占用 -->
+                <!-- 目录占用（子小节标题与大文件区分） -->
                 <div v-if="diskState === 'done' && dirUsage.length > 0" class="mt-2 space-y-1 pt-1">
-                  <p class="text-[9px] text-muted-foreground/60">占用最多的目录</p>
+                  <p class="text-[9px] font-medium text-muted-foreground/70">占用最多的目录</p>
                   <div v-for="(d, i) in dirUsage.slice(0, 10)" :key="d.path">
                     <div class="flex items-center justify-between gap-2 text-[10px]">
                       <span class="truncate text-foreground/90" :title="d.path">{{ truncatePath(d.path, 28) }}</span>
@@ -828,8 +854,8 @@ onUnmounted(() => {})
                 <p v-if="diskState === 'idle'" class="py-1 text-[10px] text-muted-foreground/70">
                   随扫描一并分析用户目录中的大文件与目录占用
                 </p>
-              </CollapsibleContent>
-            </div>
+              </div>
+            </CollapsibleContent>
           </Collapsible>
         </div>
       </div>
