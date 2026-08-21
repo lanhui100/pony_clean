@@ -115,7 +115,7 @@ jobs:
           $base = "https://github.com/lanhui100/pony_clean/releases/download/v$ver"
           $sigX64 = (Get-Content target/release/bundle/nsis/*x64-setup.exe.sig -Raw).Trim()
           $sigArm = (Get-Content target/aarch64-pc-windows-msvc/release/bundle/nsis/*arm64-setup.exe.sig -Raw).Trim()
-          $pubDate = (Get-Date -AsUTC -UFormat "%Y-%m-%dT%H:%M:%SZ")
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $notes = (git log -1 --format=%s).Trim()
           $manifest = [ordered]@{
             version = $ver
