@@ -230,6 +230,17 @@ function toggleConfirmGroup(key: string) {
   selectedConfirmPaths.value = next
 }
 
+/* 组名点击 = 折叠/展开明细（叶子文件可能成百上千，默认全部收起）；
+ * 全选只由组行 checkbox 承担，两个交互分离 */
+const expandedConfirmGroups = ref(new Set<string>())
+
+function toggleConfirmGroupExpanded(key: string) {
+  const next = new Set(expandedConfirmGroups.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedConfirmGroups.value = next
+}
+
 const selectedConfirmCount = computed(() => selectedConfirmPaths.value.size)
 
 /** Confirm 级项目总数（折叠头未勾选时显示） */
@@ -695,35 +706,43 @@ onUnmounted(() => {})
                 <CollapsibleContent>
                   <div class="ml-2 space-y-0.5 border-l border-white/[0.08] pb-1 pl-2 pr-1.5">
                     <p class="py-0.5 text-[9px] text-muted-foreground/60">
-                      旧下载文件等需谨慎确认的项目，默认不清理
+                      点击名称展开/收起明细，勾选框全选该组；需谨慎确认，默认不清理
                     </p>
                     <div v-for="group in confirmGroups" :key="group.key" class="py-px">
                       <div
                         class="flex cursor-pointer items-center gap-1.5 rounded px-1 py-1 text-[10px] hover:bg-muted/20"
-                        @click="toggleConfirmGroup(group.key)"
+                        @click="toggleConfirmGroupExpanded(group.key)"
                       >
+                        <ChevronRight
+                          class="h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-200"
+                          :class="expandedConfirmGroups.has(group.key) ? 'rotate-90' : ''"
+                        />
                         <Checkbox
                           :checked="group.items.every(i => selectedConfirmPaths.has(i.path))"
                           :class="group.items.some(i => selectedConfirmPaths.has(i.path)) && !group.items.every(i => selectedConfirmPaths.has(i.path)) ? 'opacity-60' : ''"
+                          title="全选/取消全选该组"
                           @click.stop="toggleConfirmGroup(group.key)"
                         />
                         <span :class="['h-1.5 w-1.5 rounded-full shrink-0', group.color]" />
-                        <span class="flex-1">{{ group.label }}</span>
-                        <span class="tabular-nums text-muted-foreground">{{ formatBytes(group.totalBytes) }}</span>
+                        <span class="min-w-0 flex-1 truncate" :title="group.label">{{ group.label }}</span>
+                        <span class="shrink-0 tabular-nums text-muted-foreground/60">{{ group.items.length }} 项</span>
+                        <span class="shrink-0 tabular-nums text-muted-foreground">{{ formatBytes(group.totalBytes) }}</span>
                       </div>
-                      <div
-                        v-for="item in group.items"
-                        :key="item.path"
-                        class="flex cursor-pointer items-center gap-1.5 px-6 py-1 text-[10px] transition-colors hover:bg-muted/15"
-                        @click="toggleConfirmItem(item.path)"
-                      >
-                        <Checkbox
-                          :checked="selectedConfirmPaths.has(item.path)"
-                          @click.stop="toggleConfirmItem(item.path)"
-                        />
-                        <span class="flex-1 truncate text-muted-foreground">{{ truncatePath(item.path, 30) }}</span>
-                        <span class="shrink-0 tabular-nums text-foreground/70">{{ formatBytes(item.size_bytes) }}</span>
-                      </div>
+                      <template v-if="expandedConfirmGroups.has(group.key)">
+                        <div
+                          v-for="item in group.items"
+                          :key="item.path"
+                          class="flex cursor-pointer items-center gap-1.5 px-6 py-1 text-[10px] transition-colors hover:bg-muted/15"
+                          @click="toggleConfirmItem(item.path)"
+                        >
+                          <Checkbox
+                            :checked="selectedConfirmPaths.has(item.path)"
+                            @click.stop="toggleConfirmItem(item.path)"
+                          />
+                          <span class="flex-1 truncate text-muted-foreground">{{ truncatePath(item.path, 30) }}</span>
+                          <span class="shrink-0 tabular-nums text-foreground/70">{{ formatBytes(item.size_bytes) }}</span>
+                        </div>
+                      </template>
                     </div>
                     <div class="flex justify-end pt-1.5">
                       <Button
