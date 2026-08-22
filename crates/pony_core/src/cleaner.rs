@@ -33,13 +33,19 @@ pub enum SafetyLevel {
 }
 
 /// 清理目标分类，序列化为小写 JSON
-/// 前端类型: type Category = 'temp' | 'cache' | 'logs' | 'prefetch' | 'old_install' | 'app_cache' | 'dev_cache'
-/// （recycle_bin 枚举保留用于配置兼容，但 TASK-028 起不再作为扫描目标）
+/// 前端类型: type Category = 'temp' | 'cache' | 'browser_cache' | 'system_cache' | 'logs' | 'prefetch' | 'old_install' | 'app_cache' | 'dev_cache'
+/// （recycle_bin 枚举保留用于配置兼容，但 TASK-028 起不再作为扫描目标；
+///   cache 变体保留用于旧 config.json 兼容反序列化，内置目标已迁移到 browser_cache/system_cache）
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
     Temp,
+    /// 旧混合缓存分类（浏览器 + 系统缓存混装），仅兼容旧配置，新代码勿用
     Cache,
+    /// 浏览器缓存（Chrome/Edge/Firefox/IE 磁盘缓存）
+    BrowserCache,
+    /// 系统缓存（Windows 更新下载、驱动备份、资源管理器/UWP 缓存等）
+    SystemCache,
     Logs,
     Prefetch,
     RecycleBin,
@@ -53,7 +59,7 @@ pub enum Category {
 impl Category {
     pub fn default_min_size(&self) -> u64 {
         match self {
-            Category::Cache => 512,
+            Category::Cache | Category::BrowserCache | Category::SystemCache => 512,
             Category::Logs => 4096,
             _ => 1024,
         }
@@ -65,6 +71,8 @@ impl fmt::Display for Category {
         let s = match self {
             Category::Temp => "temp",
             Category::Cache => "cache",
+            Category::BrowserCache => "browser_cache",
+            Category::SystemCache => "system_cache",
             Category::Logs => "logs",
             Category::Prefetch => "prefetch",
             Category::RecycleBin => "recycle_bin",
@@ -90,6 +98,10 @@ pub struct CleanItem {
     pub size_bytes: u64,
     pub level: SafetyLevel,
     pub category: String,
+    /// 所属扫描目标的中文描述（如「旧驱动备份」），供高级区按目标语义分组展示，
+    /// 避免与一级分类同名混淆
+    #[serde(default)]
+    pub label: String,
 }
 
 /// 类型化的扫描警告
@@ -183,6 +195,10 @@ pub struct ScanTarget {
     pub glob_exclude: Option<Vec<String>>,
     pub requires_service_stop: Option<String>,
     pub browser_profiles: Option<BrowserProfileConfig>,
+    /// 聚合模式：整目录缓存（npm/pip/cargo/gradle 等）只统计总体积并生成单个
+    /// CleanItem（指向目录本身），删除时整体移除。规避海量小文件触发
+    /// max_items_per_target 截断导致的「统计值恒定且偏小」问题
+    pub aggregate: bool,
 }
 
 impl ScanTarget {
@@ -200,7 +216,13 @@ impl ScanTarget {
             glob_exclude: None,
             requires_service_stop: None,
             browser_profiles: None,
+            aggregate: false,
         }
+    }
+    /// 启用聚合模式（整目录统计 + 整体删除）
+    pub fn with_aggregate(mut self) -> Self {
+        self.aggregate = true;
+        self
     }
     pub fn with_min_size(mut self, v: u64) -> Self {
         self.min_size = v;
@@ -347,6 +369,7 @@ pub fn get_filtered_targets(config: &PonyConfig) -> Vec<ScanTarget> {
             glob_exclude: None,
             requires_service_stop: None,
             browser_profiles: None,
+            aggregate: false,
         });
     }
     targets
@@ -473,49 +496,49 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             "chrome_code_cache".into(),
             "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Chrome JS Code Cache".into(),
         ),
         ScanTarget::new(
             "chrome_cache".into(),
             "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Chrome 磁盘缓存".into(),
         ),
         ScanTarget::new(
             "chrome_cache_storage".into(),
             "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\CacheStorage",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Chrome CacheStorage".into(),
         ),
         ScanTarget::new(
             "edge_code_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Edge JS Code Cache".into(),
         ),
         ScanTarget::new(
             "edge_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Edge 磁盘缓存".into(),
         ),
         ScanTarget::new(
             "edge_cache_storage".into(),
             "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\CacheStorage",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Edge CacheStorage".into(),
         ),
         ScanTarget::new(
             "firefox_cache".into(),
             "%APPDATA%\\Mozilla\\Firefox\\Profiles",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Firefox 缓存".into(),
         )
         .with_browser(BrowserProfileConfig {
@@ -537,21 +560,21 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             "wu_download".into(),
             "%WINDIR%\\SoftwareDistribution\\Download",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "Windows Update 下载缓存".into(),
         ),
         ScanTarget::new(
             "driver_store".into(),
             &format!("{d}\\Windows\\System32\\DriverStore\\FileRepository"),
             SafetyLevel::Confirm,
-            Category::Cache,
+            Category::SystemCache,
             "旧驱动备份".into(),
         ),
         ScanTarget::new(
             "inet_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "Internet 临时文件".into(),
         ),
         // 注意（TASK-028）：回收站不再作为扫描目标（$Recycle.Bin 目录扫描基本权限失败），
@@ -613,7 +636,7 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             "inet_cache_ie".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\IE",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::BrowserCache,
             "IE/Edge 传统 Internet 缓存".into(),
         ),
         ScanTarget::new(
@@ -641,14 +664,14 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             "flash_cache".into(),
             "%WINDIR%\\System32\\Macromed\\Flash",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "Flash 共享对象".into(),
         ),
         ScanTarget::new(
             "wu_datastore".into(),
             "%WINDIR%\\SoftwareDistribution\\DataStore",
             SafetyLevel::Confirm,
-            Category::Cache,
+            Category::SystemCache,
             "Windows 更新数据库（停用更新服务后清理）".into(),
         )
         .with_service_stop("wuauserv".into())
@@ -684,28 +707,28 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             "uwp_inet_cache".into(),
             "%LOCALAPPDATA%\\Packages",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "UWP Internet 缓存".into(),
         ),
         ScanTarget::new(
             "uwp_local_cache".into(),
             "%LOCALAPPDATA%\\Packages",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "UWP 本地缓存".into(),
         ),
         ScanTarget::new(
             "windows_app_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\AppCache",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "Windows App 缓存".into(),
         ),
         ScanTarget::new(
             "ts_client_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\TerminalServer Client\\Cache",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "远程桌面图标缓存".into(),
         ),
         ScanTarget::new(
@@ -743,14 +766,14 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             "wmp_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Media Player",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "WMP 媒体库缓存".into(),
         ),
         ScanTarget::new(
             "explorer_cache".into(),
             "%LOCALAPPDATA%\\Microsoft\\Windows\\Caches",
             SafetyLevel::Safe,
-            Category::Cache,
+            Category::SystemCache,
             "资源管理器缓存".into(),
         ),
         ScanTarget::new(
@@ -824,35 +847,40 @@ pub fn get_clean_targets() -> Vec<ScanTarget> {
             SafetyLevel::Safe,
             Category::DevCache,
             "npm 包缓存".into(),
-        ),
+        )
+        .with_aggregate(),
         ScanTarget::new(
             "pip_cache".into(),
             "%LOCALAPPDATA%\\pip\\cache",
             SafetyLevel::Safe,
             Category::DevCache,
             "pip 包缓存".into(),
-        ),
+        )
+        .with_aggregate(),
         ScanTarget::new(
             "cargo_cache".into(),
             "%USERPROFILE%\\.cargo\\registry",
             SafetyLevel::Safe,
             Category::DevCache,
             "Cargo 注册表缓存（清理后需重新下载 crate）".into(),
-        ),
+        )
+        .with_aggregate(),
         ScanTarget::new(
             "cargo_git".into(),
             "%USERPROFILE%\\.cargo\\git",
             SafetyLevel::Safe,
             Category::DevCache,
             "Cargo git 依赖缓存".into(),
-        ),
+        )
+        .with_aggregate(),
         ScanTarget::new(
             "gradle_cache".into(),
             "%USERPROFILE%\\.gradle\\caches",
             SafetyLevel::Confirm,
             Category::DevCache,
             "Gradle 构建缓存（清理后构建速度下降）".into(),
-        ),
+        )
+        .with_aggregate(),
     ]
 }
 
@@ -1260,9 +1288,9 @@ pub fn start_scan(
                     // 枚举受限告警：jwalk 层错误默认静默丢弃，这里可见化到前端。
                     // os error 2/3（目录消失/不存在）为良性竞态，不告警
                     if errs > 0
-                        && first_err.as_deref().is_none_or(|e| {
-                            !e.contains("os error 2") && !e.contains("os error 3")
-                        })
+                        && first_err
+                            .as_deref()
+                            .is_none_or(|e| !e.contains("os error 2") && !e.contains("os error 3"))
                     {
                         let _ = agg_tx.send(ScanEvent::Warning(ScanWarning::EnumErrors {
                             target_id: targets[target_idx].id.clone(),
@@ -1372,6 +1400,19 @@ fn scan_target_block(
     batch: &mut Vec<CleanItem>,
     tx: &mpsc::Sender<ScanEvent>,
 ) -> (u64, u64, u64, Option<String>) {
+    // 聚合模式拦截（dev_cache 等整目录缓存）：只统计总体积、生成单个 CleanItem，
+    // 不做 min_size/glob 过滤与 max_items_per_target 截断
+    if target_def.aggregate {
+        return scan_target_block_aggregate(
+            target_def,
+            target_path,
+            cancel_token,
+            global_count,
+            global_hit,
+            batch,
+            tx,
+        );
+    }
     let mut total_bytes = 0u64;
     let mut skipped_small = 0u64;
     let cat_min_size = target_def.min_size;
@@ -1503,6 +1544,7 @@ fn scan_target_block(
             size_bytes: size,
             level: target_def.level.clone(),
             category: target_def.category.to_string(),
+            label: target_def.description.clone(),
         });
 
         if batch.len() >= BATCH_SIZE {
@@ -1521,6 +1563,108 @@ fn scan_target_block(
     (
         total_bytes,
         skipped_small,
+        err_count.load(Ordering::Relaxed),
+        first_err.lock().unwrap().clone(),
+    )
+}
+
+/// 聚合模式扫描单个 target（整目录缓存，如 npm/pip/cargo/gradle）
+///
+/// 遍历累加总体积与文件数（遵守 cancel/global_hit 检查），结束时若 total_bytes > 0
+/// 则生成**单个**指向目录本身的 CleanItem（`label` = 目标中文描述），删除时由
+/// `delete_files_with_targets` 对目录走 `remove_dir_all` 整体移除。
+/// 不做 min_size/glob 过滤（对整目录无意义），也不受 max_items_per_target 截断——
+/// 这正是修复「npm-cache 固定 800+MB」截断偏小问题的手段。
+/// 返回 (累计字节, 0, 枚举错误数, 首个错误)。
+#[allow(clippy::too_many_arguments)]
+fn scan_target_block_aggregate(
+    target_def: &ScanTarget,
+    target_path: &Path,
+    cancel_token: &CancellationToken,
+    global_count: &AtomicU64,
+    global_hit: &AtomicBool,
+    batch: &mut Vec<CleanItem>,
+    tx: &mpsc::Sender<ScanEvent>,
+) -> (u64, u64, u64, Option<String>) {
+    let mut total_bytes = 0u64;
+    let mut file_count = 0u64;
+    // 枚举错误统计：与普通路径同款诊断口径
+    let err_count = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let first_err = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let (ec, fe) = (err_count.clone(), first_err.clone());
+    let walk_dir = jwalk::WalkDir::new(target_path)
+        .follow_links(false)
+        .max_depth(target_def.max_depth)
+        .parallelism(crate::walk::walk_parallelism())
+        .process_read_dir(move |_, _, _, children| {
+            for e in children.iter() {
+                if e.is_err() {
+                    ec.fetch_add(1, Ordering::Relaxed);
+                    let mut first = fe.lock().unwrap();
+                    if first.is_none() {
+                        *first = Some(format!("{}", e.as_ref().unwrap_err()));
+                    }
+                }
+            }
+            children.retain(|e| e.is_ok());
+        });
+
+    for entry in walk_dir.into_iter() {
+        let Ok(entry) = entry else {
+            // 迭代器级错误（如根目录 read_dir 失败）
+            err_count.fetch_add(1, Ordering::Relaxed);
+            let mut first = first_err.lock().unwrap();
+            if first.is_none() {
+                *first = Some(format!("{entry:?}"));
+            }
+            continue;
+        };
+        if cancel_token.is_cancelled() || global_hit.load(Ordering::Relaxed) {
+            break;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        total_bytes = total_bytes.saturating_add(meta.len());
+        file_count += 1;
+        // 每 100 个文件推送一次进度（scanned 沿用全局计数，current 显示聚合目录）
+        if file_count.is_multiple_of(100) {
+            let _ = tx.send(ScanEvent::Progress {
+                scanned: global_count.load(Ordering::Relaxed),
+                current: target_path.to_string_lossy().to_string(),
+            });
+        }
+    }
+
+    // 生成单个聚合 CleanItem：path 指向目录本身，删除时整体移除
+    if total_bytes > 0 {
+        let n = global_count.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= MAX_SCAN_ITEMS {
+            batch.push(CleanItem {
+                path: target_path.to_path_buf(),
+                size_bytes: total_bytes,
+                level: target_def.level.clone(),
+                category: target_def.category.to_string(),
+                label: target_def.description.clone(),
+            });
+            // 聚合项计 1，batch 满时照常推送（组结束时 worker 统一补发 batch_complete）
+            if batch.len() >= BATCH_SIZE {
+                let _ = tx.send(ScanEvent::ItemsFound {
+                    items: std::mem::take(batch),
+                    batch_complete: false,
+                });
+            }
+        } else {
+            global_hit.store(true, Ordering::Relaxed);
+        }
+    }
+
+    (
+        total_bytes,
+        0,
         err_count.load(Ordering::Relaxed),
         first_err.lock().unwrap().clone(),
     )
@@ -1689,26 +1833,38 @@ fn delete_files_with_targets(
             continue;
         }
 
-        match std::fs::remove_file(&safe_path) {
-            Ok(()) => result.success += 1,
-            Err(e) => {
-                // 占用检测：被占用则注明原因（仍走延迟删除通道）
-                let busy = cfg!(windows) && is_file_busy(&safe_path);
-                let delayed = if cfg!(windows) {
-                    delete_file_delayed_windows(&safe_path)
-                } else {
-                    Err(format!("{e}"))
-                };
-                match delayed {
-                    Ok(()) => result.success += 1,
-                    Err(msg) => {
-                        result.failed += 1;
-                        if busy {
-                            result
-                                .errors
-                                .push(format!("文件被进程占用，延迟删除失败: {msg}"));
-                        } else {
-                            result.errors.push(msg);
+        if safe_path.is_dir() {
+            // 聚合模式的 CleanItem 指向整目录（npm/pip/cargo/gradle 缓存等），
+            // 整体移除；这些目录不在 PROTECTED_PREFIXES，上方校验已对目录本身生效
+            match std::fs::remove_dir_all(&safe_path) {
+                Ok(()) => result.success += 1,
+                Err(e) => {
+                    result.failed += 1;
+                    result.errors.push(format!("{e}"));
+                }
+            }
+        } else {
+            match std::fs::remove_file(&safe_path) {
+                Ok(()) => result.success += 1,
+                Err(e) => {
+                    // 占用检测：被占用则注明原因（仍走延迟删除通道）
+                    let busy = cfg!(windows) && is_file_busy(&safe_path);
+                    let delayed = if cfg!(windows) {
+                        delete_file_delayed_windows(&safe_path)
+                    } else {
+                        Err(format!("{e}"))
+                    };
+                    match delayed {
+                        Ok(()) => result.success += 1,
+                        Err(msg) => {
+                            result.failed += 1;
+                            if busy {
+                                result
+                                    .errors
+                                    .push(format!("文件被进程占用，延迟删除失败: {msg}"));
+                            } else {
+                                result.errors.push(msg);
+                            }
                         }
                     }
                 }
@@ -2366,6 +2522,74 @@ mod tests {
     }
 
     #[test]
+    fn test_cache_category_reassignment() {
+        let targets = get_clean_targets();
+        let cat = |id: &str| {
+            targets
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap_or_else(|| panic!("target {id} missing"))
+                .category
+                .clone()
+        };
+        // 浏览器缓存：真浏览器磁盘缓存
+        for id in [
+            "chrome_code_cache",
+            "chrome_cache",
+            "chrome_cache_storage",
+            "edge_code_cache",
+            "edge_cache",
+            "edge_cache_storage",
+            "firefox_cache",
+            "inet_cache",
+            "inet_cache_ie",
+        ] {
+            assert_eq!(cat(id), Category::BrowserCache, "{id} 应为 browser_cache");
+        }
+        // 系统缓存：驱动备份 / 更新数据库等（不再混入浏览器缓存）
+        for id in [
+            "wu_download",
+            "driver_store",
+            "flash_cache",
+            "windows_app_cache",
+            "ts_client_cache",
+            "wmp_cache",
+            "explorer_cache",
+            "uwp_inet_cache",
+            "uwp_local_cache",
+            "wu_datastore",
+        ] {
+            assert_eq!(cat(id), Category::SystemCache, "{id} 应为 system_cache");
+        }
+        // 内置目标不应再使用旧混合分类
+        assert!(
+            !targets.iter().any(|t| t.category == Category::Cache),
+            "内置目标不应保留旧 cache 分类"
+        );
+    }
+
+    #[test]
+    fn test_dev_cache_targets_aggregate() {
+        let targets = get_clean_targets();
+        let dev: Vec<&ScanTarget> = targets
+            .iter()
+            .filter(|t| t.category == Category::DevCache)
+            .collect();
+        assert_eq!(dev.len(), 5, "dev_cache 目标应为 5 个");
+        for t in &dev {
+            assert!(t.aggregate, "{} 应启用聚合模式", t.id);
+        }
+        // 非 dev_cache 目标不聚合
+        assert!(
+            targets
+                .iter()
+                .filter(|t| t.category != Category::DevCache)
+                .all(|t| !t.aggregate),
+            "只有 dev_cache 目标启用聚合"
+        );
+    }
+
+    #[test]
     #[cfg(windows)]
     fn test_is_file_busy() {
         let dir = tempfile::tempdir().unwrap();
@@ -2407,9 +2631,11 @@ mod tests {
             size_bytes: 1024,
             level: SafetyLevel::Safe,
             category: "temp".into(),
+            label: "用户临时文件".into(),
         };
         assert_eq!(item.size_bytes, 1024);
         assert_eq!(item.category, "temp");
+        assert_eq!(item.label, "用户临时文件");
     }
 
     #[test]
@@ -2490,6 +2716,27 @@ mod tests {
             serde_json::json!("cache")
         );
         assert_eq!(
+            serde_json::to_value(&Category::BrowserCache).unwrap(),
+            serde_json::json!("browser_cache")
+        );
+        assert_eq!(
+            serde_json::to_value(&Category::SystemCache).unwrap(),
+            serde_json::json!("system_cache")
+        );
+        // 旧 config.json 兼容："cache" 反序列化回 Cache 变体
+        assert_eq!(
+            serde_json::from_str::<Category>(r#""cache""#).unwrap(),
+            Category::Cache
+        );
+        assert_eq!(
+            serde_json::from_str::<Category>(r#""browser_cache""#).unwrap(),
+            Category::BrowserCache
+        );
+        assert_eq!(
+            serde_json::from_str::<Category>(r#""system_cache""#).unwrap(),
+            Category::SystemCache
+        );
+        assert_eq!(
             serde_json::to_value(&Category::Logs).unwrap(),
             serde_json::json!("logs")
         );
@@ -2521,11 +2768,17 @@ mod tests {
         assert_eq!(Category::OldInstall.to_string(), "old_install");
         assert_eq!(Category::AppCache.to_string(), "app_cache");
         assert_eq!(Category::DevCache.to_string(), "dev_cache");
+        assert_eq!(Category::BrowserCache.to_string(), "browser_cache");
+        assert_eq!(Category::SystemCache.to_string(), "system_cache");
+        // 旧分类 Display 保持 "cache"（兼容语义不回退）
+        assert_eq!(Category::Cache.to_string(), "cache");
     }
 
     #[test]
     fn test_min_size_per_category() {
         assert_eq!(Category::Cache.default_min_size(), 512);
+        assert_eq!(Category::BrowserCache.default_min_size(), 512);
+        assert_eq!(Category::SystemCache.default_min_size(), 512);
         assert_eq!(Category::Logs.default_min_size(), 4096);
         assert_eq!(Category::Temp.default_min_size(), 1024);
         assert_eq!(Category::AppCache.default_min_size(), 1024);
@@ -3038,6 +3291,114 @@ mod tests {
             "10 + 10 files counted exactly"
         );
         assert_eq!(total_bytes, 20 * 2048);
+    }
+
+    #[test]
+    fn test_scan_target_block_aggregate() {
+        // 聚合模式：多级小文件只产出 1 个指向目录本身的 CleanItem，体积为全目录合计；
+        // min_size/glob 过滤在聚合模式下被忽略（对整目录无意义）
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("nested").join("deep");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.path().join("tiny.bin"), vec![0u8; 10]).unwrap();
+        std::fs::write(sub.join("small.bin"), vec![0u8; 20]).unwrap();
+
+        let target = ScanTarget::new(
+            "agg_test".into(),
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::DevCache,
+            "测试聚合缓存".into(),
+        )
+        .with_aggregate()
+        .with_min_size(1024)
+        .with_glob(vec!["*.nomatch".into()]);
+
+        let (tx, _rx) = mpsc::channel::<ScanEvent>();
+        let cancel = CancellationToken::new();
+        let count = AtomicU64::new(0);
+        let hit = AtomicBool::new(false);
+        let mut batch = Vec::new();
+        let (bytes, skipped, _, _) =
+            scan_target_block(&target, dir.path(), &cancel, &count, &hit, &mut batch, &tx);
+
+        assert_eq!(bytes, 30, "aggregate size = 全部文件合计（含子目录）");
+        assert_eq!(skipped, 0, "聚合模式不做 min_size 过滤");
+        assert_eq!(batch.len(), 1, "整目录只产出单个聚合项");
+        assert_eq!(batch[0].path, dir.path(), "聚合项指向目录本身");
+        assert_eq!(batch[0].size_bytes, 30);
+        assert_eq!(batch[0].label, "测试聚合缓存", "label = 目标中文描述");
+        assert_eq!(batch[0].category, "dev_cache");
+        assert_eq!(count.load(Ordering::SeqCst), 1, "聚合项计 1");
+    }
+
+    #[test]
+    fn test_scan_target_block_aggregate_empty_dir() {
+        // 空目录（total_bytes = 0）不产出 CleanItem、不计全局数
+        let dir = tempfile::tempdir().unwrap();
+        let target = ScanTarget::new(
+            "agg_empty".into(),
+            "%TEMP%",
+            SafetyLevel::Safe,
+            Category::DevCache,
+            "空聚合缓存".into(),
+        )
+        .with_aggregate();
+        let (tx, _rx) = mpsc::channel::<ScanEvent>();
+        let cancel = CancellationToken::new();
+        let count = AtomicU64::new(0);
+        let hit = AtomicBool::new(false);
+        let mut batch = Vec::new();
+        let (bytes, _, _, _) =
+            scan_target_block(&target, dir.path(), &cancel, &count, &hit, &mut batch, &tx);
+        assert_eq!(bytes, 0);
+        assert!(batch.is_empty(), "空目录不应产出聚合项");
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_delete_aggregate_directory() {
+        // 端到端：聚合扫描产出目录项 → 删除校验通过 → remove_dir_all 整体移除
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("_cacache").join("index");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.path().join("a.bin"), vec![0u8; 100]).unwrap();
+        std::fs::write(sub.join("b.bin"), vec![0u8; 200]).unwrap();
+
+        let targets = vec![
+            ScanTarget::new(
+                "agg_del".into(),
+                &dir.path().to_string_lossy(),
+                SafetyLevel::Safe,
+                Category::DevCache,
+                "聚合删除测试".into(),
+            )
+            .with_aggregate(),
+        ];
+
+        let (tx, _rx) = mpsc::channel::<ScanEvent>();
+        let cancel = CancellationToken::new();
+        let count = AtomicU64::new(0);
+        let hit = AtomicBool::new(false);
+        let mut batch = Vec::new();
+        scan_target_block(
+            &targets[0],
+            dir.path(),
+            &cancel,
+            &count,
+            &hit,
+            &mut batch,
+            &tx,
+        );
+        assert_eq!(batch.len(), 1);
+
+        let result = delete_files_with_targets(&[batch[0].path.clone()], &targets, None);
+        assert_eq!(
+            result.success, 1,
+            "聚合目录应整体删除成功: {:?}",
+            result.errors
+        );
+        assert!(!dir.path().exists(), "整个目录树应被移除");
     }
 
     #[test]
