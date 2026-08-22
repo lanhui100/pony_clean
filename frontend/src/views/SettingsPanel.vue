@@ -3,11 +3,12 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
 import { relaunch } from '@tauri-apps/plugin-process'
-import { Loader2, Plus, Save, Trash2, RefreshCw } from 'lucide-vue-next'
+import { Loader2, Plus, Save, Trash2, RefreshCw, Download } from 'lucide-vue-next'
 import { Button } from '../components/ui/button'
 import { Progress } from '../components/ui/progress'
 import { Toast } from '../components/ui/toast'
 import OptionPicker from '../components/OptionPicker.vue'
+import { humanizeError } from '../lib/humanizeError'
 import { useMonitor } from '../composables/useMonitor'
 import {
   autoUpdateEnabled,
@@ -466,13 +467,16 @@ function categoryLabel(value: string) {
 
           <div class="flex shrink-0 items-center gap-1.5">
             <Button
-              v-if="updateAvailable && !downloadingUpdate"
-              size="sm"
-              :disabled="checkingUpdate"
+              v-if="updateAvailable"
+              size="icon-sm"
+              variant="ghost"
+              :disabled="checkingUpdate || downloadingUpdate"
               title="下载并安装更新"
+              aria-label="下载并安装更新"
               @click="handleInstallUpdate"
             >
-              立即安装
+              <Loader2 v-if="downloadingUpdate" class="h-3.5 w-3.5 animate-spin" />
+              <Download v-else class="h-3.5 w-3.5" />
             </Button>
             <Button
               size="icon-sm"
@@ -521,7 +525,7 @@ function categoryLabel(value: string) {
     <!-- ═══ 更新失败 toast ═══ -->
     <Toast
       :show="!!updateError"
-      :message="`更新失败：${updateError}`"
+      :message="`更新失败：${humanizeError(updateError)}`"
       :raw-error="updateError"
       variant="error"
       @close="updateError = ''"
