@@ -35,6 +35,9 @@ const EN_RULES: Array<[RegExp, string]> = [
   [/scan already in progress/i, '扫描已在进行中'],
   [/no scan in progress/i, '没有进行中的扫描'],
   [/no scan targets available/i, '没有可扫描的目标'],
+  // 更新器网络错误（reqwest）：瞬时阻断常见，应用内已自动重试 3 次
+  [/error sending request/i, '网络连接失败，无法连接更新服务器；请检查网络或代理后重试，也可到发布页手动下载安装包'],
+  [/error downloading/i, '更新包下载失败，请检查网络后重试'],
 ]
 
 export function humanizeError(raw: string): string {

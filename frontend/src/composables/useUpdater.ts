@@ -8,7 +8,7 @@ import { check } from '@tauri-apps/plugin-updater'
  * 定时检查策略（VS Code 模式：只提醒，不代用户做主）：
  *  - 应用启动后 3 秒首次检查（只提示角标）
  *  - 之后每 1 小时检查一次，发现新版本置角标提醒；是否安装由用户在设置页
- *    点击「立即安装」确认触发——不在使用中静默强杀进程（Tauri Windows 安装器
+ *    点击安装按钮确认触发——不在使用中静默强杀进程（Tauri Windows 安装器
  *    在 passive 模式下会直接 kill 运行中的应用，可能打断正在执行的清理任务）
  *
  * 角标状态 updateBadgeVisible 暴露给 TitleBar：设置 tab 显示角标提醒；
@@ -71,39 +71,62 @@ export async function checkForUpdate(): Promise<string | null> {
 }
 
 /**
- * 下载并安装更新，通过回调实时上报下载进度到 downloadProgress。
+ * 下载安装重试参数：更新包直连 GitHub Release 下载地址，瞬时网络故障
+ * （reqwest `error sending request`，国内网络对 objects.githubusercontent.com
+ * 的间歇性阻断）高发。最多 3 次尝试、线性退避；每次尝试重新 check()——
+ * 端点列表（GitHub 主 + CNB 备）可重新择优，上次失败的源这次可能走备用清单。
+ */
+const INSTALL_MAX_ATTEMPTS = 3
+const INSTALL_RETRY_DELAY_MS = 2000
+
+/**
+ * 下载并安装更新（带重试），通过回调实时上报下载进度到 downloadProgress。
  * @returns true（已开始/完成下载安装）/ false（无可用更新）
- * @throws 下载或安装失败时抛出原始错误
+ * @throws 重试耗尽后仍失败时抛出最后一次的原始错误
  */
 export async function installUpdate(): Promise<boolean> {
   if (downloadingUpdate.value) return false
   downloadingUpdate.value = true
   downloadProgress.value = null
   try {
-    const update = await check()
-    if (!update) {
-      updateAvailable.value = false
-      updateVersion.value = ''
-      return false
-    }
-    updateVersion.value = update.version
-    updateAvailable.value = true
-    let downloaded = 0
-    let total = 0
-    await update.downloadAndInstall((event) => {
-      if (event.event === 'Started') {
-        total = event.data.contentLength ?? 0
-        downloadProgress.value = 0
-      } else if (event.event === 'Progress') {
-        downloaded += event.data.chunkLength
-        if (total > 0) {
-          downloadProgress.value = Math.min(100, Math.round((downloaded / total) * 100))
+    let lastErr: unknown = null
+    for (let attempt = 1; attempt <= INSTALL_MAX_ATTEMPTS; attempt++) {
+      try {
+        const update = await check()
+        if (!update) {
+          updateAvailable.value = false
+          updateVersion.value = ''
+          return false
         }
-      } else if (event.event === 'Finished') {
-        downloadProgress.value = 100
+        updateVersion.value = update.version
+        updateAvailable.value = true
+        let downloaded = 0
+        let total = 0
+        // 每次尝试重置进度（重试时进度条从准备中重新开始）
+        downloadProgress.value = null
+        await update.downloadAndInstall((event) => {
+          if (event.event === 'Started') {
+            total = event.data.contentLength ?? 0
+            downloadProgress.value = 0
+          } else if (event.event === 'Progress') {
+            downloaded += event.data.chunkLength
+            if (total > 0) {
+              downloadProgress.value = Math.min(100, Math.round((downloaded / total) * 100))
+            }
+          } else if (event.event === 'Finished') {
+            downloadProgress.value = 100
+          }
+        })
+        return true
+      } catch (e) {
+        lastErr = e
+        console.warn(`install update attempt ${attempt}/${INSTALL_MAX_ATTEMPTS} failed:`, e)
+        if (attempt < INSTALL_MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, INSTALL_RETRY_DELAY_MS * attempt))
+        }
       }
-    })
-    return true
+    }
+    throw lastErr
   } finally {
     downloadingUpdate.value = false
   }
