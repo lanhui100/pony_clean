@@ -3365,10 +3365,20 @@ mod tests {
         std::fs::write(dir.path().join("a.bin"), vec![0u8; 100]).unwrap();
         std::fs::write(sub.join("b.bin"), vec![0u8; 200]).unwrap();
 
+        // 目标路径按 resolve_targets 生产语义 canonical 化：GitHub runner 的 TEMP 是
+        // 8.3 短名（RUNNER~1），而删除校验 expand_env(t.path) 前缀匹配的是
+        // canonicalize 后的长路径；canonicalize 返回的 \\?\ verbatim 前缀需剥离
+        // （is_path_allowed 只对被检路径一侧剥前缀）
+        let canon = std::fs::canonicalize(dir.path()).unwrap();
+        let target_path = canon
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_string();
+
         let targets = vec![
             ScanTarget::new(
                 "agg_del".into(),
-                &dir.path().to_string_lossy(),
+                &target_path,
                 SafetyLevel::Safe,
                 Category::DevCache,
                 "聚合删除测试".into(),
