@@ -70,6 +70,8 @@ const {
 const categoryColors: Record<string, string> = {
   temp: 'bg-cat-temp',
   cache: 'bg-cat-cache',
+  browser_cache: 'bg-cat-browser',
+  system_cache: 'bg-cat-system',
   logs: 'bg-cat-logs',
   prefetch: 'bg-cat-prefetch',
   recycle_bin: 'bg-cat-recycle',
@@ -81,6 +83,8 @@ const categoryColors: Record<string, string> = {
 const categoryLabels: Record<string, string> = {
   temp: '临时文件',
   cache: '浏览器缓存',
+  browser_cache: '浏览器缓存',
+  system_cache: '系统缓存',
   logs: '日志与报告',
   prefetch: 'Prefetch',
   recycle_bin: '回收站',
@@ -169,8 +173,40 @@ const safeTotalBytes = computed(() =>
 
 /* ── Confirm 级：折叠「高级」区 ── */
 
+/* 高级区按「具体清理目标」（item.label = target 中文描述，如「旧驱动备份」）分组，
+ * 不再复用一级分类名——消除同名分类在两区数值不同的混淆
+ * （如旧版高级「浏览器缓存」实为 driver_store 旧驱动备份 2.9GB） */
+interface ConfirmGroup {
+  /** 分组键：label（目标中文描述），无 label 时回退 category */
+  key: string
+  /** 行标签：目标中文描述 */
+  label: string
+  /** 所属分类（分组内首项），供圆点取色 */
+  category: string
+  color: string
+  items: CleanItem[]
+  totalBytes: number
+}
+
+function groupConfirmItems(list: CleanItem[]): ConfirmGroup[] {
+  const groups: Record<string, CleanItem[]> = {}
+  for (const item of list) {
+    const key = item.label || item.category
+    if (!groups[key]) groups[key] = []
+    groups[key].push(item)
+  }
+  return Object.entries(groups).map(([key, grouped]) => ({
+    key,
+    label: key,
+    category: grouped[0].category,
+    color: categoryColors[grouped[0].category] || 'bg-cat-gray',
+    items: grouped,
+    totalBytes: grouped.reduce((sum, i) => sum + i.size_bytes, 0),
+  }))
+}
+
 const confirmGroups = computed(() =>
-  groupItems(items.value.filter((i) => i.level === 'confirm')),
+  groupConfirmItems(items.value.filter((i) => i.level === 'confirm')),
 )
 
 const selectedConfirmPaths = ref(new Set<string>())
@@ -183,11 +219,11 @@ function toggleConfirmItem(path: string) {
   selectedConfirmPaths.value = next
 }
 
-function toggleConfirmCategory(category: string) {
-  const catItems = confirmGroups.value.find((g) => g.category === category)?.items ?? []
-  const allSelected = catItems.length > 0 && catItems.every((i) => selectedConfirmPaths.value.has(i.path))
+function toggleConfirmGroup(key: string) {
+  const grouped = confirmGroups.value.find((g) => g.key === key)?.items ?? []
+  const allSelected = grouped.length > 0 && grouped.every((i) => selectedConfirmPaths.value.has(i.path))
   const next = new Set(selectedConfirmPaths.value)
-  for (const item of catItems) {
+  for (const item of grouped) {
     if (allSelected) next.delete(item.path)
     else next.add(item.path)
   }
@@ -661,15 +697,15 @@ onUnmounted(() => {})
                     <p class="py-0.5 text-[9px] text-muted-foreground/60">
                       旧下载文件等需谨慎确认的项目，默认不清理
                     </p>
-                    <div v-for="group in confirmGroups" :key="group.category" class="py-px">
+                    <div v-for="group in confirmGroups" :key="group.key" class="py-px">
                       <div
                         class="flex cursor-pointer items-center gap-1.5 rounded px-1 py-1 text-[10px] hover:bg-muted/20"
-                        @click="toggleConfirmCategory(group.category)"
+                        @click="toggleConfirmGroup(group.key)"
                       >
                         <Checkbox
                           :checked="group.items.every(i => selectedConfirmPaths.has(i.path))"
                           :class="group.items.some(i => selectedConfirmPaths.has(i.path)) && !group.items.every(i => selectedConfirmPaths.has(i.path)) ? 'opacity-60' : ''"
-                          @click.stop="toggleConfirmCategory(group.category)"
+                          @click.stop="toggleConfirmGroup(group.key)"
                         />
                         <span :class="['h-1.5 w-1.5 rounded-full shrink-0', group.color]" />
                         <span class="flex-1">{{ group.label }}</span>

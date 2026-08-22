@@ -50,7 +50,9 @@ interface CleanConfig {
 
 const CATEGORY_OPTIONS = [
   { value: 'temp', label: '临时文件' },
-  { value: 'cache', label: '缓存' },
+  { value: 'browser_cache', label: '浏览器缓存' },
+  { value: 'system_cache', label: '系统缓存' },
+  { value: 'cache', label: '缓存（旧版）' },
   { value: 'logs', label: '日志' },
   { value: 'app_cache', label: '应用缓存' },
   { value: 'dev_cache', label: '开发缓存' },

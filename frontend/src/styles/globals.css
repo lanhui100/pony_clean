@@ -25,6 +25,8 @@
   /* 胶囊态分类色（低饱和矿物色系，稳重克制） */
   --color-cat-temp: hsl(215 26% 55%);
   --color-cat-cache: hsl(264 22% 60%);
+  --color-cat-browser: hsl(194 28% 52%);
+  --color-cat-system: hsl(105 12% 50%);
   --color-cat-logs: hsl(38 30% 56%);
   --color-cat-prefetch: hsl(150 22% 47%);
   --color-cat-recycle: hsl(28 32% 50%);

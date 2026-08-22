@@ -15,6 +15,8 @@ export interface CleanItem {
   size_bytes: number
   level: SafetyLevel
   category: string
+  /** 所属扫描目标的中文描述（如「旧驱动备份」），高级区按目标语义分组展示用 */
+  label?: string
 }
 
 export interface DeleteResult {
