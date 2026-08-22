@@ -767,27 +767,28 @@ onUnmounted(() => {})
             点击右上角扫描，开始分析垃圾文件与空间占用
           </p>
 
-          <!-- 主操作行：一键清理 + 清空回收站，平分一行 -->
-          <div class="mt-2.5 flex items-stretch gap-2">
+          <!-- 主操作行：一键清理 + 清空回收站（紧凑化：h-7 与面板 icon-sm 同高，
+               主次层级 = soft 微底 / ghost 悬浮显底，避免在结果卡片中过于突兀） -->
+          <div class="mt-2.5 flex items-stretch gap-1.5">
             <Button
-              class="flex-1"
+              class="h-7 flex-1 px-3 text-[11px]"
               size="sm"
               variant="soft"
               :disabled="oneClickPaths.length === 0"
               @click="handleOneClickClean"
             >
-              <Zap class="h-3.5 w-3.5" />
+              <Zap class="h-3 w-3" />
               <span class="ml-1">一键清理</span>
             </Button>
             <Button
-              class="flex-1"
+              class="h-7 flex-1 px-3 text-[11px]"
               size="sm"
-              variant="outline"
+              variant="ghost"
               :disabled="garbageState === 'scanning' || garbageState === 'deleting'"
               title="清空回收站（需确认）"
               @click="showRecycleDialog = true"
             >
-              <Trash2 class="h-3.5 w-3.5" />
+              <Trash2 class="h-3 w-3" />
               <span class="ml-1">清空回收站</span>
             </Button>
           </div>
