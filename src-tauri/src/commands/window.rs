@@ -98,9 +98,16 @@ unsafe extern "system" {
     ) -> i32;
 }
 
+/// CombineRgn 模式：并集
+#[cfg(target_os = "windows")]
+const RGN_OR: i32 = 2;
+
 #[link(name = "gdi32")]
 unsafe extern "system" {
     fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) -> isize;
+    fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) -> isize;
+    fn CombineRgn(hDst: isize, hSrc1: isize, hSrc2: isize, iMode: i32) -> i32;
+    fn DeleteObject(ho: isize) -> i32;
     fn SetWindowRgn(hWnd: isize, hRgn: isize, bRedraw: i32) -> i32;
 }
 
@@ -354,27 +361,113 @@ unsafe fn capsule_content_phys(hwnd: isize, geo: CapsuleGeometry) -> Option<(i32
     Some((x, y, w, h))
 }
 
-/// 为胶囊窗口应用与当前形态/贴边方向匹配的圆角区域（点击穿透 + 形状裁剪）。
+/// 构建单一形态的内容 Region（物理像素矩形 x/y/w/h）。
 ///
-/// Region = 内容矩形本身，圆角 = 短边（胶囊/进度条两端半圆）。
-/// 不加阴影外扩：阴影由原生 DWM（CS_DROPSHADOW）按本 Region 形状投影。
+/// - Pill：四角半圆（悬浮胶囊），角椭圆直径取短边；
+/// - Bar：**贴边侧两角方角、远端两角半圆**。贴边细条与屏幕边缘齐平，贴边侧
+///   若仍是圆角，会在角落留下透明缺口（"翘边/被咬一口"的观感）。做法：以
+///   基础圆角矩形为底，用覆盖贴边侧半边的矩形做 RGN_OR 并集填平该侧缺口。
+///
+/// 返回 GDI 区域句柄（0 表示失败）；中间产物已释放，最终句柄交由调用方处理。
 #[cfg(target_os = "windows")]
-unsafe fn apply_capsule_region(hwnd: isize) {
-    let geo = unsafe { read_capsule_geometry(hwnd) };
-    let Some((x, y, w, h)) = (unsafe { capsule_content_phys(hwnd, geo) }) else {
-        return;
-    };
-    if w <= 0 || h <= 0 {
-        return;
-    }
+unsafe fn build_capsule_form_region(geo: CapsuleGeometry, x: i32, y: i32, w: i32, h: i32) -> isize {
     // 两端半圆（胶囊/进度条）：角椭圆直径取短边，横竖排均正确
     let radius = w.min(h);
-    let region = unsafe { CreateRoundRectRgn(x, y, x + w, y + h, radius, radius) };
-    if region != 0 {
+    let base = unsafe { CreateRoundRectRgn(x, y, x + w, y + h, radius, radius) };
+    if base == 0 || geo.form == CapsuleForm::Pill {
+        return base;
+    }
+    // Bar：贴边侧半边矩形（覆盖该侧两个圆角缺口）
+    let (rx1, ry1, rx2, ry2) = match geo.edge {
+        ScreenEdge::Bottom => (x, y + h / 2, x + w, y + h),
+        ScreenEdge::Left => (x, y, x + w / 2, y + h),
+        ScreenEdge::Right => (x + w / 2, y, x + w, y + h),
+        ScreenEdge::Top => (x, y, x + w, y + h / 2),
+    };
+    let flat = unsafe { CreateRectRgn(rx1, ry1, rx2, ry2) };
+    if flat == 0 {
+        // 退化为基础圆角矩形（贴边缺口复现），记日志便于定位 GDI 资源问题
+        eprintln!("[PonyClean] CreateRectRgn failed, bar falls back to full round corners");
+        return base;
+    }
+    // MSDN：CombineRgn 失败返回 ERROR(0) 且目标区域内容未定义，必须弃用
+    if unsafe { CombineRgn(base, base, flat, RGN_OR) } == 0 {
         unsafe {
-            SetWindowRgn(hwnd, region, 1);
-            redraw_window_frame(hwnd);
+            DeleteObject(base);
+            DeleteObject(flat);
         }
+        eprintln!("[PonyClean] CombineRgn failed building bar region");
+        return 0;
+    }
+    unsafe { DeleteObject(flat) };
+    base
+}
+
+/// 计算指定形态的内容 Region（按实际客户区换算物理像素）。失败返回 None。
+#[cfg(target_os = "windows")]
+unsafe fn capsule_form_region(hwnd: isize, geo: CapsuleGeometry) -> Option<isize> {
+    let (x, y, w, h) = (unsafe { capsule_content_phys(hwnd, geo) })?;
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    let region = unsafe { build_capsule_form_region(geo, x, y, w, h) };
+    if region == 0 { None } else { Some(region) }
+}
+
+/// 为胶囊窗口应用与当前形态/贴边方向匹配的区域（点击穿透 + 形状裁剪）。
+///
+/// `transitioning=true` 时应用 **pill 与 bar 两形态 Region 的并集**：morph 动画
+/// 期间原生 Region 尚未切到目标形态（SPEC-029 的延迟同步），若继续用旧形态
+/// Region 裁剪，正在变形的内容会被旧轮廓啃出双曲率缺口、结束时再突变为目标
+/// 形状（收缩时左右端尤其明显）。并集覆盖动画全程的扫掠区域，结束后由延迟
+/// 同步切到目标形态的精确 Region。
+///
+/// 不加阴影外扩：阴影由原生 DWM（CS_DROPSHADOW）按本 Region 形状投影。
+/// 注意：SetWindowRgn 成功后 region 归系统所有，不得 DeleteObject。
+#[cfg(target_os = "windows")]
+unsafe fn apply_capsule_region(hwnd: isize, transitioning: bool) {
+    let geo = unsafe { read_capsule_geometry(hwnd) };
+    let region = if transitioning {
+        let pill_geo = CapsuleGeometry {
+            form: CapsuleForm::Pill,
+            edge: geo.edge,
+        };
+        let bar_geo = CapsuleGeometry {
+            form: CapsuleForm::Bar,
+            edge: geo.edge,
+        };
+        let Some(r_pill) = (unsafe { capsule_form_region(hwnd, pill_geo) }) else {
+            return;
+        };
+        let Some(r_bar) = (unsafe { capsule_form_region(hwnd, bar_geo) }) else {
+            unsafe { DeleteObject(r_pill) };
+            return;
+        };
+        // MSDN：CombineRgn 失败返回 ERROR(0) 且目标区域内容未定义；
+        // 此时保持当前 Region 不变（保留旧轮廓优于应用未定义区域）
+        if unsafe { CombineRgn(r_pill, r_pill, r_bar, RGN_OR) } == 0 {
+            unsafe {
+                DeleteObject(r_pill);
+                DeleteObject(r_bar);
+            }
+            eprintln!("[PonyClean] CombineRgn failed building transition union region");
+            return;
+        }
+        unsafe { DeleteObject(r_bar) };
+        r_pill
+    } else {
+        let Some(region) = (unsafe { capsule_form_region(hwnd, geo) }) else {
+            return;
+        };
+        region
+    };
+    unsafe {
+        // 成功后 region 归系统所有，不得删除；失败时所有权仍在调用方，
+        // 必须释放，否则每次失败调用泄漏一个 GDI Region（reviewer P3-1）。
+        if SetWindowRgn(hwnd, region, 1) == 0 {
+            DeleteObject(region);
+        }
+        redraw_window_frame(hwnd);
     }
 }
 
@@ -610,7 +703,7 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
             }
 
             enable_native_shadow(hwnd);
-            apply_capsule_region(hwnd);
+            apply_capsule_region(hwnd, false);
             eprintln!("[PonyClean] Prepared floating window: capsule");
         }
     }
@@ -754,17 +847,26 @@ pub fn install_hit_test_subclass(_app: &AppHandle) -> Result<(), String> {
 /// 更新胶囊窗口的形态（胶囊/进度条）与贴边方向，并同步原生圆角区域与命中区域。
 ///
 /// 当前产品仅支持**顶部贴边**（前端恒传 edge="top"）；枚举保留 left/right/bottom
-/// 仅为未来扩展预留。窗口 resize 后客户端矩形可能尚未稳定，延迟 40ms 再重算一次区域兜底。
+/// 仅为未来扩展预留。胶囊窗口物理尺寸恒定（resizable:false，无任何 setSize 路径），
+/// 同步调用即时应用 Region 即可，无延迟兜底。
+///
+/// `transitioning=true`：pill⇄bar morph 动画开始时由前端立即调用，应用两形态
+/// Region 的并集（中间帧不被旧轮廓裁剪）；动画结束后前端再次调用（省略该参数）
+/// 切换为目标形态的精确 Region。
 #[tauri::command]
 pub fn set_capsule_geometry(
     app: AppHandle,
     state: tauri::State<'_, EdgeCursorState>,
     form: String,
     edge: String,
+    transitioning: Option<bool>,
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        eprintln!("[PonyClean] set_capsule_geometry: form={form} edge={edge}");
+        let transitioning = transitioning.unwrap_or(false);
+        eprintln!(
+            "[PonyClean] set_capsule_geometry: form={form} edge={edge} transitioning={transitioning}"
+        );
         let geo = CapsuleGeometry {
             form: match form.as_str() {
                 "bar" => CapsuleForm::Bar,
@@ -803,24 +905,18 @@ pub fn set_capsule_geometry(
                     ScreenEdge::Top => EDGE_TOP,
                 },
             );
-            apply_capsule_region(hwnd);
+            apply_capsule_region(hwnd, transitioning);
         }
 
-        // 窗口尺寸变更后客户端矩形可能尚未稳定，延迟重算一次区域
-        let app2 = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(40));
-            if let Some(hwnd) = get_hwnd_for_label(&app2, "capsule") {
-                unsafe {
-                    apply_capsule_region(hwnd);
-                }
-            }
-        });
+        // 不设 40ms 延迟兜底重算（island 路径有，capsule 无）：胶囊窗口
+        // resizable:false 且全仓无 setSize，物理尺寸恒定、client rect 不会
+        // 迟滞稳定；延迟线程反而是竞态载体——醒来时可能用过期模式覆盖
+        // 最新一次同步刚应用的 Region，且无事件纠正（reviewer P2-1）。
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (&app, &state, form, edge);
+        let _ = (&app, &state, form, edge, transitioning);
     }
 
     Ok(())

@@ -51,6 +51,10 @@ const pillLayerStyle = computed(() => {
     '--from-y': `${b.y - p.y}px`,
     '--from-sx': (b.w / p.w).toString(),
     '--from-sy': (b.h / p.h).toString(),
+    // 圆角形状随 morph 同步过渡（--shape 由 Transition 类在首帧后翻转，
+    // 子层 CapsuleBar 用 var(--shape) 渐变圆角，缩放中的轮廓始终贴合目标形态）
+    '--shape-from': '0 0 9999px 9999px',
+    '--shape-to': '9999px',
   }
 })
 
@@ -67,6 +71,9 @@ const barLayerStyle = computed(() => {
     '--from-y': `${p.y - b.y}px`,
     '--from-sx': (p.w / b.w).toString(),
     '--from-sy': (p.h / b.h).toString(),
+    // 圆角形状随 morph 过渡：从胶囊全圆角渐变为「贴边侧方角 + 远端半圆」
+    '--shape-from': '9999px',
+    '--shape-to': '0 0 9999px 9999px',
   }
 })
 
@@ -219,6 +226,8 @@ function onIslandFadeComplete() {
   cursor: grab;
   will-change: transform, opacity;
   transform-origin: 0 0;
+  /* 静止/入层终态的圆角形状（子层通过 var(--shape) 继承） */
+  --shape: var(--shape-to);
 }
 
 .content-layer:active {
@@ -228,11 +237,15 @@ function onIslandFadeComplete() {
 /* ─── pill ⇄ bar morph（SPEC-029）───
    入层：从另一形态矩形 translate+scale 到自身 + 淡入（300ms，与
    useWindowMorph 的延迟原生几何同步对齐）；出层：仅 160ms 淡出，不做空间变换。
-   两端 rect 通过 CSS 变量（--from-*）注入，无需 JS 动画回调。 */
+   两端 rect 通过 CSS 变量（--from-*）注入，无需 JS 动画回调。
+   圆角形状（--shape）同样在首帧取来源形态、随后翻转为目标形态，子层
+   （CapsuleBar/EdgeBar）以同曲线的 border-radius transition 跟随渐变，
+   使缩放中的轮廓与目标形态一致，避免端部圆角畸变。 */
 .morph-pill-enter-from,
 .morph-bar-enter-from {
   transform: translate(var(--from-x), var(--from-y)) scale(var(--from-sx), var(--from-sy));
   opacity: 0;
+  --shape: var(--shape-from);
 }
 .morph-pill-enter-active,
 .morph-bar-enter-active {

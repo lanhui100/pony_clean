@@ -25,7 +25,11 @@ export const WINDOW_MORPH = {
   barHoverDelay: 500, // 进度条 hover 后展开为胶囊的延迟
   idlePollInterval: 1000,
   dragStartThreshold: 4,
-  /** pill⇄bar CSS morph 时长（与 CapsuleWindow 的 transition 一致，用于延迟原生几何同步） */
+  /**
+   * pill⇄bar CSS morph 时长（与 CapsuleWindow 的 transition 一致）。
+   * 同时界定过渡并集 Region 的时窗：形态切换瞬间应用 pill∪bar 并集，
+   * 此时长 +50ms 后由延迟同步切到目标形态精确 Region（useWindowMorph）。
+   */
   morphDurationMs: 300,
 } as const
 

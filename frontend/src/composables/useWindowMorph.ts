@@ -133,16 +133,19 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   }
 
   /** ─── 原生层同步：胶囊窗口恒为顶部贴边 ─── */
-  async function syncGeometryToBackend() {
+  // transitioning=true 时后端应用 pill/bar 并集过渡 Region：
+  // morph 动画中间帧不被旧形态轮廓裁剪（避免左右端被啃出双曲率缺口），
+  // 结束后由 scheduleGeometrySync 再切到目标形态的精确 Region。
+  async function syncGeometryToBackend(transitioning = false) {
     try {
-      await invoke('set_capsule_geometry', { form: form.value, edge: 'top' })
+      await invoke('set_capsule_geometry', { form: form.value, edge: 'top', transitioning })
     } catch (e) {
       console.warn('set_capsule_geometry failed:', e)
     }
   }
 
   /** 应用窗口位置：顶边贴边（x = 工作区 left + dockX），并同步原生命中区域 */
-  async function applyWindowGeometry() {
+  async function applyWindowGeometry(transitioning = false) {
     const dpr = window.devicePixelRatio || 1
     const monitor = await getMonitorBounds()
     const winW = Math.round(WINDOW_MORPH.capsuleW * dpr)
@@ -153,7 +156,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     await win.setPosition(new PhysicalPosition(x, monitor.top)).catch(() => {})
     currentWinX = x
     currentWinY = monitor.top
-    await syncGeometryToBackend()
+    await syncGeometryToBackend(transitioning)
     persistDock()
   }
 
@@ -167,8 +170,15 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     const dpr = window.devicePixelRatio || 1
     const monitor = await getMonitorBounds()
     dockX.value = Math.round((monitor.width - Math.round(WINDOW_MORPH.capsuleW * dpr)) / 2)
+    // bar→pill 的重置同样伴随 CSS morph：走并集过渡 Region（reviewer P2-2），
+    // 结束后由延迟同步切精确 Region；pill 态重置无形态变化，直接精确 Region。
+    const wasBar = form.value === 'bar'
     form.value = 'pill'
-    await applyWindowGeometry()
+    if (wasBar) {
+      lastMorphAt = Date.now()
+      scheduleGeometrySync()
+    }
+    await applyWindowGeometry(wasBar)
     await win.show().catch(() => {})
     console.log('[PonyClean] capsule reset to default top-center')
   }
@@ -178,6 +188,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   // Region 硬切到目标形态，裁剪动画中间态造成「框体残影」。单一定时器串行化：
   // 快速来回切换时旧任务被清除，末次生效，等价于 pending 队列且无动画回调依赖。
   let geomSyncTimer: ReturnType<typeof setTimeout> | null = null
+  // 最近一次形态切换时刻：供 snapToTopEdge 判断 morph 是否仍在进行中
+  //（<350ms 快拖松手时保持过渡并集 Region，避免提前精确裁剪剩余动画帧）
+  let lastMorphAt = 0
 
   function scheduleGeometrySync() {
     if (geomSyncTimer) clearTimeout(geomSyncTimer)
@@ -193,6 +206,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       return
     }
     form.value = 'pill'
+    lastMorphAt = Date.now()
+    // 立即应用过渡并集 Region，morph 结束后由延迟同步切为 pill 精确 Region
+    syncGeometryToBackend(true)
     scheduleGeometrySync()
     resetBarTimer()
   }
@@ -201,6 +217,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     if (form.value === 'bar' || islandState.value !== 'idle') return
     if (isDragging.value || scanning.value || capsuleHovered.value) return
     form.value = 'bar'
+    lastMorphAt = Date.now()
+    // 立即应用过渡并集 Region，morph 结束后由延迟同步切为 bar 精确 Region
+    syncGeometryToBackend(true)
     scheduleGeometrySync()
   }
 
@@ -483,7 +502,10 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     const dpr = window.devicePixelRatio || 1
     const monitor = await getMonitorBounds()
     dockX.value = currentWinX - monitor.left
-    await applyWindowGeometry()
+    // 拖动开始可能刚触发 bar→pill 展开（<350ms 内松手）：此时保持过渡并集
+    // Region，让已在排队的延迟同步切精确 Region，避免裁掉剩余 morph 帧
+    const morphInFlight = Date.now() - lastMorphAt < WINDOW_MORPH.morphDurationMs + 100
+    await applyWindowGeometry(morphInFlight)
     resetBarTimer()
   }
 

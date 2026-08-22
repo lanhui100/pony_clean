@@ -68,7 +68,11 @@ const memBg = computed(() => {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  border-radius: 9999px;
+  /* 贴边进度条顶部与屏幕边缘齐平：贴边侧（上）两角必须方角，
+     仅远端（下）两角半圆 —— 全圆角会在贴边角落留下透明缺口（翘边观感）。
+     圆角随父层 morph 过渡（--shape 由 CapsuleWindow 注入；缺省即本形状）。 */
+  border-radius: var(--shape, 0 0 9999px 9999px);
+  transition: border-radius 300ms cubic-bezier(0.22, 1, 0.36, 1);
   /* 底色与胶囊（CapsuleBar）保持一致，避免缩放时底色跳变；
      顶部内高光；外阴影由原生 DWM（CS_DROPSHADOW 按进度条 Region）提供 */
   background:

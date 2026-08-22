@@ -45,7 +45,7 @@ const memBg = computed(() => {
 
 <template>
   <div
-    class="capsule-bar flex cursor-pointer items-center overflow-hidden rounded-full select-none h-full w-full transition-shadow duration-300"
+    class="capsule-bar flex cursor-pointer items-center overflow-hidden select-none h-full w-full transition-shadow duration-300"
     :class="{ 'capsule-hovered': isHovered }"
     @click="emit('click')"
   >
@@ -83,12 +83,16 @@ const memBg = computed(() => {
   background:
     linear-gradient(180deg, rgba(42, 39, 35, 0.98), rgba(20, 19, 18, 0.96));
   border: 0;
+  /* 胶囊四角全圆；圆角随父层 morph 过渡（--shape 由 CapsuleWindow 注入，
+     从 bar 的「贴边侧方角」形状渐变而来），缺省即全圆角胶囊 */
+  border-radius: var(--shape, 9999px);
+  transition:
+    border-radius 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
   /* 顶部内高光；外阴影由原生 DWM（CS_DROPSHADOW 按胶囊 Region）提供
      （SPEC-029 二次修订，面板即窗口，无 CSS 阴影边距） */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  transition:
-    box-shadow 0.25s ease,
-    border-color 0.25s ease;
 }
 
 .progress-fill {

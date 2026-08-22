@@ -177,6 +177,15 @@
 7. **island 始终从胶囊正下方展开**：滑入方向固定为顶部；展开定位在胶囊水平居中，
    宽度钳制在工作区内。
 8. **托盘“重置胶囊位置”**：菜单项触发前端重置到顶边居中，避免胶囊“跑丢”后找不到。
+9. **（修订）贴边条形状与 morph 过渡 Region**：bar 为顶部齐平细条，其**贴边侧两角
+   方角、远端两角半圆**（CSS `border-radius: 0 0 9999px 9999px`；原生 Region 用
+   `RoundRect ∪ 贴边侧半边矩形` 填平贴边角），修复全圆角在屏幕边缘留下的透明缺口；
+   pill⇄bar morph 动画期间 `set_capsule_geometry(transitioning=true)` 立即应用**两形态
+   Region 并集**，动画结束后再切目标形态精确 Region，消除中间帧被旧轮廓啃角的突变。
+   CSS 侧两层 morph 通过 `--shape` 变量让圆角与 transform 同曲线过渡。
+   **已知权衡**：morph 的 ~350ms 内并集轮廓外缘（两形态剪影之间的 halo 区）会吞掉
+   鼠标点击（HTNOWHERE 不透传）而非穿透，面积小、时长短，接受；胶囊窗口尺寸恒定
+   （resizable:false），Region 同步无延迟兜底线程，避免过期异步覆盖。
 
 **实现要点**:
 - 前端：`lib/windowMorphConfig.ts`（几何配置 + contentRectFor）、`components/EdgeBar.vue`（新增）、
