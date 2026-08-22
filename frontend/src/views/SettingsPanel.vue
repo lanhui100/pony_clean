@@ -17,6 +17,7 @@ import {
   downloadProgress,
   updateAvailable,
   updateVersion,
+  lastCheckError,
   markUpdateSeen,
   checkForUpdate,
   installUpdate,
@@ -105,6 +106,9 @@ async function handleCheckUpdate() {
   const version = await checkForUpdate()
   if (version) {
     flashUpdateMsg(`发现新版本 ${version}，可点击安装`)
+  } else if (lastCheckError.value) {
+    // 检查失败 ≠ 无更新：端点/网络故障如实提示，不再伪装「已是最新版本」
+    flashUpdateMsg(`✗ 检查失败：${humanizeError(lastCheckError.value)}`)
   } else {
     flashUpdateMsg('✓ 已是最新版本')
   }

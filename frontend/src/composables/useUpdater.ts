@@ -28,6 +28,12 @@ export const downloadingUpdate = ref(false)
 /** 下载进度百分比（0-100），null 表示尚未开始接收数据 */
 export const downloadProgress = ref<number | null>(null)
 export const autoUpdateEnabled = ref(true)
+/** 最近一次检查更新的失败原因（空 = 成功）。用于区分「检查失败」与「确认无更新」——
+ *  双端点全失败时 check() 会抛错，此前被吞成 null 导致 UI 误报「已是最新版本」 */
+export const lastCheckError = ref('')
+
+const CHECK_MAX_ATTEMPTS = 2
+const CHECK_RETRY_DELAY_MS = 1500
 
 let timer: ReturnType<typeof setInterval> | null = null
 let inited = false
@@ -47,23 +53,35 @@ export function markUpdateSeen() {
 }
 
 /**
- * 检查更新。发现新版本仅置角标提醒，安装一律由用户在设置页手动触发。
- * @returns 更新版本号（有更新）/ null（无更新或失败）
+ * 检查更新（带重试）。发现新版本仅置角标提醒，安装一律由用户在设置页手动触发。
+ * 失败时不抛出（定时任务需静默），错误写入 lastCheckError 供 UI 区分提示。
+ * @returns 更新版本号（有更新）/ null（无更新或失败，配合 lastCheckError 判断）
  */
 export async function checkForUpdate(): Promise<string | null> {
   if (checkingUpdate.value || downloadingUpdate.value) return null
   checkingUpdate.value = true
+  lastCheckError.value = ''
   try {
-    const update = await check()
-    if (!update) {
-      return null
+    let lastErr: unknown = null
+    for (let attempt = 1; attempt <= CHECK_MAX_ATTEMPTS; attempt++) {
+      try {
+        const update = await check()
+        if (!update) {
+          return null
+        }
+        updateVersion.value = update.version
+        updateAvailable.value = true
+        updateBadgeVisible.value = true
+        return update.version
+      } catch (e) {
+        lastErr = e
+        console.warn(`check update attempt ${attempt}/${CHECK_MAX_ATTEMPTS} failed:`, e)
+        if (attempt < CHECK_MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, CHECK_RETRY_DELAY_MS * attempt))
+        }
+      }
     }
-    updateVersion.value = update.version
-    updateAvailable.value = true
-    updateBadgeVisible.value = true
-    return update.version
-  } catch (e) {
-    console.warn('check update failed:', e)
+    lastCheckError.value = String(lastErr)
     return null
   } finally {
     checkingUpdate.value = false
