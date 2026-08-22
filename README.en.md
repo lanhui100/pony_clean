@@ -14,7 +14,7 @@ A minimal desktop widget for Windows. Three core features:
 
 ## Download & Install
 
-Download `PonyClean_<version>_<arch>-setup.exe` from the [Releases](https://cnb.cool/lanhui100/pony_clean/-/releases) page (`x64` for 64-bit, `arm64` for Windows on ARM), then double-click to install.
+Download `PonyClean_<version>_<arch>-setup.exe` from the [GitHub Releases](https://github.com/lanhui100/pony_clean/releases/latest) page (`x64` for 64-bit, `arm64` for Windows on ARM), then double-click to install.
 
 > Current builds are **not CA-signed** (self-signed) for internal testing, so the browser / SmartScreen may warn. Follow these steps:
 >

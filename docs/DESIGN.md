@@ -292,3 +292,32 @@
 - `docs/README.md`、`RELEASE_CHECKLIST.md`、`README.md`、`AGENTS.md`（流程/命令文档化）
 
 **流程**: 发版 = `check-version` → 确认 CHANGELOG [Unreleased] → `bump <v>` → 构建 + 手动 QA → `bump <v> --commit --tag` → `git push --follow-tags`。详见 `docs/VERSIONING.md`。
+
+---
+
+## ADR-013: 发版与更新源收敛为 GitHub 单平台（移除 CNB）
+
+**状态**: 已采纳（2026-08-22）
+
+**上下文**: v0.2.1 起 updater 采用 GitHub（主）+ CNB（备）双端点，CNB 侧由 `.cnb.yml` 流水线
+在 tag_push 时构建安装包、发布 Release 并回写 `updater/latest.json` 到 main。实际运行中该备用
+链路自 v0.1.2 起停摆：0.2.x/0.3.x 历次发版均未推 CNB，备用清单长期停留在 v0.1.2；v0.3.4 发版
+再次跳过 CNB 后，陈旧清单直接参与了更新误判 bug（用户点下载后回落到 0.1.2 清单被误判为
+「已是最新」）。维持双平台需要持续持有 CNB 仓库写权限令牌并保证每次发版双推，成本与收益
+长期倒挂。
+
+**决策**:
+1. 发版收敛为 **GitHub Actions 单平台**（`.github/workflows/build-installers.yml`），不再向 CNB
+   推送代码与 tag；
+2. `tauri.conf.json` updater 端点移除 CNB 备用源，仅保留 GitHub Release 固定清单 URL；
+3. 删除 `.cnb.yml` 与仓库内遗留的 `updater/latest.json`（v0.1.2 陈旧产物）；README 下载链接
+   改指 GitHub Releases。
+
+**理由**: 备用端点自 0.1.2 起从未提供过有效更新（移除无实际损失，反而消除「回落到陈旧清单」
+这一故障面与每次检查的额外延迟）；单平台消除双推义务与 tag 指向一致性维护成本。
+
+**后果 / 迁移**:
+- 存量 ≤v0.2.0 客户端（仅内置 CNB 端点）失去自动更新通道，需手动从 GitHub Releases 下载
+  ≥v0.2.1 升级一次后才恢复自动更新能力；
+- GitHub 直连受阻的网络环境下，应用内更新可能失败——错误提示已引导「到发布页手动下载」；
+- CNB 上的历史 Release/清单成为冻结存档。

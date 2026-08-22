@@ -4,8 +4,8 @@
 - [架构文档](ARCHITECTURE.md) — 模块依赖、数据流图、项目地图
 - [设计决策](DESIGN.md) — ADR 技术选型记录
 - [C盘清理策略 v2](CLEAN_STRATEGY.md) — 社区调研 + 60 个清理目标 + 安全策略
-- [版本管理](VERSIONING.md) — 版本号规则、bump/check 用法、发版流程（GitHub + CNB 双平台）
-- [CNB 构建 Windows 安装包](RELEASE_BUILD.md) — 格式结论、方案对比、发布流水线说明（CNB + GitHub Actions 双流水线）
+- [版本管理](VERSIONING.md) — 版本号规则、bump/check 用法、发版流程（GitHub 单平台，ADR-013）
+- [CNB 构建 Windows 安装包](RELEASE_BUILD.md) — 【已废弃】历史方案记录（CNB 流水线 + GitHub Actions 对比）
 - [代码签名（初期方案）](../scripts/sign/README.md) — 自签名证书生成 + exe 签名脚本
 - [应用图标设计](design/ICON.md) — 桌面/托盘图标设计决策与导出规格
 

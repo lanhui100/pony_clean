@@ -14,7 +14,7 @@ Windows 极简桌面小组件。三大核心功能：
 
 ## 下载与安装
 
-从 [Releases](https://cnb.cool/lanhui100/pony_clean/-/releases) 页面下载 `PonyClean_<版本>_<架构>-setup.exe`（x64 为 64 位，arm64 为 Windows on ARM），双击即可安装。
+从 [GitHub Releases](https://github.com/lanhui100/pony_clean/releases/latest) 页面下载 `PonyClean_<版本>_<架构>-setup.exe`（x64 为 64 位，arm64 为 Windows on ARM），双击即可安装。
 
 > 当前为内测分发，安装包为**未权威签名**（自签名），浏览器/SmartScreen 可能拦截，请按下面步骤放行：
 >

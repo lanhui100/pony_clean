@@ -1,5 +1,9 @@
 # CNB 构建 Windows 安装包方案
 
+> **⚠️ 已废弃（2026-08-22，ADR-013）**：发版收敛为 **GitHub Actions 单平台**，CNB 推送/发版移除
+> （`.cnb.yml` 已删除、updater 备用端点已移除）。本文保留作历史方案记录与排错参考；
+> 现行发版流程以 [docs/VERSIONING.md](VERSIONING.md) 与 `.github/workflows/build-installers.yml`（§5.6）为准。
+
 > 调研日期：2026-08-19
 > 状态：已实施方案 A（官方构建机交叉编译 NSIS `.exe`）并**验证通过**（2026-08-19）
 > 双架构验证通过（2026-08-19）：x64 + ARM64 双安装包已上线
