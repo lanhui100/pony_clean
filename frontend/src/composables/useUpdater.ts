@@ -35,6 +35,12 @@ export const lastCheckError = ref('')
 const CHECK_MAX_ATTEMPTS = 2
 const CHECK_RETRY_DELAY_MS = 1500
 
+/** 单次请求超时：插件默认无超时（reqwest 黑洞连接会让 await 永不返回），
+ *  必须显式传入，否则重试循环无法介入、UI 永久停在「准备中…」 */
+const CHECK_TIMEOUT_MS = 15_000
+/** 下载总超时：须覆盖慢网完整安装包下载，不能设 30s 级 */
+const DOWNLOAD_TIMEOUT_MS = 600_000
+
 let timer: ReturnType<typeof setInterval> | null = null
 let inited = false
 
@@ -65,7 +71,7 @@ export async function checkForUpdate(): Promise<string | null> {
     let lastErr: unknown = null
     for (let attempt = 1; attempt <= CHECK_MAX_ATTEMPTS; attempt++) {
       try {
-        const update = await check()
+        const update = await check({ timeout: CHECK_TIMEOUT_MS })
         if (!update) {
           return null
         }
@@ -90,9 +96,9 @@ export async function checkForUpdate(): Promise<string | null> {
 
 /**
  * 下载安装重试参数：更新包直连 GitHub Release 下载地址，瞬时网络故障
- * （reqwest `error sending request`，国内网络对 objects.githubusercontent.com
- * 的间歇性阻断）高发。最多 3 次尝试、线性退避；每次尝试重新 check()——
- * 端点列表（GitHub 主 + CNB 备）可重新择优，上次失败的源这次可能走备用清单。
+ * （reqwest `error sending request`，部分网络环境对 release 资产的间歇性
+ * 阻断）高发。最多 3 次尝试、线性退避；每次尝试重新 check() 刷新清单与
+ * 签名地址（更新源自 v0.3.4 起收敛为 GitHub 单端点，见 ADR-013）。
  */
 const INSTALL_MAX_ATTEMPTS = 3
 const INSTALL_RETRY_DELAY_MS = 2000
@@ -110,11 +116,21 @@ export async function installUpdate(): Promise<boolean> {
     let lastErr: unknown = null
     for (let attempt = 1; attempt <= INSTALL_MAX_ATTEMPTS; attempt++) {
       try {
-        const update = await check()
+        const update = await check({ timeout: CHECK_TIMEOUT_MS })
         if (!update) {
-          updateAvailable.value = false
-          updateVersion.value = ''
-          return false
+          // 已确认存在待更版本时（按钮仅在 updateAvailable 时出现），check() 为空
+          // 只说明本次命中的端点清单过期/异常（典型：GitHub 下载失败后重检回落到
+          // 尚未同步新版本的备用端点），绝不能误判为「已是最新版本」并清除状态——
+          // 按本次尝试失败处理，继续重试换源；耗尽后抛错走「更新失败」toast。
+          // 合成错误带标记名：不覆盖已捕获的真实传输错误（见下方 catch）。
+          if (!updateAvailable.value || !updateVersion.value) {
+            return false
+          }
+          const stale = new Error(
+            `更新服务暂时不可用，请稍后重试，或到发布页手动下载 v${updateVersion.value}`,
+          )
+          stale.name = 'StaleUpdateManifest'
+          throw stale
         }
         updateVersion.value = update.version
         updateAvailable.value = true
@@ -122,22 +138,33 @@ export async function installUpdate(): Promise<boolean> {
         let total = 0
         // 每次尝试重置进度（重试时进度条从准备中重新开始）
         downloadProgress.value = null
-        await update.downloadAndInstall((event) => {
-          if (event.event === 'Started') {
-            total = event.data.contentLength ?? 0
-            downloadProgress.value = 0
-          } else if (event.event === 'Progress') {
-            downloaded += event.data.chunkLength
-            if (total > 0) {
-              downloadProgress.value = Math.min(100, Math.round((downloaded / total) * 100))
+        await update.downloadAndInstall(
+          (event) => {
+            if (event.event === 'Started') {
+              total = event.data.contentLength ?? 0
+              downloadProgress.value = 0
+            } else if (event.event === 'Progress') {
+              downloaded += event.data.chunkLength
+              if (total > 0) {
+                downloadProgress.value = Math.min(100, Math.round((downloaded / total) * 100))
+              }
+            } else if (event.event === 'Finished') {
+              downloadProgress.value = 100
             }
-          } else if (event.event === 'Finished') {
-            downloadProgress.value = 100
-          }
-        })
+          },
+          { timeout: DOWNLOAD_TIMEOUT_MS },
+        )
         return true
       } catch (e) {
-        lastErr = e
+        // 合成错误（清单滞后）不覆盖真实传输错误：耗尽后优先抛最近一次真实错误，
+        // 让 humanizeError 的可操作建议（检查网络/到发布页手动下载）得以命中；
+        // 合成错误仅在尚无任何已捕获错误时兜底。
+        const synthetic = e instanceof Error && e.name === 'StaleUpdateManifest'
+        if (!synthetic || lastErr === null) {
+          lastErr = e
+        }
+        // 进入退避前重置进度：避免退避等待期间 UI 冻结在旧百分比造成「卡死」错觉
+        downloadProgress.value = null
         console.warn(`install update attempt ${attempt}/${INSTALL_MAX_ATTEMPTS} failed:`, e)
         if (attempt < INSTALL_MAX_ATTEMPTS) {
           await new Promise((resolve) => setTimeout(resolve, INSTALL_RETRY_DELAY_MS * attempt))

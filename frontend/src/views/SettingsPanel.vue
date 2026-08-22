@@ -109,6 +109,10 @@ async function handleCheckUpdate() {
   } else if (lastCheckError.value) {
     // 检查失败 ≠ 无更新：端点/网络故障如实提示，不再伪装「已是最新版本」
     flashUpdateMsg(`✗ 检查失败：${humanizeError(lastCheckError.value)}`)
+  } else if (updateAvailable.value && updateVersion.value) {
+    // 端点全部「成功响应」但清单滞后（如备用端点未同步新版）时 check() 静默
+    // 返回 null 且无错误——已知存在待更版本时不谎报「已是最新版本」
+    flashUpdateMsg(`未能确认更新（更新源清单可能滞后），稍后可重试安装 v${updateVersion.value}`)
   } else {
     flashUpdateMsg('✓ 已是最新版本')
   }
@@ -128,7 +132,8 @@ async function handleInstallUpdate() {
     await relaunch()
   } catch (e) {
     updateMsg.value = ''
-    updateError.value = String(e)
+    // Error 实例取 message，避免 toast 出现「Error: 」前缀伪影
+    updateError.value = e instanceof Error ? e.message : String(e)
   }
 }
 
@@ -450,9 +455,8 @@ function categoryLabel(value: string) {
         <!-- 更新状态 + 操作 -->
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0 flex-1">
-            <!-- 下载中：进度条 + 单个 loading，隐藏安装按钮 -->
+            <!-- 下载中：仅进度条 + 百分比指示（不再叠加 spinner，避免多重 loading） -->
             <div v-if="downloadingUpdate" class="flex items-center gap-2">
-              <Loader2 class="h-3 w-3 shrink-0 animate-spin text-primary" />
               <Progress :model-value="downloadProgress" class="h-1.5 min-w-0 flex-1" />
               <span class="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                 {{ downloadProgress === null ? '准备中…' : `${downloadProgress}%` }}
@@ -470,17 +474,17 @@ function categoryLabel(value: string) {
           </div>
 
           <div class="flex shrink-0 items-center gap-1.5">
+            <!-- 下载中隐藏安装按钮：进度条行已完整表达进行中状态 -->
             <Button
-              v-if="updateAvailable"
+              v-if="updateAvailable && !downloadingUpdate"
               size="icon-sm"
               variant="ghost"
-              :disabled="checkingUpdate || downloadingUpdate"
+              :disabled="checkingUpdate"
               title="下载并安装更新"
               aria-label="下载并安装更新"
               @click="handleInstallUpdate"
             >
-              <Loader2 v-if="downloadingUpdate" class="h-3.5 w-3.5 animate-spin" />
-              <Download v-else class="h-3.5 w-3.5" />
+              <Download class="h-3.5 w-3.5" />
             </Button>
             <Button
               size="icon-sm"
