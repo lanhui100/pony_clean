@@ -270,12 +270,16 @@ const dialogHasConfirm = computed(() =>
 )
 
 function handleOneClickClean() {
+  // 删除进行中禁止再次发起（items 在 executeClean 完成前仍含待删路径，
+  // 仅靠 disabled 不够，防其他入口/竞态重复触发 execute_clean）
+  if (garbageState.value === 'deleting') return
   if (oneClickPaths.value.length === 0) return
   pendingClean.value = new Set(oneClickPaths.value)
   showConfirmDialog.value = true
 }
 
 function handleAdvancedClean() {
+  if (garbageState.value === 'deleting') return
   if (selectedConfirmPaths.value.size === 0) return
   pendingClean.value = new Set(selectedConfirmPaths.value)
   showConfirmDialog.value = true
@@ -613,9 +617,9 @@ onUnmounted(() => {})
             </span>
           </div>
 
-          <!-- 清理中 -->
+          <!-- 清理中：进度数字保留；转圈由右上角忙碌指示承担（全页唯一 loading，
+               避免同页两个「清理中」spinner 重复） -->
           <div v-else-if="garbageState === 'deleting'" class="flex items-center gap-1.5 py-1.5">
-            <Loader2 class="h-3 w-3 shrink-0 animate-spin text-primary" />
             <span class="text-[10px] text-muted-foreground">
               清理中 {{ deleteProgress.done }}/{{ deleteProgress.total || '…' }}
             </span>
@@ -774,7 +778,7 @@ onUnmounted(() => {})
               class="h-7 flex-1 px-3 text-[11px]"
               size="sm"
               variant="soft"
-              :disabled="oneClickPaths.length === 0"
+              :disabled="garbageState === 'deleting' || oneClickPaths.length === 0"
               @click="handleOneClickClean"
             >
               <Zap class="h-3 w-3" />
