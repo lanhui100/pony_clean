@@ -6,6 +6,9 @@ import {
   sendNotification,
 } from '@tauri-apps/plugin-notification'
 
+/** 公网连通质量（与后端 NetQuality serde 小写序列化对齐） */
+export type NetQuality = 'good' | 'poor' | 'offline'
+
 export interface Snapshot {
   summary: SystemSummary
   processes: ProcessInfo[]
@@ -17,6 +20,17 @@ export interface SystemSummary {
   process_count: number
   disk_used_gb: number
   disk_total_gb: number
+  /**
+   * 网络下行速率（B/s）。
+   * 可选性说明：旧后端快照不含 net_* 字段，运行时经 computed `?? 0/?? null` 兜底
+   */
+  net_down_bps?: number
+  /** 网络上行速率（B/s），可选性同上 */
+  net_up_bps?: number
+  /** 公网连通质量；null/undefined = 尚未完成首次探测 */
+  net_quality?: NetQuality | null
+  /** 最优探测延迟（毫秒）；未就绪或全失败时为 null/undefined */
+  net_latency_ms?: number | null
 }
 export interface ProcessInfo {
   pid: number
@@ -115,6 +129,12 @@ export function useMonitor() {
 
   const diskUsedGb = computed(() => summary.value?.disk_used_gb ?? 0)
   const diskTotalGb = computed(() => summary.value?.disk_total_gb ?? 0)
+
+  // 网络监控（SPEC-032）：?? null 兜底旧后端缺字段（灰点/「—」降级）
+  const netQuality = computed<NetQuality | null>(() => summary.value?.net_quality ?? null)
+  const netLatencyMs = computed<number | null>(() => summary.value?.net_latency_ms ?? null)
+  const netDownBps = computed(() => summary.value?.net_down_bps ?? 0)
+  const netUpBps = computed(() => summary.value?.net_up_bps ?? 0)
 
   async function fetch() {
     try {
@@ -219,6 +239,10 @@ export function useMonitor() {
     diskPct,
     diskUsedGb,
     diskTotalGb,
+    netQuality,
+    netLatencyMs,
+    netDownBps,
+    netUpBps,
     killProcess,
     trimMemory,
     getProcessIcon,

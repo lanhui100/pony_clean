@@ -29,6 +29,14 @@ pub struct SystemSummary {
     pub process_count: usize,
     pub disk_used_gb: f64,
     pub disk_total_gb: f64,
+    /// 网络下行速率（B/s，全部非回环接口合计）
+    pub net_down_bps: f64,
+    /// 网络上行速率（B/s）
+    pub net_up_bps: f64,
+    /// 公网连通质量；None = 尚未完成首次探测（前端显示「检测中」）
+    pub net_quality: Option<crate::netmon::NetQuality>,
+    /// 最优探测延迟（毫秒）；未就绪或全失败时为 None
+    pub net_latency_ms: Option<u32>,
 }
 
 /// 完整快照：系统摘要 + 进程列表（按 CPU 降序）
@@ -88,11 +96,39 @@ pub fn kill_process(system: &sysinfo::System, pid: u32, expected_name: &str) -> 
     }
 }
 
+/// 启动网络探测线程并返回共享健康状态（SPEC-032）
+///
+/// 探测线程随进程生命周期运行（JoinHandle 立即分离，进程退出自动回收）。
+/// 必须在监控循环**进入前**调用，保证首帧快照 `net_quality=None`。
+fn spawn_probe() -> Arc<RwLock<Option<crate::netmon::NetHealth>>> {
+    let state = Arc::new(RwLock::new(None));
+    // JoinHandle 丢弃即分离：探测线程随进程生命周期运行，进程退出自动回收
+    let _ = crate::netmon::start_probe(Arc::clone(&state));
+    state
+}
+
+/// 读取网络健康状态：锁取值后立刻 drop，不与 snapshot 写锁嵌套持有；
+/// 锁中毒时静默降级为「未就绪」（沿用项目 `if let Ok(guard)` 容错模式）
+fn read_net_health(
+    probe_state: &RwLock<Option<crate::netmon::NetHealth>>,
+) -> (Option<crate::netmon::NetQuality>, Option<u32>) {
+    match probe_state.read() {
+        Ok(guard) => guard
+            .as_ref()
+            .map_or((None, None), |h| (Some(h.quality), h.latency_ms)),
+        Err(_) => (None, None),
+    }
+}
+
 /// 启动进程监控任务（独立后台线程）
 ///
 /// # CPU 首次采样说明
 /// sysinfo 的 cpu_usage() 是两次 refresh 间的平均值，首轮始终为 0。
 /// start() 内部会先做哑刷新，等待一个间隔后才开始正式轮询。
+///
+/// # 网络探测线程生命周期（SPEC-032）
+/// 每次调用会拉起一条随**进程**存活的网络探测线程（Shutdown 不停它）。
+/// 请勿在长驻进程内反复调用本函数；Tauri 壳层应使用 [`start_shared`]。
 ///
 /// 使用 std::thread 而非 tokio::spawn，避免阻塞 tokio 工作线程。
 /// UI 侧通过 std::sync::mpsc::Sender::try_send() 非阻塞发送命令。
@@ -106,6 +142,10 @@ pub fn start(
         let mut system = System::new();
         let mut first_run = true;
         let mut disks = Disks::new();
+        // 网络监控（SPEC-032）：探测线程 + 吞吐采样器均在进入循环前初始化，
+        // 保证首帧 net_quality=None / bps=0.0
+        let probe_state = spawn_probe();
+        let mut net_sampler = crate::netmon::ThroughputSampler::new();
 
         loop {
             // 500ms 子间隔轮询，避免 Shutdown 响应延迟过长
@@ -156,6 +196,10 @@ pub fn start(
                 })
                 .unwrap_or((0.0, 0.0));
 
+            // 网络吞吐与健康状态（采样器内部含 500ms 间隔地板防噪声尖峰）
+            let (net_down_bps, net_up_bps) = net_sampler.sample();
+            let (net_quality, net_latency_ms) = read_net_health(&probe_state);
+
             let summary = SystemSummary {
                 cpu_total,
                 mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
@@ -163,6 +207,10 @@ pub fn start(
                 process_count: system.processes().len(),
                 disk_used_gb,
                 disk_total_gb,
+                net_down_bps,
+                net_up_bps,
+                net_quality,
+                net_latency_ms,
             };
 
             let count = system.processes().len();
@@ -211,8 +259,10 @@ fn handle_command(cmd: Option<MonitorCommand>, system: &mut sysinfo::System) -> 
     }
 }
 
-/// Start monitor in shared-state mode (for Tauri backend)
-/// Start monitor in shared-state mode (for Tauri backend)
+/// 以共享状态模式启动监控（Tauri 后端路径）
+///
+/// 每个监控循环周期把最新 [`Snapshot`] 写入 `snapshot`；网络健康状态由内部
+/// 探测线程维护（随进程存活，见 [`start`] 的生命周期说明）。
 pub fn start_shared(
     snapshot: Arc<RwLock<Option<Snapshot>>>,
 ) -> (mpsc::Sender<MonitorCommand>, thread::JoinHandle<()>) {
@@ -220,6 +270,10 @@ pub fn start_shared(
     let handle = thread::spawn(move || {
         let mut system = System::new();
         let mut disks = Disks::new();
+        // 网络监控（SPEC-032）：探测线程 + 吞吐采样器均在进入循环前初始化，
+        // 保证首帧 net_quality=None / bps=0.0（本路径无 first_run 跳过）
+        let probe_state = spawn_probe();
+        let mut net_sampler = crate::netmon::ThroughputSampler::new();
         loop {
             match cmd_rx.recv_timeout(Duration::from_millis(2000)) {
                 Ok(cmd) => {
@@ -255,6 +309,10 @@ pub fn start_shared(
                 })
                 .unwrap_or((0.0, 0.0));
 
+            // 网络吞吐与健康状态（采样器内部含 500ms 间隔地板防噪声尖峰）
+            let (net_down_bps, net_up_bps) = net_sampler.sample();
+            let (net_quality, net_latency_ms) = read_net_health(&probe_state);
+
             let summary = SystemSummary {
                 cpu_total,
                 mem_used_mb: system.used_memory() as f64 / (1024.0 * 1024.0),
@@ -262,6 +320,10 @@ pub fn start_shared(
                 process_count: system.processes().len(),
                 disk_used_gb,
                 disk_total_gb,
+                net_down_bps,
+                net_up_bps,
+                net_quality,
+                net_latency_ms,
             };
             let mut processes = Vec::with_capacity(system.processes().len());
             for (&pid, process) in system.processes().iter() {
@@ -300,6 +362,34 @@ impl fmt::Display for ProcessInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_summary_net_fields_serialized() {
+        // SPEC-032 契约：四个新键恒存在；未就绪时 net_quality/net_latency_ms 为字面 null
+        let s = SystemSummary {
+            cpu_total: 1.0,
+            mem_used_mb: 1.0,
+            mem_total_mb: 2.0,
+            process_count: 1,
+            disk_used_gb: 1.0,
+            disk_total_gb: 2.0,
+            net_down_bps: 0.0,
+            net_up_bps: 0.0,
+            net_quality: None,
+            net_latency_ms: None,
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        for key in [
+            "net_down_bps",
+            "net_up_bps",
+            "net_quality",
+            "net_latency_ms",
+        ] {
+            assert!(v.get(key).is_some(), "missing key {key}");
+        }
+        assert_eq!(v["net_quality"], serde_json::Value::Null);
+        assert_eq!(v["net_latency_ms"], serde_json::Value::Null);
+    }
 
     #[test]
     fn test_kill_process_not_found() {

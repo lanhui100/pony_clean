@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import NetDot from '@/components/NetDot.vue'
+import type { NetQuality } from '@/composables/useMonitor'
 
 const props = defineProps<{
   cpuPercent: number
   memPercent: number
+  /** 公网连通质量（null = 检测中） */
+  netStatus?: NetQuality | null
 }>()
 
 const cpuFill = computed(() => ({ width: `${Math.min(props.cpuPercent, 100)}%` }))
@@ -41,6 +45,14 @@ const memBg = computed(() => {
 
 <template>
   <div class="edge-bar">
+    <!-- 网络状态点：贴边条与屏幕顶边连接处中央（水平居中，垂直压在分隔线上）；
+         bar 态 hover 500ms 即展开为胶囊，tooltip 不可达，故纯色指示、不拦截指针 -->
+    <NetDot
+      class="pointer-events-none absolute left-1/2 top-1/2 z-[3] -translate-x-1/2 -translate-y-1/2"
+      :status="netStatus ?? null"
+      :titled="false"
+      :size="5"
+    />
     <!-- CPU track（左半，向右填充；轨道底色与胶囊一致） -->
     <div class="track" :class="cpuBg">
       <div class="fill fill-cpu" :class="cpuTint" :style="cpuFill" />
@@ -63,6 +75,7 @@ const memBg = computed(() => {
 
 <style scoped>
 .edge-bar {
+  position: relative;
   display: flex;
   flex-direction: row;
   width: 100%;

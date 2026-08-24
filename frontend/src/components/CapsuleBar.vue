@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import NetDot from '@/components/NetDot.vue'
+import type { NetQuality } from '@/composables/useMonitor'
 
 const props = defineProps<{
   cpuPercent: number
   memPercent: number
   isHovered?: boolean
+  /** 公网连通质量（null = 检测中） */
+  netStatus?: NetQuality | null
+  netLatencyMs?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -45,10 +50,19 @@ const memBg = computed(() => {
 
 <template>
   <div
-    class="capsule-bar flex cursor-pointer items-center overflow-hidden select-none h-full w-full transition-shadow duration-300"
+    class="capsule-bar relative flex cursor-pointer items-center overflow-hidden select-none h-full w-full transition-shadow duration-300"
     :class="{ 'capsule-hovered': isHovered }"
     @click="emit('click')"
   >
+    <!-- 网络状态点：胶囊与屏幕顶边连接处中央（顶缘内侧水平居中）；
+         实心点无外发光（overflow:hidden 裁剪），点击冒泡触发展开属预期 -->
+    <NetDot
+      class="absolute left-1/2 top-[4px] z-20 -translate-x-1/2"
+      :status="netStatus ?? null"
+      :latency-ms="netLatencyMs"
+      :size="6"
+    />
+
     <!-- CPU half -->
     <div class="relative flex flex-1 items-center justify-center h-full overflow-hidden rounded-l-full" :class="cpuBg">
       <div

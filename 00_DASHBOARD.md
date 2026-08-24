@@ -5,7 +5,7 @@
 - 描述: Windows 极简桌面小组件 — 进程监控报警 + C盘安全分析清理 + 内存整理
 - 技术栈: Rust (Tauri v2) + Vue 3 + shadcn-vue + Tailwind + sysinfo + jwalk
 - 负责人: @self
-- 当前阶段: Wave 4 — 清理体验优化（5 任务全部完成：占用检查/一键清理/WU缓存/扫描合并/并行提速，待手动 QA）
+- 当前阶段: Wave 4 — 清理体验优化（5 任务全部完成：占用检查/一键清理/WU缓存/扫描合并/并行提速，待手动 QA）；TASK-032 网络监控已完成开发与双审闭环
 - 更新日期: 2026-08-22
 
 ## 整体目标
@@ -42,6 +42,7 @@
 | TASK-027 | cleaner target 并行扫描 | Done | P1 | @self | ✅ 4 线程并行 |
 | **TASK-028** | **空间面板傻瓜式重构** | **Validation** | **P0** | **@self** | **手动 QA（已修复 P0 大小写误删缺陷，门禁/复审全绿）** |
 | **TASK-029** | **窗口视觉统一与过渡打磨（三层合一/阴影/极简按钮）** | **Validation** | **P0** | **@self** | **手动 QA + 环境受限门禁补跑（build/cargo check）** |
+| **TASK-032** | **网络监控 — 连接点指示器 + 监控页 NET 行** | **Validation** | **P1** | **@self** | **手动 QA（spec/代码双审闭环，门禁全绿，SPEC-032 Rev.2）** |
 | TASK-030 | 版本管理体系建设 | Done | P1 | @self | ✅ 28 单测 + 全守卫实测 + 门禁全绿，待提交 |
 | TASK-031 | CNB 流水线自动同步 updater/latest.json | Dropped | P1 | @self | ✅ 已废弃：发版收敛 GitHub 单平台（ADR-013），连带清理已完成 |
 | TASK-011 | UI 设计规范制定与对抗式审核 | In Progress | P1 | @self | 补产物（SPEC-011 缺失） |

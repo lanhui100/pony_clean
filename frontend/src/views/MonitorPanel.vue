@@ -2,9 +2,24 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { X, Droplets, Loader2, Pin, PinOff } from 'lucide-vue-next'
 import { Toast } from '../components/ui/toast'
+import NetDot from '../components/NetDot.vue'
 import { useMonitor, type ProcessInfo } from '../composables/useMonitor'
 
-const { processes, summary, loading, error, paused, killProcess, trimMemory, getProcessIcon, setPaused } = useMonitor()
+const {
+  processes,
+  summary,
+  loading,
+  error,
+  paused,
+  killProcess,
+  trimMemory,
+  getProcessIcon,
+  setPaused,
+  netQuality,
+  netLatencyMs,
+  netDownBps,
+  netUpBps,
+} = useMonitor()
 
 const props = defineProps<{
   search: string
@@ -170,6 +185,25 @@ function fmPct(v: number) {
   return `${v.toFixed(1)}%`
 }
 
+/** 速率展示值：offline 时传 NaN → 显示「—」（质量探的是公网，速率是全部接口合计，口径不同不混显） */
+const downShown = computed(() => (netQuality.value === 'offline' ? Number.NaN : netDownBps.value))
+const upShown = computed(() => (netQuality.value === 'offline' ? Number.NaN : netUpBps.value))
+
+/**
+ * 速率格式化：B/s → KB/s → MB/s。
+ * 非有限值（offline/未就绪/旧后端缺字段）显示「—」；在线零流量显示「0 B/s」（与断联区分）。
+ */
+function speedParts(bps: number): { value: string; unit: string } {
+  if (!Number.isFinite(bps)) return { value: '—', unit: '' }
+  if (bps < 1024) return { value: `${Math.round(bps)}`, unit: 'B/s' }
+  const kb = bps / 1024
+  if (kb < 1024) return { value: kb.toFixed(1), unit: 'KB/s' }
+  return { value: (kb / 1024).toFixed(1), unit: 'MB/s' }
+}
+
+const downText = computed(() => speedParts(downShown.value))
+const upText = computed(() => speedParts(upShown.value))
+
 async function handleKill(p: ProcessRow) {
   if (confirmPid.value === p.pid) {
     if (confirmTimer) clearTimeout(confirmTimer)
@@ -230,6 +264,28 @@ onUnmounted(() => {
           <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">MEM</span>
           <span class="text-xl font-bold tabular-nums leading-none" :class="memTextColor(memPct)">
             {{ memPct ? memPct.toFixed(1) : '—' }}<span class="text-xs" :class="memTextColor(memPct)">%</span>
+          </span>
+        </div>
+      </div>
+      <!-- NET（SPEC-032）：下行/上行速率 + 质量点；与 CPU/MEM 行同构；
+           固定列表（paused）时快照冻结，整行淡化提示 -->
+      <div class="flex items-center justify-center gap-10" :class="{ 'opacity-50': paused }">
+        <div class="flex flex-col items-center">
+          <span class="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+            <NetDot class="-mb-px" :status="netQuality" :latency-ms="netLatencyMs" :size="7" glow />
+            <span>↓ DOWN</span>
+          </span>
+          <span class="text-xl font-bold tabular-nums leading-none text-foreground/90" title="网络下行速率（全部网卡合计）">
+            {{ downText.value }}<span class="text-xs">{{ downText.unit }}</span>
+          </span>
+        </div>
+        <div class="flex flex-col items-center">
+          <span class="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+            <span class="w-[7px]" aria-hidden="true" />
+            <span>↑ UP</span>
+          </span>
+          <span class="text-xl font-bold tabular-nums leading-none text-foreground/90" title="网络上行速率（全部网卡合计）">
+            {{ upText.value }}<span class="text-xs">{{ upText.unit }}</span>
           </span>
         </div>
       </div>
