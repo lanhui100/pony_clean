@@ -1,5 +1,7 @@
 # PonyClean
 
+English | [简体中文](./README.md)
+
 A minimal desktop widget for Windows. Three core features:
 
 - **Process Monitoring** — Real-time detection of processes with abnormally high CPU/memory usage, with alerts and one-click kill; supports calling `EmptyWorkingSet` on non-critical processes to trim memory (releases only the working set, without killing the process)
