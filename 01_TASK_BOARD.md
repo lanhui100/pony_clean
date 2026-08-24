@@ -31,6 +31,8 @@
 | TASK-008 | Vue 监控面板 | P1 | @self | TASK-006, TASK-007 |
 | TASK-009 | Vue 清理面板 | P1 | @self | TASK-006, TASK-007 |
 | TASK-010 | 集成测试 + 旧代码清理 + ADR | P1 | @self | TASK-008, TASK-009 |
+| TASK-034 | cleaner 扫描链路 skip_hidden 漏扫评估与修复 | P2 | @self | TASK-033 |
+| TASK-035 | cleaner Done.total_items 触顶多计 1 修正 | P3 | @self | 无 |
 
 ## 审核中 (Review)
 _(暂无)_
@@ -58,3 +60,4 @@ _(暂无)_
 | TASK-026 | disk 大文件 + 目录占用合并单遍历 | P1 | @self |
 | TASK-027 | cleaner target 并行扫描提速 | P1 | @self |
 | TASK-030 | 版本管理体系建设（bump/check 脚本 + CHANGELOG + CI 校验） | P1 | @self |
+| TASK-033 | 清理 Tab 空间分析扫描数目准确性验证与修复 | P0 | @self |

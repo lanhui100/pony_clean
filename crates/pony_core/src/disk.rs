@@ -5,6 +5,8 @@
 //! （受保护路径检查 + 审计日志）。
 
 use serde::Serialize;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -92,7 +94,7 @@ pub enum DiskEvent {
         scanned: u64,
         current: String,
     },
-    /// 大文件批次（扫描过程中分批推送）
+    /// 最终大文件列表（结束时一次性全量推送：按大小降序、至多 `max_files` 条）
     LargeFiles {
         files: Vec<LargeFile>,
     },
@@ -125,9 +127,99 @@ const SKIP_SYSTEM_FILES: &[&str] = &[
     "ntuser.ini",
 ];
 
+/// 有界 Top-K 大文件收集器：全程只保留体积最大的 `cap` 个。
+///
+/// 背景（扫描数目失真根因修复）：旧实现在遍历循环内每凑满 50 个就
+/// `split_off` 分批推送，导致
+/// 1) `files.len() >= max_files` 的截断判断作用在「未推送余量」上——上限 ≥50 时
+///    永不触发，<50 时保留的是先遍历到的 N 个（与体积无关）；
+/// 2) 结束时只对剩余尾批排序，全局顺序混乱，前端「仅展示最大的 20 个」失真；
+/// 3) 函数返回值只剩尾批，与事件流数据不一致。
+///
+/// 改为最小堆截断后，结束时一次性发送完整、降序、至多 `max_files` 条的结果，
+/// 计数、排序与返回值三方一致。
+struct TopLargest {
+    cap: usize,
+    /// 最小堆：堆顶为当前第 K 大；同体积按路径全序，保证确定性
+    heap: BinaryHeap<Reverse<LargeFileBySize>>,
+}
+
+impl TopLargest {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            heap: BinaryHeap::new(),
+        }
+    }
+
+    fn push(&mut self, file: LargeFile) {
+        if self.cap == 0 {
+            return;
+        }
+        let candidate = Reverse(LargeFileBySize(file));
+        if self.heap.len() == self.cap {
+            // 堆顶为当前保留的最小项（Reverse 空间的最大值）。
+            // 全序比较（size, path）：候选不严格优于堆顶则拒绝——cap 边界同体积时
+            // 保留集合与遍历次序无关，跨运行确定。
+            let smallest = self
+                .heap
+                .peek()
+                .expect("heap is at capacity and must be non-empty");
+            if candidate >= *smallest {
+                return;
+            }
+            self.heap.pop();
+        }
+        self.heap.push(candidate);
+    }
+
+    /// 取出全部保留项，按体积降序（同体积按路径稳定全序）
+    fn into_sorted_desc(self) -> Vec<LargeFile> {
+        let mut files: Vec<LargeFile> = self.heap.into_iter().map(|r| (r.0).0).collect();
+        files.sort_unstable_by(|a, b| {
+            b.size_bytes
+                .cmp(&a.size_bytes)
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        files
+    }
+}
+
+/// [`TopLargest`] 堆元素包装：按 `size_bytes` 全序比较（平局回退路径字典序）
+#[derive(Debug)]
+struct LargeFileBySize(LargeFile);
+
+impl Eq for LargeFileBySize {}
+
+impl PartialEq for LargeFileBySize {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Ord for LargeFileBySize {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0
+            .size_bytes
+            .cmp(&other.0.size_bytes)
+            .then_with(|| self.0.path.cmp(&other.0.path))
+    }
+}
+
+impl PartialOrd for LargeFileBySize {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// 推送进度事件（节流：每 200 文件一次）
 fn send_progress(tx: &Sender<DiskEvent>, scanned: u64, current: &str, last_sent: &mut u64) {
-    if scanned - *last_sent >= 200 || scanned == 0 {
+    // scanned == 0 / 与上次相同（终值恰为 200 倍数时 Done 前会重发）均跳过，
+    // 避免重复进度；终值补发由调用方在 Done 前强制触发
+    if scanned == 0 || scanned == *last_sent {
+        return;
+    }
+    if scanned - *last_sent >= 200 {
         let _ = tx.send(DiskEvent::Progress {
             scanned,
             current: current.to_string(),
@@ -136,10 +228,11 @@ fn send_progress(tx: &Sender<DiskEvent>, scanned: u64, current: &str, last_sent:
     }
 }
 
-/// 扫描目录下所有大于 `min_bytes` 的文件（并行遍历，按大小降序）
+/// 扫描目录下所有大于 `min_bytes` 的文件（并行遍历，按大小降序，至多 `max_files` 个）
 ///
-/// 事件流：`Progress`（节流）→ `LargeFiles`（分批）→ `Done`。
-/// `cancel` 为 true 时提前结束（不再推送事件）。
+/// 事件流：`Progress`（节流，`Done` 前补发精确终值）→ `LargeFiles`
+/// （结束一次性全量：按大小降序、至多 `max_files` 条，与函数返回值一致）→ `Done`。
+/// `cancel` 置位后提前结束遍历，随后仍补发终值 Progress、已收集结果与 Done。
 pub fn scan_large_files(
     tx: Sender<DiskEvent>,
     root: &Path,
@@ -147,12 +240,16 @@ pub fn scan_large_files(
     cancel: &AtomicBool,
     max_files: usize,
 ) -> Vec<LargeFile> {
-    let mut files: Vec<LargeFile> = Vec::new();
+    let mut top = TopLargest::new(max_files);
     let mut scanned = 0u64;
     let mut last_sent = 0u64;
 
     let walker = jwalk::WalkDir::new(root)
         .follow_links(false)
+        // jwalk 默认跳过「名字以 . 开头」的条目（跨平台名字判定，非 Windows 属性），
+        // 会把 .rustup/.cargo/.bun 等大缓存目录整棵静默漏扫——数目失真根因之一。
+        // 显式关闭；SKIP_DIRS/SKIP_SYSTEM_FILES 已按名单精确排除。
+        .skip_hidden(false)
         .parallelism(crate::walk::walk_parallelism())
         .process_read_dir(|_depth, _path, _state, children| {
             let is_local_temp = _path
@@ -214,25 +311,24 @@ pub fn scan_large_files(
             .unwrap_or(0);
         let path_str = entry.path().to_string_lossy().to_string();
         let kind = LargeFileKind::from_name(&name);
-        files.push(LargeFile {
+        top.push(LargeFile {
             path: path_str.clone(),
             size_bytes: size,
             modified_secs: modified,
             level: risk_level(&path_str, &kind),
             kind,
         });
-        // 分批推送（每 50 个）
-        if files.len().is_multiple_of(50) {
-            let batch = files.split_off(files.len() - 50);
-            let _ = tx.send(DiskEvent::LargeFiles { files: batch });
-        }
-        if files.len() >= max_files {
-            break;
-        }
     }
 
+    // 全程收集完毕后一次性产出：计数、排序、返回值三方一致（见 TopLargest 文档）
+    let files = top.into_sorted_desc();
+    // 终值进度：节流会吞掉最后不足 200 的余量，Done 前强制补发精确遍历数，
+    // 保证前端「已扫描 N 个文件」不欠账
+    let _ = tx.send(DiskEvent::Progress {
+        scanned,
+        current: String::new(),
+    });
     if !files.is_empty() {
-        files.sort_by_key(|f| std::cmp::Reverse(f.size_bytes));
         let _ = tx.send(DiskEvent::LargeFiles {
             files: files.clone(),
         });
@@ -243,7 +339,9 @@ pub fn scan_large_files(
 
 /// 合并扫描：单次遍历同时产出大文件（≥min_bytes）与目录占用（父目录深度 ≤dir_depth，TASK-026）
 ///
-/// 事件流：`Progress`（节流）→ `LargeFiles`（分批）→ `DirUsage`（结束一次性）→ `Done`。
+/// 事件流：`Progress`（节流，`Done` 前补发精确终值）→ `LargeFiles`
+/// （结束一次性全量：按大小降序、至多 `max_files` 条，与函数返回值一致）
+/// → `DirUsage`（Top 100 降序）→ `Done`。
 /// 与旧双函数（`scan_large_files` + `scan_dir_usage`）行为等价，仅省一次全目录遍历。
 pub fn scan_user_dir(
     tx: Sender<DiskEvent>,
@@ -253,13 +351,17 @@ pub fn scan_user_dir(
     max_files: usize,
     dir_depth: usize,
 ) -> (Vec<LargeFile>, Vec<DirUsage>) {
-    let mut files: Vec<LargeFile> = Vec::new();
+    let mut top = TopLargest::new(max_files);
     let mut usage: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
     let mut scanned = 0u64;
     let mut last_sent = 0u64;
 
     let walker = jwalk::WalkDir::new(root)
         .follow_links(false)
+        // jwalk 默认跳过「名字以 . 开头」的条目（跨平台名字判定，非 Windows 属性），
+        // 会把 .rustup/.cargo/.bun 等大缓存目录整棵静默漏扫——数目失真根因之一。
+        // 显式关闭；SKIP_DIRS/SKIP_SYSTEM_FILES 已按名单精确排除。
+        .skip_hidden(false)
         .parallelism(crate::walk::walk_parallelism())
         .process_read_dir(|_depth, _path, _state, children| {
             let is_local_temp = _path
@@ -322,7 +424,8 @@ pub fn scan_user_dir(
             *c += 1;
         }
 
-        // ── 大文件收集（全深，阈值/风险分级/跳过逻辑不变）──
+        // ── 大文件收集（全深，Top-K 截断：保留最大的 max_files 个，不中断遍历，
+        //    保证进度计数与目录占用统计完整）──
         if size < min_bytes {
             continue;
         }
@@ -334,25 +437,24 @@ pub fn scan_user_dir(
             .unwrap_or(0);
         let path_str = entry.path().to_string_lossy().to_string();
         let kind = LargeFileKind::from_name(&name);
-        files.push(LargeFile {
+        top.push(LargeFile {
             path: path_str.clone(),
             size_bytes: size,
             modified_secs: modified,
             level: risk_level(&path_str, &kind),
             kind,
         });
-        // 分批推送（每 50 个）
-        if files.len().is_multiple_of(50) {
-            let batch = files.split_off(files.len() - 50);
-            let _ = tx.send(DiskEvent::LargeFiles { files: batch });
-        }
-        if files.len() >= max_files {
-            break;
-        }
     }
 
+    // 全程收集完毕后一次性产出：计数、排序、返回值三方一致（见 TopLargest 文档）
+    let files = top.into_sorted_desc();
+    // 终值进度：节流会吞掉最后不足 200 的余量，Done 前强制补发精确遍历数，
+    // 保证前端「已扫描 N 个文件」不欠账
+    let _ = tx.send(DiskEvent::Progress {
+        scanned,
+        current: String::new(),
+    });
     if !files.is_empty() {
-        files.sort_by_key(|f| std::cmp::Reverse(f.size_bytes));
         let _ = tx.send(DiskEvent::LargeFiles {
             files: files.clone(),
         });
@@ -374,7 +476,7 @@ pub fn scan_user_dir(
 
 /// 扫描目录占用：按目录聚合文件大小（限深度，只返回有文件的目录）
 ///
-/// 事件流：`Progress`（节流）→ `DirUsage`（Top 100，降序）→ `Done`。
+/// 事件流：`Progress`（节流，`Done` 前补发精确终值）→ `DirUsage`（Top 100，降序）→ `Done`。
 pub fn scan_dir_usage(
     tx: Sender<DiskEvent>,
     root: &Path,
@@ -388,6 +490,8 @@ pub fn scan_dir_usage(
     let walker = jwalk::WalkDir::new(root)
         .follow_links(false)
         .max_depth(max_depth)
+        // 同 scan_user_dir：关闭 jwalk 的点开头条目默认跳过，避免隐藏目录漏扫
+        .skip_hidden(false)
         .parallelism(crate::walk::walk_parallelism())
         .process_read_dir(|_depth, _path, _state, children| {
             children.retain(|e| {
@@ -433,6 +537,12 @@ pub fn scan_dir_usage(
         *s += size;
         *c += 1;
     }
+
+    // 终值进度：节流会吞掉最后不足 200 的余量，Done 前强制补发精确遍历数
+    let _ = tx.send(DiskEvent::Progress {
+        scanned,
+        current: String::new(),
+    });
 
     let mut dirs: Vec<DirUsage> = usage
         .into_iter()
@@ -653,6 +763,29 @@ mod tests {
         let cancel = AtomicBool::new(true); // 立即取消
         let files = scan_large_files(tx, dir.path(), 1024, &cancel, 100);
         assert!(files.is_empty(), "cancelled scan should return nothing");
+    }
+
+    #[test]
+    fn test_top_largest_zero_and_one_cap() {
+        let mk = |size: u64| LargeFile {
+            path: format!("{size}.bin"),
+            size_bytes: size,
+            modified_secs: 0,
+            level: LargeFileLevel::Safe,
+            kind: LargeFileKind::Other,
+        };
+        // cap=0：拒绝一切候选，无事件无结果
+        let mut top = TopLargest::new(0);
+        top.push(mk(1_000_000));
+        assert!(top.into_sorted_desc().is_empty());
+        // cap=1：最小堆边界，始终保留最大者
+        let mut top = TopLargest::new(1);
+        for size in [100u64, 300, 200] {
+            top.push(mk(size));
+        }
+        let files = top.into_sorted_desc();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].size_bytes, 300);
     }
 
     #[test]
