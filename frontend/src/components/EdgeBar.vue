@@ -45,14 +45,6 @@ const memBg = computed(() => {
 
 <template>
   <div class="edge-bar">
-    <!-- 网络状态点：贴边条与屏幕顶边连接处中央（水平居中，垂直压在分隔线上）；
-         bar 态 hover 500ms 即展开为胶囊，tooltip 不可达，故纯色指示、不拦截指针 -->
-    <NetDot
-      class="pointer-events-none absolute left-1/2 top-1/2 z-[3] -translate-x-1/2 -translate-y-1/2"
-      :status="netStatus ?? null"
-      :titled="false"
-      :size="5"
-    />
     <!-- CPU track（左半，向右填充；轨道底色与胶囊一致） -->
     <div class="track" :class="cpuBg">
       <div class="fill fill-cpu" :class="cpuTint" :style="cpuFill" />
@@ -61,7 +53,16 @@ const memBg = computed(() => {
         <span class="lbl">CPU</span>
       </div>
     </div>
-    <div class="sep" />
+    <!-- 中央网络状态竖向指示条（2026-08-26 用户反馈修订，替代原 1px 分隔线+中央圆点）：
+         通高兼作 CPU/MEM 分隔，左右浅边线即边界；文档流内 flex 子元素，
+         morph 随容器缩放天然连续。bar 态 hover 即展开为胶囊、tooltip 不可达，
+         故 titled=false 且不拦截指针 -->
+    <NetDot
+      variant="bar"
+      class="pointer-events-none h-full"
+      :status="netStatus ?? null"
+      :titled="false"
+    />
     <!-- MEM track（右半，向左填充） -->
     <div class="track" :class="memBg">
       <div class="fill fill-mem" :class="memTint" :style="memFill" />
@@ -113,12 +114,6 @@ const memBg = computed(() => {
 }
 .fill-mem {
   right: 0;
-}
-
-.sep {
-  width: 1px;
-  flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.12);
 }
 
 /* ─── 各自轨道内居中的数值（适配 10px 细条） ─── */

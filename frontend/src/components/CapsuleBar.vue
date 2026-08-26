@@ -54,16 +54,6 @@ const memBg = computed(() => {
     :class="{ 'capsule-hovered': isHovered }"
     @click="emit('click')"
   >
-    <!-- 网络状态点状指示器：胶囊中线垂直居中、水平居中（用户反馈修订，
-         原顶缘内侧定位废弃）；实心点无外发光（overflow:hidden 裁剪），
-         点击冒泡触发展开属预期 -->
-    <NetDot
-      class="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2"
-      :status="netStatus ?? null"
-      :latency-ms="netLatencyMs"
-      :size="6"
-    />
-
     <!-- CPU half -->
     <div class="relative flex flex-1 items-center justify-center h-full overflow-hidden rounded-l-full" :class="cpuBg">
       <div
@@ -76,8 +66,16 @@ const memBg = computed(() => {
       </span>
     </div>
 
-    <!-- Divider -->
-    <div class="h-5 w-px bg-white/10 shrink-0" />
+    <!-- 中央网络状态竖向指示条（2026-08-26 用户反馈修订，替代原中央圆点+1px 分隔线）：
+         兼作 CPU/MEM 分隔，左右浅边线即边界；20px 居中沿用旧分隔线高度；
+         文档流内 flex 子元素，morph 随容器缩放天然连续（无需绝对定位补丁）；
+         实心色芯无外发光（overflow:hidden 裁剪），点击冒泡触发展开属预期 -->
+    <NetDot
+      variant="bar"
+      class="h-5"
+      :status="netStatus ?? null"
+      :latency-ms="netLatencyMs"
+    />
 
     <!-- MEM half -->
     <div class="relative flex flex-1 items-center justify-center h-full overflow-hidden rounded-r-full" :class="memBg">

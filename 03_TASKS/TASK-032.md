@@ -21,7 +21,7 @@ pony_core 后台线程 → Snapshot → `get_processes` invoke → useMonitor �
 无需新增 command/event。
 
 ## Acceptance
-1. pill 中线垂直居中（2026-08-24 用户反馈修订，原「顶缘连接处中央」废弃）、bar 中央可见实心 NetDot；good/poor/offline/检测中四态视觉符合 SPEC §3；
+1. pill/bar 中央为竖向网络指示条（2026-08-26 用户反馈修订，替代中央圆点）：总宽 6px、左右浅边线兼作 CPU/MEM 分隔边界，pill 内 20px 居中 / bar 通高；good/poor/offline/检测中四态视觉符合 SPEC §3；
    bar 态无 tooltip、无外发光（设计裁定，overflow:hidden 裁剪规避）。
 2. MonitorPanel 头部第三行 NET 与 CPU/MEM 行同构；offline/未就绪速率显示 `—`；paused 淡化。
 3. 时延预算（deadline 制调度 + 三探针并行 + Offline 零滞回下核算）：

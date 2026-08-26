@@ -121,21 +121,24 @@ pub net_latency_ms: Option<u32>,
 - **新组件 `components/NetDot.vue`**：props `{ status, latencyMs?, size? }`。
   - 颜色映射沿用现状三族：`good→bg-green-600`、`poor→bg-amber-600`、
     `offline→bg-red-500`、`null→bg-white/25`（检测中）。
-  - **胶囊/贴边内：实心圆点，无外发光**（两层根容器均 `overflow:hidden`，box-shadow 必裁）；
+  - **胶囊/贴边内：无外发光**（两层根容器均 `overflow:hidden`，box-shadow 必裁）；
     面板 NET 行内允许柔和 glow（无裁剪上下文）。呼吸脉动动画仅在 poor/offline 态启用，
     且组件自带 `@media (prefers-reduced-motion: reduce)` 直接关动画（全局兜底不含
     iteration-count，不可依赖）。
-- **`CapsuleBar.vue`**：props 增 `netStatus/netLatencyMs`；pill 顶缘内侧水平居中渲染
-  （`top-[4px] left-1/2 -translate-x-1/2`，视觉位于胶囊与屏顶连接处中央）；
-  带 title、pointer-events 生效（点击冒泡触发展开属预期）。
-  **修订（2026-08-24，用户反馈）**：点位改为沿胶囊中线垂直居中
-  （`top-1/2` 双向 translate），与 bar 态点位语义统一；morph 时两层点位
-  映射到同一不动点 (83,5)/(83,22)，消除原顶缘定位的切换瞬移。
+  - **形态扩展（2026-08-26，用户反馈）**：`variant="bar"` 竖向指示条 —— 总宽 6px
+    （border-box 含左右各 1px 分隔线色浅边线 `rgba(255,255,255,0.10)`，色芯 4px）、
+    高度由父级 class 注入、微圆角；色芯用状态色 `@75%` 对齐进度填充强度，
+    检测中态 white/25 保证分隔永不消失；dot 形态保持原语义不变。
+- **`CapsuleBar.vue`**：props 增 `netStatus/netLatencyMs`。
+  初版：顶缘内侧定位 → **修订一（2026-08-24）**：中线垂直居中圆点 →
+  **修订二（2026-08-26，用户反馈，现行）**：中央圆点与 1px 分隔线一并替换为
+  `NetDot variant="bar"`（h-5 垂直居中，沿用旧分隔线高度），兼作 CPU/MEM 分隔；
+  文档流内 flex 子元素（无需绝对定位/z 层），morph 随容器缩放天然连续；
+  带 title、点击冒泡触发展开属预期。
 - **`EdgeBar.vue`**：props 同 `netStatus`（无 `netLatencyMs`——bar 态无 tooltip 场景，
-  延迟无处消费）；10px 条内垂直居中压在中央分隔线上
-  （`left-1/2 top-1/2` 双向 translate）；z 层高于分隔线与 `.track-label`(z-2)；
-  `pointer-events:none`、无 title（见 §3）。
-- **morph 瞬态**：非均匀 scale 会在 300ms 过渡内把圆点瞬态拉成椭圆，接受不补偿（过度工程）。
+  延迟无处消费）；原 `.sep` 分隔线与中央圆点替换为 `NetDot variant="bar"`
+  通高（h-full）兼作分隔；`pointer-events:none`、无 title（见 §3）。
+- **morph 瞬态**：非均匀 scale 会在 300ms 过渡内把竖条瞬态压扁，接受不补偿（过度工程）。
 - **`CapsuleWindow.vue`**：从 `useMonitor()` 取 computed 传给两个 Bar。
 - **`MonitorPanel.vue`**：CPU/MEM 行下方追加同构 NET 行（label 在上、数值在下、双列 gap-10）：
   左「↓ DOWN」右「↑ UP」；label 行内嵌 NetDot（带 title 与 glow）；
@@ -196,8 +199,8 @@ pub net_latency_ms: Option<u32>,
 
 ## 9. 验收标准
 
-1. 胶囊中线垂直居中（2026-08-24 用户反馈修订，原「顶缘连接处中央」废弃）、贴边条中央可见实心
-   点状指示器；morph 期间两层点位经 enter-from 变换映射到同一屏幕不动点，无瞬跳；
+1. 胶囊与贴边条中央为竖向网络指示条（2026-08-26 用户反馈修订，替代圆点）：总宽 6px、
+   左右浅边线兼作 CPU/MEM 分隔边界，胶囊内 20px 居中 / 贴边条通高；morph 无瞬跳；
    good/poor/offline/检测中四态颜色符合 §3 且与现有绿/黄/红三族一致；bar 态无 tooltip、无外发光（设计裁定）。
 2. 监控页头部 CPU/MEM 正下方出现 ↓/↑ 双列 NET 行，样式与 CPU/MEM 同构；
    offline/未就绪速率为 `—`；paused 淡化。
