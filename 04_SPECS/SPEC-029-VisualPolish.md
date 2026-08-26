@@ -123,6 +123,14 @@
 - island 收起 = scaleY→0.12 折叠向顶边 + 淡出（200ms easeIn），**动画完成后**才切物理高度；胶囊立即 show（z 高于下叠于其下方，折叠时逐段露出，视觉即「缩回胶囊」）
 - 按钮：新增 `soft`（一键清理）、`destructive-ghost`（清理所选/删除所选）、`ghost` hover 改 `bg-white/5`、`icon-sm` 尺寸；顶部扫描/取消改 ghost icon-only + aria-label
 
+### 残留修复（2026-08-24，用户反馈回访）
+用户报告：收起为贴边进度条后右端附近持续存在灰黑阴影状污迹（200% 缩放）。根因：形态切换
+缩小 Region 后，原 `RedrawWindow(RDW_FRAME)` 在「客户区吞掉整个窗口」（WM_NCCALCSIZE 返回 0）
+的窗口上无框架可重绘，DWM 不按新 Region 重投影 CS_DROPSHADOW，旧胶囊投影滞留。修复：
+`apply_capsule_region` / `apply_island_region` 改用 `SetWindowPos(SWP_FRAMECHANGED)`
+（`refresh_window_frame`，tao 样式刷新同路径），精确同步路径追加 24ms 延迟二次刷新兜底
+（`schedule_delayed_frame_refresh`）；失败日志 +1。CSS 阴影边距方案维持终版裁决不再重启。
+
 ### 关键修订（用户实测反馈后，2026-08-08 二次修订）
 用户实测面板透明、无毛玻璃、阴影不自然 → 修正两处：
 1. **毛玻璃回退 SWCA Acrylic**：此前按「区域化 DwmEnableBlurBehindWindow」实现，实测在透明 WebView2 窗口返回成功但不出毛玻璃。已恢复 `apply_acrylic_swca` 为首选；移除 `apply_island_blur`/`DWM_BLURBEHIND` 等死代码

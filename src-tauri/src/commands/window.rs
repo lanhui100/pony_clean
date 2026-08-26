@@ -48,6 +48,8 @@ unsafe extern "system" {
     fn MonitorFromPoint(pt: POINT, dwFlags: u32) -> isize;
     fn GetMonitorInfoW(hMonitor: isize, lpmi: *mut MONITORINFO) -> i32;
     fn GetSystemMetrics(nIndex: i32) -> i32;
+    // 延迟刷新线程的句柄有效性守卫
+    fn IsWindow(hWnd: isize) -> i32;
     // Hit-test functions
     fn ScreenToClient(hWnd: isize, lpPoint: *mut POINT) -> i32;
     fn GetClientRect(hWnd: isize, lpRect: *mut RECT) -> i32;
@@ -69,7 +71,6 @@ unsafe extern "system" {
         uFlags: u32,
     ) -> i32;
     fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
-    fn RedrawWindow(hWnd: isize, lprcUpdate: *const RECT, hrgnUpdate: isize, flags: u32) -> i32;
     // Acrylic (SWCA)
     fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
     fn GetProcAddress(hModule: isize, lpProcName: *const u8) -> *mut std::ffi::c_void;
@@ -467,7 +468,18 @@ unsafe fn apply_capsule_region(hwnd: isize, transitioning: bool) {
         if SetWindowRgn(hwnd, region, 1) == 0 {
             DeleteObject(region);
         }
-        redraw_window_frame(hwnd);
+        // 阴影残留修复（用户反馈：收起为贴边条后右侧灰黑污迹持续存在）：
+        // Region 缩小后必须强制 DWM 重投影 CS_DROPSHADOW。本窗口客户区吞掉
+        // 整个窗口矩形（WM_NCCALCSIZE 返回 0），非客户区面积为零，
+        // RedrawWindow(RDW_FRAME) 无框架可重绘、实测无法触发 DWM 更新；
+        // SWP_FRAMECHANGED 强制 WM_NCCALCSIZE 往返（tao 样式刷新同路径），
+        // DWM 据当前 Region 重建阴影，旧形态投影立即清除。
+        refresh_window_frame(hwnd);
+        // 兜底（reviewer P2-1）：仅精确 Region 同步路径补延迟二次刷新，
+        // morph 起点（transitioning=true）不刷两次，避免投影先胀后缩的闪烁。
+        if !transitioning {
+            schedule_delayed_frame_refresh(hwnd);
+        }
     }
 }
 
@@ -485,18 +497,45 @@ unsafe fn cursor_in_capsule_region(hwnd: isize, pt: POINT) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn redraw_window_frame(hwnd: isize) {
-    const RDW_FRAME: u32 = 0x0400;
-    const RDW_INVALIDATE: u32 = 0x0001;
-    const RDW_UPDATENOW: u32 = 0x0100;
-    unsafe {
-        RedrawWindow(
+unsafe fn refresh_window_frame(hwnd: isize) {
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+    let ok = unsafe {
+        SetWindowPos(
             hwnd,
-            std::ptr::null(),
             0,
-            RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW,
-        );
+            0,
+            0,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+    };
+    if ok == 0 {
+        // 失败时阴影残留会无声复现，留一行诊断便于远程定位（reviewer P3-1）
+        eprintln!("[PonyClean] refresh_window_frame: SetWindowPos(FRAMECHANGED) failed");
     }
+}
+
+/// 精确 Region 同步后的延迟二次框架刷新兜底。
+///
+/// 个别 Windows 版本上 `SWP_FRAMECHANGED` 后 DWM 投影重建需要一次额外的
+/// 框架事件才落地；此处 24ms 后幂等重放同一刷新（频率仅形态切换档位，
+/// 开销可忽略）。跨线程操作窗口过程与 `main.rs` 的 +800ms 延迟
+/// `strip_title_bar` 为同一先例，安全。
+#[cfg(target_os = "windows")]
+fn schedule_delayed_frame_refresh(hwnd: isize) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(24));
+        // 句柄失效/复用守卫（reviewer P3-1）：销毁后不再触碰
+        if unsafe { IsWindow(hwnd) } == 0 {
+            return;
+        }
+        unsafe { refresh_window_frame(hwnd) };
+    });
 }
 
 #[derive(Clone, Serialize)]
@@ -566,7 +605,9 @@ unsafe fn apply_island_region(hwnd: isize) {
     if region != 0 {
         unsafe {
             SetWindowRgn(hwnd, region, 1);
-            redraw_window_frame(hwnd);
+            // 同 apply_capsule_region：SWP_FRAMECHANGED 强制 DWM 按 Region
+            // 重投影阴影，避免概要态⇄展开态高度切换后残留旧投影。
+            refresh_window_frame(hwnd);
         }
     }
 }
@@ -919,6 +960,30 @@ pub fn set_capsule_geometry(
         let _ = (&app, &state, form, edge, transitioning);
     }
 
+    Ok(())
+}
+
+/// 强制指定窗口重算框架并让 DWM 按当前 Region 重投影阴影。
+///
+/// 用途：island 面板收起（hide）后，其方角 Region 的 CS_DROPSHADOW 投影
+/// 可能滞留屏幕（与胶囊贴边条残留同源：DWM 不会仅因窗口隐藏就重绘该
+/// 区域，除非有事件把旧覆盖范围标记为脏）。前端在 `island.hide()` 之后
+/// 调用本命令清除残影；立即刷新一次 + 24ms 延迟二次兜底。
+/// capsule 隐藏路径（island 展开完成时）同样调用，防同类滞留被面板遮蔽。
+#[tauri::command]
+pub fn refresh_window_shadow(app: AppHandle, label: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let hwnd = get_hwnd_for_label(&app, &label).ok_or("window not found")?;
+        unsafe {
+            refresh_window_frame(hwnd);
+        }
+        schedule_delayed_frame_refresh(hwnd);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (&app, &label);
+    }
     Ok(())
 }
 

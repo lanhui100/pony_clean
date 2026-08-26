@@ -251,6 +251,7 @@ fn main() {
             commands::window::start_edge_cursor_detect,
             commands::window::stop_edge_cursor_detect,
             commands::window::set_capsule_geometry,
+            commands::window::refresh_window_shadow,
             commands::window::get_monitor_work_area,
             commands::window::log_frontend,
             commands::config::get_config,

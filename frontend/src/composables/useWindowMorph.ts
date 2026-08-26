@@ -318,6 +318,12 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       islandState.value = 'visible'
       startIdleDetection()
       win.hide().catch(() => {})
+      // 胶囊隐藏后同样强制重投影（reviewer P2-1）：圆角 Region 投影
+      // 理论上会滞留在面板下方，被 island footprint 遮蔽故不可见，
+      // 统一覆盖以防面板移开后显形。
+      invoke('refresh_window_shadow', { label: 'capsule' }).catch((e) =>
+        console.warn('refresh_window_shadow failed:', e),
+      )
     }
   }
 
@@ -326,6 +332,12 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       const island = await getIslandWindow()
       if (island) {
         await island.hide().catch(() => {})
+        // 方角 Region 的 DWM 投影在窗口隐藏后可能滞留屏幕（用户反馈：
+        // 胶囊态出现长方形阴影残留）；隐藏后强制 DWM 重投影清除残影。
+        // 失败必须可见——本调用即残影修复载体，静默失败会被误判为机制无效
+        invoke('refresh_window_shadow', { label: 'island' }).catch((e) =>
+          console.warn('refresh_window_shadow failed:', e),
+        )
       }
       islandState.value = 'idle'
       stopIdleDetection()
