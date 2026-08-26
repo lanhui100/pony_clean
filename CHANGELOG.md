@@ -8,6 +8,10 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+## [0.4.1] - 2026-08-26
+
+<!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
+
 - Fixed: 贴边进度条右侧灰黑阴影残留 —— 形态切换缩小 Region 后 DWM 未按新轮廓重投影 CS_DROPSHADOW，旧胶囊形态投影持续滞留（高 DPI 屏尤其明显）；Region 应用后改用 `SetWindowPos(SWP_FRAMECHANGED)` 强制框架重算触发重投影（island 高度切换路径同步修复）
 - Fixed: 胶囊态长方形阴影残留 —— island 面板收起隐藏后其方角 Region 投影滞留屏幕；`island.hide()` 后新增 `refresh_window_shadow` 命令强制 DWM 重投影清除残影
 - Changed: 胶囊态网络状态点改为沿胶囊中线垂直居中（原顶缘内侧定位废弃），与贴边条形态的点位语义统一
