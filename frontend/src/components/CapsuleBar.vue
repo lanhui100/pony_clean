@@ -54,10 +54,11 @@ const memBg = computed(() => {
     :class="{ 'capsule-hovered': isHovered }"
     @click="emit('click')"
   >
-    <!-- 网络状态点：胶囊与屏幕顶边连接处中央（顶缘内侧水平居中）；
-         实心点无外发光（overflow:hidden 裁剪），点击冒泡触发展开属预期 -->
+    <!-- 网络状态点状指示器：胶囊中线垂直居中、水平居中（用户反馈修订，
+         原顶缘内侧定位废弃）；实心点无外发光（overflow:hidden 裁剪），
+         点击冒泡触发展开属预期 -->
     <NetDot
-      class="absolute left-1/2 top-[4px] z-20 -translate-x-1/2"
+      class="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2"
       :status="netStatus ?? null"
       :latency-ms="netLatencyMs"
       :size="6"

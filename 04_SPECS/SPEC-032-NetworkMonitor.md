@@ -128,6 +128,9 @@ pub net_latency_ms: Option<u32>,
 - **`CapsuleBar.vue`**：props 增 `netStatus/netLatencyMs`；pill 顶缘内侧水平居中渲染
   （`top-[4px] left-1/2 -translate-x-1/2`，视觉位于胶囊与屏顶连接处中央）；
   带 title、pointer-events 生效（点击冒泡触发展开属预期）。
+  **修订（2026-08-24，用户反馈）**：点位改为沿胶囊中线垂直居中
+  （`top-1/2` 双向 translate），与 bar 态点位语义统一；morph 时两层点位
+  映射到同一不动点 (83,5)/(83,22)，消除原顶缘定位的切换瞬移。
 - **`EdgeBar.vue`**：props 同 `netStatus`（无 `netLatencyMs`——bar 态无 tooltip 场景，
   延迟无处消费）；10px 条内垂直居中压在中央分隔线上
   （`left-1/2 top-1/2` 双向 translate）；z 层高于分隔线与 `.track-label`(z-2)；
@@ -193,8 +196,9 @@ pub net_latency_ms: Option<u32>,
 
 ## 9. 验收标准
 
-1. 胶囊顶缘连接处中央、贴边条中央可见实心点状指示器；good/poor/offline/检测中四态颜色符合
-   §3 且与现有绿/黄/红三族一致；bar 态无 tooltip、无外发光（设计裁定）。
+1. 胶囊中线垂直居中（2026-08-24 用户反馈修订，原「顶缘连接处中央」废弃）、贴边条中央可见实心
+   点状指示器；morph 期间两层点位经 enter-from 变换映射到同一屏幕不动点，无瞬跳；
+   good/poor/offline/检测中四态颜色符合 §3 且与现有绿/黄/红三族一致；bar 态无 tooltip、无外发光（设计裁定）。
 2. 监控页头部 CPU/MEM 正下方出现 ↓/↑ 双列 NET 行，样式与 CPU/MEM 同构；
    offline/未就绪速率为 `—`；paused 淡化。
 3. **时延预算（deadline 制 + 并行探测 + Offline 零滞回下核算）**：
