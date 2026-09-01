@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# ponygo 中继层（10秒级）：clippy + 核心库单测
+set -e
+cargo clippy -- -D warnings
+cargo test -p pony_core --lib

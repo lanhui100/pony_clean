@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# ponygo 本地层（秒级）：格式 + 空白/冲突标记
+set -e
+cargo fmt --check
+git diff --cached --check
