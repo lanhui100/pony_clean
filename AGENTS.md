@@ -19,6 +19,9 @@ Windows 极简桌面小组件：进程监控报警 + C盘安全分析清理。Ru
 - 公开函数和类型必须有 `///` doc 注释
 - 后台任务与 UI 通过 Tauri invoke + events 通信，UI 永不阻塞
 - CPU 密集型操作使用 `tokio::task::spawn_blocking`
+- **本地钩子（P7 门禁分层）**：新 clone 后执行 `git config core.hooksPath .githooks` ——
+  hooksPath 是本地配置不入版本库，秒级 pre-commit（fmt/空白）+ 10秒级 pre-push（clippy/核心单测）
+  随 commit/push 自动触发，CI 跑分钟级全仓矩阵（详见 `.agents/notes/implemented/process/2026-09-01-add-layered-gates.md`）
 
 ## 快速命令
 
