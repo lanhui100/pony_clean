@@ -40,3 +40,14 @@ jobs:
         name: 版本一致性（三处清单 + Cargo.lock 成员条目）
       - run: node --test "scripts/*.test.mjs"
         name: 版本工具契约测试
+
+  # 门被门检验（P2）：决策格式门 + 负样本 spec 入 CI——本地 pre-commit 守提交时，
+  # CI 守"门禁本身没失效"（负样本必须持续被拒）。不依赖 Rust 工具链，独立快速。
+  governance-gates:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 决策格式门（正样本：现有 notes 全过）
+        run: bash .meta/gates/notes-format.sh
+      - name: 决策格式门负样本 spec（非法样本必须被拒）
+        run: bash .meta/gates/notes-format.spec.sh
