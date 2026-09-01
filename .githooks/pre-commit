@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ponygo 本地层（秒级）：格式 + 空白/冲突标记
+# ponygo 本地层（秒级）：格式 + 空白/冲突标记 + 决策记录格式门
 set -e
 cargo fmt --check
 git diff --cached --check
+bash .meta/gates/notes-format.sh
