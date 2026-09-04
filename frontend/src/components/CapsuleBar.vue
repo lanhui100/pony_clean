@@ -10,6 +10,9 @@ const props = defineProps<{
   /** 公网连通质量（null = 检测中） */
   netStatus?: NetQuality | null
   netLatencyMs?: number | null
+  /** 下行/上行速率 B/s（null = 未知；驱动发丝线长度/明暗与 tooltip） */
+  netDownBps?: number | null
+  netUpBps?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -66,15 +69,17 @@ const memBg = computed(() => {
       </span>
     </div>
 
-    <!-- 中央网络状态竖向指示条（2026-08-26 用户反馈修订，替代原中央圆点+1px 分隔线）：
-         兼作 CPU/MEM 分隔，左右浅边线即边界；20px 居中沿用旧分隔线高度；
-         文档流内 flex 子元素，morph 随容器缩放天然连续（无需绝对定位补丁）；
-         实心色芯无外发光（overflow:hidden 裁剪），点击冒泡触发展开属预期 -->
+    <!-- 中央网络状态发丝分隔线（2026-09-04 修订，替代 6px 柱状；修订二：3px 宽，
+         长度/明暗随实时流量动态变化）：
+         「状态即分隔线」：3px 线本身用状态色着色，兼作 CPU/MEM 分隔；
+         文档流内 flex 子元素，morph 随容器缩放天然连续；
+         点击冒泡触发展开属预期 -->
     <NetDot
-      variant="bar"
-      class="h-5"
+      variant="hairline"
       :status="netStatus ?? null"
       :latency-ms="netLatencyMs"
+      :down-bps="netDownBps ?? null"
+      :up-bps="netUpBps ?? null"
     />
 
     <!-- MEM half -->

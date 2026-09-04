@@ -129,15 +129,28 @@ pub net_latency_ms: Option<u32>,
     （border-box 含左右各 1px 分隔线色浅边线 `rgba(255,255,255,0.10)`，色芯 4px）、
     高度由父级 class 注入、微圆角；色芯用状态色 `@75%` 对齐进度填充强度，
     检测中态 white/25 保证分隔永不消失；dot 形态保持原语义不变。
+  - **修订三（2026-09-04，用户反馈：6px 柱状视觉过重）**：`variant="bar"` 删除，
+    由 `variant="hairline"` 取代 —— 「状态即分隔线」：发丝线本身用状态色着色
+    （线宽细，改用 500 系提亮：good→green-500/80、poor→amber-500/85、
+    offline→red-500/85，检测中 white/20），兼作 CPU/MEM 分隔边界，
+    颜色语义与 tooltip 文案不变。
+  - **修订四（2026-09-04，用户反馈：2px 太细、希望随速率动态变化）**：
+    线宽 3px；长度按总速率对数映射动态伸缩（40%→80% 高度，1MB/s 封顶，
+    CSS 0.7s 过渡），颜色保持质量色系、仅不透明度随活跃度变化；
+    tooltip 在线时追加 ↓/↑ 速率（与面板 NET 行同口径，offline 不混显）；
+    数据流 `CapsuleWindow → Bar → NetDot` 新增 `downBps/upBps` 透传。
 - **`CapsuleBar.vue`**：props 增 `netStatus/netLatencyMs`。
   初版：顶缘内侧定位 → **修订一（2026-08-24）**：中线垂直居中圆点 →
-  **修订二（2026-08-26，用户反馈，现行）**：中央圆点与 1px 分隔线一并替换为
+  **修订二（2026-08-26，用户反馈）**：中央圆点与 1px 分隔线一并替换为
   `NetDot variant="bar"`（h-5 垂直居中，沿用旧分隔线高度），兼作 CPU/MEM 分隔；
   文档流内 flex 子元素（无需绝对定位/z 层），morph 随容器缩放天然连续；
-  带 title、点击冒泡触发展开属预期。
-- **`EdgeBar.vue`**：props 同 `netStatus`（无 `netLatencyMs`——bar 态无 tooltip 场景，
-  延迟无处消费）；原 `.sep` 分隔线与中央圆点替换为 `NetDot variant="bar"`
-  通高（h-full）兼作分隔；`pointer-events:none`、无 title（见 §3）。
+  带 title、点击冒泡触发展开属预期 →
+  **修订三（2026-09-04，用户反馈）**：柱状过重，还原为发丝分隔线
+  `NetDot variant="hairline"`（状态色即分隔线色），其余不变 →
+  **修订四（2026-09-04，用户反馈）**：3px 宽、长度/明暗随速率动态变化。
+- **`EdgeBar.vue`**：props 同 `netStatus`（无 `netLatencyMs`——贴边条态无 tooltip 场景，
+  延迟无处消费）；原 `.sep` 分隔线与中央圆点替换为 `NetDot variant="hairline"`
+  兼作分隔；`pointer-events:none`、无 title（见 §3）。
 - **morph 瞬态**：非均匀 scale 会在 300ms 过渡内把竖条瞬态压扁，接受不补偿（过度工程）。
 - **`CapsuleWindow.vue`**：从 `useMonitor()` 取 computed 传给两个 Bar。
 - **`MonitorPanel.vue`**：CPU/MEM 行下方追加同构 NET 行（label 在上、数值在下、双列 gap-10）：

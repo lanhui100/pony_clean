@@ -12,7 +12,7 @@ const isScanning = ref(false)
 let unlistenScanState: UnlistenFn | null = null
 let unlistenResetPos: UnlistenFn | null = null
 let unlistenCollapseRequest: UnlistenFn | null = null
-const { cpuPercent, memPercent, netQuality, netLatencyMs, setPollInterval } = useMonitor()
+const { cpuPercent, memPercent, netQuality, netLatencyMs, netDownBps, netUpBps, setPollInterval } = useMonitor()
 const {
   islandState,
   capsuleHovered,
@@ -184,6 +184,8 @@ function onIslandFadeComplete() {
             :is-hovered="capsuleHovered"
             :net-status="netQuality"
             :net-latency-ms="netLatencyMs"
+            :net-down-bps="netDownBps"
+            :net-up-bps="netUpBps"
           />
         </div>
       </Transition>
@@ -202,6 +204,8 @@ function onIslandFadeComplete() {
             :cpu-percent="cpuPercent"
             :mem-percent="memPercent"
             :net-status="netQuality"
+            :net-down-bps="netDownBps"
+            :net-up-bps="netUpBps"
           />
         </div>
       </Transition>

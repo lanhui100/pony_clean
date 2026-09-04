@@ -8,6 +8,9 @@ const props = defineProps<{
   memPercent: number
   /** 公网连通质量（null = 检测中） */
   netStatus?: NetQuality | null
+  /** 下行/上行速率 B/s（null = 未知；驱动发丝线长度/明暗） */
+  netDownBps?: number | null
+  netUpBps?: number | null
 }>()
 
 const cpuFill = computed(() => ({ width: `${Math.min(props.cpuPercent, 100)}%` }))
@@ -53,14 +56,17 @@ const memBg = computed(() => {
         <span class="lbl">CPU</span>
       </div>
     </div>
-    <!-- 中央网络状态竖向指示条（2026-08-26 用户反馈修订，替代原 1px 分隔线+中央圆点）：
-         通高兼作 CPU/MEM 分隔，左右浅边线即边界；文档流内 flex 子元素，
-         morph 随容器缩放天然连续。bar 态 hover 即展开为胶囊、tooltip 不可达，
-         故 titled=false 且不拦截指针 -->
+    <!-- 中央网络状态发丝分隔线（2026-09-04 修订，替代 6px 柱状；修订二：3px 宽，
+         长度/明暗随实时流量动态变化）：
+         「状态即分隔线」：3px 线本身用状态色着色，兼作 CPU/MEM 分隔；
+         文档流内 flex 子元素，morph 随容器缩放天然连续。
+         贴边条态 hover 即展开为胶囊、tooltip 不可达，故 titled=false 且不拦截指针 -->
     <NetDot
-      variant="bar"
-      class="pointer-events-none h-full"
+      variant="hairline"
+      class="pointer-events-none"
       :status="netStatus ?? null"
+      :down-bps="netDownBps ?? null"
+      :up-bps="netUpBps ?? null"
       :titled="false"
     />
     <!-- MEM track（右半，向左填充） -->

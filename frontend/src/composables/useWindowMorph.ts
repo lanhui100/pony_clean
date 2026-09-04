@@ -207,6 +207,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     }
     form.value = 'pill'
     lastMorphAt = Date.now()
+    window.__ponyLog?.('info', '[PonyClean] capsule expanded to pill')
     // 立即应用过渡并集 Region，morph 结束后由延迟同步切为 pill 精确 Region
     syncGeometryToBackend(true)
     scheduleGeometrySync()
@@ -218,6 +219,7 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     if (isDragging.value || scanning.value || capsuleHovered.value) return
     form.value = 'bar'
     lastMorphAt = Date.now()
+    window.__ponyLog?.('info', '[PonyClean] capsule collapsed to bar')
     // 立即应用过渡并集 Region，morph 结束后由延迟同步切为 bar 精确 Region
     syncGeometryToBackend(true)
     scheduleGeometrySync()
@@ -272,6 +274,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     }
     const island = await getIslandWindow()
     if (!island) return
+    // 光标此刻在胶囊上（点击即入口），展开后胶囊隐藏、收不到 mouseleave：
+    // 此处主动复位，否则 capsuleHovered stuck true 永久阻塞自动收缩
+    capsuleHovered.value = false
     if (form.value === 'bar') await expandToPill()
     // 先切到展开尺寸，再定位，避免展开后底部跑偏
     try {
@@ -302,6 +307,9 @@ export function useWindowMorph(scanning: Ref<boolean>) {
     //（Reviewer A/B 认为硬编码 140ms 与 island 0.22s easeIn 无同步锚点易竞态）。
     win.show().catch(() => {})
     islandState.value = 'leaving'
+    // 刚重现的胶囊不预设 hover（窗口显隐不派发 mouseenter/mouseleave，
+    // 由后续真实 mouseenter 纠正），否则收缩计时器起算即被阻塞
+    capsuleHovered.value = false
     emitTo('island', 'island-leave').catch(() => {})
     // 加固（P2-1）：onLeaveDone 依赖 motion-v 的 complete 回调；在 entering 极早期点击
     // （胶囊淡出层目标态与当前态几乎无差）可能不派发 complete，leaving 会卡住。
@@ -318,6 +326,8 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       islandState.value = 'visible'
       startIdleDetection()
       win.hide().catch(() => {})
+      // 胶囊隐藏后收不到 mouseleave：复位 hover，否则 stuck true 阻塞自动收缩
+      capsuleHovered.value = false
       // 胶囊隐藏后同样强制重投影（reviewer P2-1）：圆角 Region 投影
       // 理论上会滞留在面板下方，被 island footprint 遮蔽故不可见，
       // 统一覆盖以防面板移开后显形。
@@ -341,6 +351,11 @@ export function useWindowMorph(scanning: Ref<boolean>) {
       }
       islandState.value = 'idle'
       stopIdleDetection()
+      // island 隐藏时光标若仍在其范围内，island-pointer-leave 永不派发；
+      // 胶囊重现也不派发 mouseenter。两者 stuck 都会让收缩计时无限重排，
+      // 故在收起完成点从干净状态起算（后续真实 mouseenter 会重新置位）。
+      isInsideIsland.value = false
+      capsuleHovered.value = false
       resetBarTimer()
       if (pendingShowAfterLeave) {
         pendingShowAfterLeave = false
@@ -608,7 +623,10 @@ export function useWindowMorph(scanning: Ref<boolean>) {
   function onBlur() {
     isInsideIsland.value = false
     capsuleHovered.value = false
-    resetBarTimer()
+    // 失焦时若正处胶囊拖动（如 alt-tab 导致 mouseup 丢失），复用已注册的
+    // mouseup 收尾做一次等价清理，防 isDragging stuck 附带阻塞收缩
+    if (isDragging.value && onUpRef) onUpRef()
+    else resetBarTimer()
   }
 
   /** ─── 生命周期 ─── */
