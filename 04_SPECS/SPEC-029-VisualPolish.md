@@ -131,6 +131,22 @@
 （`refresh_window_frame`，tao 样式刷新同路径），精确同步路径追加 24ms 延迟二次刷新兜底
 （`schedule_delayed_frame_refresh`）；失败日志 +1。CSS 阴影边距方案维持终版裁决不再重启。
 
+### 分形态阴影策略（2026-09-04，用户反馈：贴边条阴影未适配；2026-09-06 修订为方向化，SPEC-036）
+用户报告：收缩为贴边进度条后，细条下沿/两侧的 DWM 投影呈污迹状（这次不是
+旧形态残留，而是活的投影形状就不对——细条应与屏幕边缘齐平贴住）。
+修复：`enable_native_shadow` 改为 `set_native_shadow(hwnd, enable)` 开关；
+`apply_capsule_region` 内影子跟随目标形态（`CapsuleForm::wants_shadow`：pill 开 / bar 关，
+与过渡标志解耦）——收起（form=bar）过渡起点即关（并集 Region 轮廓与 CSS morph
+中间帧的错位投影全程不可见），展开（form=pill）过渡期保持开（island 进入动画与
+拖动 lift 暗示依赖过渡期有影；单 class 位无法同时满足 capsule-OFF/island-ON），
+样式变化由随后的 `refresh_window_frame` 一次生效。
+共享类安全：tao 多窗共享同一窗口类，但关闭只发生在目标 form=bar 的调用，
+而收起过渡仅在 island 隐藏时可达（前端 `collapseToBar` 守卫 `islandState==='idle'`）；
+`set_island_expanded` 显式开影（island 可见时 capsule 必隐藏，无冲突）；
+每个 island 展开路径的影子值皆为 ON（详见决策记录
+`2026-09-04-bar-state-disables-native-shadow`、`2026-09-06-capsule-morph-shadow-by-form`）。
+collapse 收尾（morph 结束 +50ms）阴影消失一跳是“落定”语义，原生阴影无法渐隐，接受。
+
 ### 关键修订（用户实测反馈后，2026-08-08 二次修订）
 用户实测面板透明、无毛玻璃、阴影不自然 → 修正两处：
 1. **毛玻璃回退 SWCA Acrylic**：此前按「区域化 DwmEnableBlurBehindWindow」实现，实测在透明 WebView2 窗口返回成功但不出毛玻璃。已恢复 `apply_acrylic_swca` 为首选；移除 `apply_island_blur`/`DWM_BLURBEHIND` 等死代码

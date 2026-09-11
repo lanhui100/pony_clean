@@ -253,6 +253,16 @@ pub enum CapsuleForm {
     Bar,
 }
 
+impl CapsuleForm {
+    /// 该形态是否需要原生 DWM 阴影（SPEC-036 方向化决策的机器可查承诺）。
+    ///
+    /// 无 `#[cfg(windows)]` 门控：纯决策逻辑，全平台可单测；一行 revert
+    /// 改回过渡语义会被 `wants_shadow_follows_form` 单测拦下。
+    pub fn wants_shadow(self) -> bool {
+        self == CapsuleForm::Pill
+    }
+}
+
 /// 屏幕边缘
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ScreenEdge {
@@ -424,6 +434,13 @@ unsafe fn capsule_form_region(hwnd: isize, geo: CapsuleGeometry) -> Option<isize
 /// 同步切到目标形态的精确 Region。
 ///
 /// 不加阴影外扩：阴影由原生 DWM（CS_DROPSHADOW）按本 Region 形状投影。
+/// 方向化阴影策略（SPEC-036；前身为 SPEC-029 分形态策略的“过渡并集期保留投影”）：
+/// 影子跟随目标形态（pill 开 / bar 关），与过渡标志解耦——收起（form=bar）起点即关，
+/// 并集 Region 轮廓与 CSS morph 中间帧的错位投影全程不可见；展开（form=pill）
+/// 过渡期保持开（island 进入动画与拖动 lift 暗示依赖过渡期有影；单 class 位无法
+/// 同时满足 capsule-OFF/island-ON，见 set_native_shadow 文档）。
+/// 开关经 set_native_shadow（共享类安全见其文档），样式变化由随后的
+/// refresh_window_frame（SWP_FRAMECHANGED）一次生效。
 /// 注意：SetWindowRgn 成功后 region 归系统所有，不得 DeleteObject。
 #[cfg(target_os = "windows")]
 unsafe fn apply_capsule_region(hwnd: isize, transitioning: bool) {
@@ -465,9 +482,19 @@ unsafe fn apply_capsule_region(hwnd: isize, transitioning: bool) {
     unsafe {
         // 成功后 region 归系统所有，不得删除；失败时所有权仍在调用方，
         // 必须释放，否则每次失败调用泄漏一个 GDI Region（reviewer P3-1）。
+        // 失败后直接返回：旧 Region 配新阴影会撕裂（SPEC-036 变更 2），
+        // 保持旧 Region + 旧阴影一致优于半更新。
         if SetWindowRgn(hwnd, region, 1) == 0 {
             DeleteObject(region);
+            eprintln!("[PonyClean] SetWindowRgn failed, keeping previous region+shadow");
+            return;
         }
+        // 方向化阴影（SPEC-036）：影子跟随目标形态，与 transitioning 解耦。
+        // geo 来自调用方已更新的窗口属性（set_capsule_geometry 先写属性后调本函数，
+        // 初始化路径同样先置 pill 属性）。过渡调用的影子值恒等于其目标形态的精确值，
+        // 故相对紧随其后的精确同步永远无跳变（幂等）；island 进入/拖动等 pill 路径全程 ON。
+        let want_shadow = geo.form.wants_shadow();
+        set_native_shadow(hwnd, want_shadow);
         // 阴影残留修复（用户反馈：收起为贴边条后右侧灰黑污迹持续存在）：
         // Region 缩小后必须强制 DWM 重投影 CS_DROPSHADOW。本窗口客户区吞掉
         // 整个窗口矩形（WM_NCCALCSIZE 返回 0），非客户区面积为零，
@@ -604,7 +631,13 @@ unsafe fn apply_island_region(hwnd: isize) {
     let region = unsafe { CreateRoundRectRgn(0, 0, phys_w, phys_h, 0, 0) };
     if region != 0 {
         unsafe {
-            SetWindowRgn(hwnd, region, 1);
+            // 失败时 region 所有权仍在调用方：释放 + 返回，与 apply_capsule_region
+            // 对称（SPEC-036 A-P3-1），避免旧 Region 配新阴影撕裂。
+            if SetWindowRgn(hwnd, region, 1) == 0 {
+                DeleteObject(region);
+                eprintln!("[PonyClean] SetWindowRgn failed for island, keeping previous region");
+                return;
+            }
             // 同 apply_capsule_region：SWP_FRAMECHANGED 强制 DWM 按 Region
             // 重投影阴影，避免概要态⇄展开态高度切换后残留旧投影。
             refresh_window_frame(hwnd);
@@ -691,19 +724,40 @@ unsafe extern "system" fn hit_test_subclass(
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
-/// 启用原生 Windows 阴影（CS_DROPSHADOW 类样式）。
+/// 设置原生 Windows 阴影（CS_DROPSHADOW 类样式）开/关（幂等，变化时记日志）。
 ///
 /// 面板即窗口，无 CSS 阴影边距；阴影由 DWM 按窗口 Region 形状（圆角面板 /
 /// 胶囊 / 进度条各自形状）投影。CS_DROPSHADOW 是经典 popup+region 方案。
+///
+/// 注意（共享类安全）：tao 默认所有窗口共享同一窗口类（"Window Class"，
+/// tauri-runtime-wry 未覆写 window_classname），此类样式是进程级共享的——
+/// 为胶囊 bar 态关闭阴影的同时也会关掉 island 的。方向化决策（SPEC-036）下：
+/// 关闭发生在目标 form=bar 的调用（收起过渡起点 + 精确 bar 同步），而收起过渡
+/// 仅在 island 隐藏时可达（前端 collapseToBar 守卫 islandState==='idle'）；
+/// 每个 island 展开路径的影子值皆为 ON（bar 态先走 expandToPill 的过渡并集
+/// form=pill，或 pill 态本就 ON），过渡调用相对精确同步永远无跳变；
+/// hideIsland 的 ~220ms 双窗重叠期形态仍是 pill（ON）。故共享类无冲突，
+/// 恢复条件：若将来出现双窗同屏常驻且阴影需求相异，需改用他法（见决策记录）。
+///
+/// 类样式变化后需 SWP_FRAMECHANGED 才能生效，由调用方 refresh_window_frame 覆盖。
 #[cfg(target_os = "windows")]
-unsafe fn enable_native_shadow(hwnd: isize) {
+unsafe fn set_native_shadow(hwnd: isize, enable: bool) {
     const GCLP_STYLE: i32 = -26;
     const CS_DROPSHADOW: isize = 0x0002_0000;
     let style = unsafe { GetClassLongPtrW(hwnd, GCLP_STYLE) };
-    if (style & CS_DROPSHADOW) == 0 {
+    let new_style = if enable {
+        style | CS_DROPSHADOW
+    } else {
+        style & !CS_DROPSHADOW
+    };
+    if new_style != style {
         unsafe {
-            SetClassLongPtrW(hwnd, GCLP_STYLE, style | CS_DROPSHADOW);
+            SetClassLongPtrW(hwnd, GCLP_STYLE, new_style);
         }
+        eprintln!(
+            "[PonyClean] native shadow {}",
+            if enable { "enabled" } else { "disabled" }
+        );
     }
 }
 
@@ -743,7 +797,7 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
             }
 
-            enable_native_shadow(hwnd);
+            set_native_shadow(hwnd, true);
             apply_capsule_region(hwnd, false);
             eprintln!("[PonyClean] Prepared floating window: capsule");
         }
@@ -777,7 +831,7 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
             }
 
-            enable_native_shadow(hwnd);
+            set_native_shadow(hwnd, true);
             apply_island_region(hwnd);
             eprintln!("[PonyClean] Prepared floating window: {label}");
         }
@@ -894,6 +948,9 @@ pub fn install_hit_test_subclass(_app: &AppHandle) -> Result<(), String> {
 /// `transitioning=true`：pill⇄bar morph 动画开始时由前端立即调用，应用两形态
 /// Region 的并集（中间帧不被旧轮廓裁剪）；动画结束后前端再次调用（省略该参数）
 /// 切换为目标形态的精确 Region。
+///
+/// 影子不依赖 `transitioning`（SPEC-036 方向化：`CapsuleForm::wants_shadow` 只看
+/// `form`），过渡/精确调用错序时影子恒收敛于所应用 Region 的形态。
 #[tauri::command]
 pub fn set_capsule_geometry(
     app: AppHandle,
@@ -1093,8 +1150,14 @@ pub fn set_island_expanded(app: AppHandle, expanded: bool) -> Result<(), String>
         // 圆角 Region + 原生阴影：窗口 resize 后客户端矩形可能尚未稳定，
         // 立即应用一次，并延迟 40ms 重算兜底（与胶囊 set_capsule_geometry 同策略）。
         // 毛玻璃为窗口级 SWCA Acrylic（apply_island_vibrancy），无需随尺寸重设。
+        // 显式开影（SPEC-036 A-P2-1）：island 有影此前依赖 capsule 侧调用把共享
+        // class 位留在 ON；bar 态进入时 capsule 的过渡 invoke 是 fire-and-forget，
+        // 若 ON 落地晚于 island 首绘则 island 无影且无纠正。island 可见时 capsule
+        // 必隐藏（pill），显式 ON 无共享类冲突；apply_island_region 内的
+        // refresh_window_frame 让样式一次生效。
         if let Some(hwnd) = get_hwnd_for_label(&app, "island") {
             unsafe {
+                set_native_shadow(hwnd, true);
                 apply_island_region(hwnd);
             }
         }
@@ -1307,4 +1370,17 @@ fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
             mon_bottom: 0,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SPEC-036 方向化决策的机器可查承诺：影子跟随目标形态，
+    /// 收起（bar）关、胶囊（pill）开；改回过渡语义会被本测试拦下。
+    #[test]
+    fn wants_shadow_follows_form() {
+        assert!(CapsuleForm::Pill.wants_shadow());
+        assert!(!CapsuleForm::Bar.wants_shadow());
+    }
 }
