@@ -8,6 +8,10 @@
 
 <!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
 
+## [0.5.1] - 2026-09-11
+
+<!-- 合并新变更后在此按类型追加条目：- Added: / - Changed: / - Fixed: / - Removed: / - Security:（中文描述） -->
+
 - Fixed: 贴边进度条态阴影未适配 —— DWM 按细条 Region 投出的下沿/侧边投影呈污迹状；方向化阴影策略：影子跟随目标形态（pill 开 / bar 关），收起过渡起点即关、展开过渡保持开（island 进入/拖动 lift 暗示依赖过渡期有影），`set_island_expanded` 显式开影（类样式多窗共享的安全论证见决策记录）
 - Fixed: 胶囊缩放到贴边进度条时阴影不贴合 —— morph 过渡期曾用 pill∪bar 并集 Region 投影（阶梯轮廓）而 CSS 为单圆角矩形连续插值，中间帧恒错位；收起起点即关影（过渡期影子=目标形态），展开/island/拖动路径零回归；附带 `SetWindowRgn` 失败分支补 early-return（旧 Region 配新阴影撕裂）
 
