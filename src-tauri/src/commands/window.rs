@@ -254,12 +254,12 @@ pub enum CapsuleForm {
 }
 
 impl CapsuleForm {
-    /// 该形态是否需要原生 DWM 阴影（SPEC-036 方向化决策的机器可查承诺）。
+    /// 胶囊窗口是否需要原生 DWM 阴影（CS_DROPSHADOW）。
     ///
-    /// 无 `#[cfg(windows)]` 门控：纯决策逻辑，全平台可单测；一行 revert
-    /// 改回过渡语义会被 `wants_shadow_follows_form` 单测拦下。
+    /// 方案 A（彻底移除原生阴影）：Pill 与 Bar 均不启用原生 DWM 阴影。
+    /// 避免 GDI 阶梯 Region 投影导致的粗糙黑边、锯齿发脏以及形态切换残影。
     pub fn wants_shadow(self) -> bool {
-        self == CapsuleForm::Pill
+        false
     }
 }
 
@@ -797,7 +797,8 @@ pub fn install_hit_test_subclass(app: &AppHandle) -> Result<(), String> {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
             }
 
-            set_native_shadow(hwnd, true);
+            // 胶囊窗口默认不开启原生阴影（方案 A：无阴影极简贴合）
+            set_native_shadow(hwnd, false);
             apply_capsule_region(hwnd, false);
             eprintln!("[PonyClean] Prepared floating window: capsule");
         }
@@ -1376,11 +1377,11 @@ fn is_cursor_at_edge() -> (bool, EdgeCursorPayload) {
 mod tests {
     use super::*;
 
-    /// SPEC-036 方向化决策的机器可查承诺：影子跟随目标形态，
-    /// 收起（bar）关、胶囊（pill）开；改回过渡语义会被本测试拦下。
+    /// 方案 A 机器可查承诺：Pill 与 Bar 均不启用原生 DWM 阴影，
+    /// 彻底消除 GDI 阶梯区域导致的粗糙毛刺和残影问题。
     #[test]
     fn wants_shadow_follows_form() {
-        assert!(CapsuleForm::Pill.wants_shadow());
+        assert!(!CapsuleForm::Pill.wants_shadow());
         assert!(!CapsuleForm::Bar.wants_shadow());
     }
 }

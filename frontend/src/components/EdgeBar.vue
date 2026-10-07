@@ -93,8 +93,7 @@ const memBg = computed(() => {
      圆角随父层 morph 过渡（--shape 由 CapsuleWindow 注入；缺省即本形状）。 */
   border-radius: var(--shape, 0 0 9999px 9999px);
   transition: border-radius 300ms cubic-bezier(0.22, 1, 0.36, 1);
-  /* 底色与胶囊（CapsuleBar）保持一致，避免缩放时底色跳变；
-     顶部内高光；外阴影由原生 DWM（CS_DROPSHADOW 按进度条 Region）提供 */
+  /* 底色与胶囊（CapsuleBar）保持一致，避免缩放时底色跳变；顶部内高光，无原生 DWM 阴影 */
   background:
     linear-gradient(180deg, rgba(42, 39, 35, 0.98), rgba(20, 19, 18, 0.96));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);

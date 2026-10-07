@@ -1,7 +1,7 @@
 # TASK-036: 胶囊⇄贴边条 morph 期原生阴影错位修复
 
 ## Basic Info
-- Status: Validation（代码 + spec 双审 + 代码双审闭环 + 门禁全绿；真机视觉 QA 留待用户）
+- Status: Completed（已在方案 A 中彻底移除原生 DWM 阴影，根除毛刺与错位）
 - Priority: P0（用户可视回归：收缩动画 300ms 内阴影轮廓与内容错位）
 - Owner: @self（agent team 编排）
 - Created: 2026-09-06

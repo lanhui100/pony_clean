@@ -37,3 +37,4 @@ Desktop.ini
 
 # Pi agent local config
 .pi/
+.diag/

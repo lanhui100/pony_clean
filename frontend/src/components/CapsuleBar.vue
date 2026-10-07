@@ -108,8 +108,7 @@ const memBg = computed(() => {
     border-radius 300ms cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.25s ease,
     border-color 0.25s ease;
-  /* 顶部内高光；外阴影由原生 DWM（CS_DROPSHADOW 按胶囊 Region）提供
-     （SPEC-029 二次修订，面板即窗口，无 CSS 阴影边距） */
+  /* 顶部内高光发丝线，无原生 DWM 阴影 */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
